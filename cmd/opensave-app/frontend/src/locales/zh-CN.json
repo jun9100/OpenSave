@@ -1,5 +1,6 @@
 {
   "settings.language": "语言",
+  "settings.systemDefault": "跟随系统",
   "home.title": "主页",
   "home.scanSaves": "扫描存档",
   "home.scanSavesTitle": "查找本机上的游戏存档",
@@ -14,9 +15,7 @@
   "home.welcome.intro": "让你的游戏存档在所有设备间保持同步——无需账号，不被云端绑架。先找到你的存档：",
   "home.welcome.scanForSaves": "扫描存档",
   "home.welcome.trackManually": "手动跟踪文件夹",
-  "home.welcome.hintA": "然后打开 ",
-  "home.welcome.hintB": " 配对另一台电脑或 Steam Deck，或打开 ",
-  "home.welcome.hintC": " 将快照镜像到云端。",
+  "home.welcome.hint": "然后打开 {devices} 配对另一台电脑或 Steam Deck，或打开 {cloud} 将快照镜像到云端。",
   "home.devices": "设备",
   "home.cloudBackup": "云备份"
 }

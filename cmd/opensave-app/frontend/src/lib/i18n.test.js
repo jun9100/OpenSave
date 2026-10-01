@@ -2,18 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import en from '../locales/en.json';
 import zhCN from '../locales/zh-CN.json';
-import { LOCALES, detectLocale, pluralRulesFor, sanitizeLocale, translate } from './i18n.js';
+import { LOCALES, loadLocale, pluralRulesFor, resolveLocale, sanitizeLocale, segments, translate } from './i18n.js';
 
-// Walk the leaf keys of a catalog (a plural value is one leaf).
-function leafKeys(obj, prefix = '') {
-  const keys = [];
-  for (const [k, v] of Object.entries(obj)) {
-    const key = prefix ? `${prefix}.${k}` : k;
-    if (v !== null && typeof v === 'object') keys.push(...leafKeys(v, key));
-    else keys.push(key);
-  }
-  return keys;
-}
+// The catalogs are flat, dot-keyed objects; a plural value is one value that
+// must expose an "other" form. Comparing top-level keys is enough.
+const keysOf = (catalog) => Object.keys(catalog);
 
 describe('locale catalogs', () => {
   it('declares every catalog id in LOCALES', () => {
@@ -21,20 +14,26 @@ describe('locale catalogs', () => {
   });
 
   it('has no keys in zh-CN that en.json does not have', () => {
-    const enKeys = new Set(leafKeys(en));
-    for (const key of leafKeys(zhCN)) expect(enKeys.has(key), `extra key: ${key}`).toBe(true);
+    const enKeys = new Set(keysOf(en));
+    for (const key of keysOf(zhCN)) expect(enKeys.has(key), `extra key: ${key}`).toBe(true);
   });
 
   it('has a zh-CN value for every key in en.json', () => {
-    const zhKeys = new Set(leafKeys(zhCN));
-    for (const key of leafKeys(en)) expect(zhKeys.has(key), `missing key: ${key}`).toBe(true);
+    const zhKeys = new Set(keysOf(zhCN));
+    for (const key of keysOf(en)) expect(zhKeys.has(key), `missing key: ${key}`).toBe(true);
   });
 
-  it('keeps every en value non-empty', () => {
-    for (const key of leafKeys(en)) {
-      const v = en[key];
-      expect(typeof v === 'string' || typeof v === 'object', key).toBe(true);
-      if (typeof v === 'string') expect(v.trim().length, key).toBeGreaterThan(0);
+  it('keeps every value non-empty, and plurals with an "other" form', () => {
+    for (const [catalog, name] of [[en, 'en'], [zhCN, 'zh-CN']]) {
+      for (const [key, v] of Object.entries(catalog)) {
+        if (v !== null && typeof v === 'object') {
+          expect(typeof v.other, `${name}:${key} plural needs "other"`).toBe('string');
+          expect(v.other.trim().length, `${name}:${key}`).toBeGreaterThan(0);
+        } else {
+          expect(typeof v, `${name}:${key}`).toBe('string');
+          expect(v.trim().length, `${name}:${key}`).toBeGreaterThan(0);
+        }
+      }
     }
   });
 });
@@ -62,24 +61,39 @@ describe('translate', () => {
   });
 });
 
+describe('segments', () => {
+  it('splits a template into plain and bold parts, in order', () => {
+    expect(segments('open {a} then {b}.', { a: '设备', b: '云备份' }, ['b'])).toEqual([
+      { text: 'open ', bold: false },
+      { text: '设备', bold: false },
+      { text: ' then ', bold: false },
+      { text: '云备份', bold: true },
+      { text: '.', bold: false }
+    ]);
+  });
+});
+
 describe('locale choice', () => {
   it('rejects unknown locale ids', () => {
     expect(sanitizeLocale('fr')).toBe(null);
     expect(sanitizeLocale('zh-CN')).toBe('zh-CN');
+    expect(sanitizeLocale('system')).toBe('system');
   });
 
-  it('prefers the saved choice over the system language', () => {
-    const storage = { getItem: () => 'en' };
-    expect(detectLocale(storage, 'zh-CN')).toBe('en');
+  it("reports 'system' when the user has never picked one", () => {
+    expect(loadLocale({ getItem: () => null })).toBe('system');
+    expect(loadLocale({ getItem: () => 'zh-CN' })).toBe('zh-CN');
   });
 
-  it('maps a Chinese system language to zh-CN when nothing is saved', () => {
-    expect(detectLocale({ getItem: () => null }, 'zh-CN')).toBe('zh-CN');
-    expect(detectLocale({ getItem: () => null }, 'en-US')).toBe('en');
+  it('resolves system against the OS language, keeps explicit picks', () => {
+    expect(resolveLocale('system', 'zh-CN')).toBe('zh-CN');
+    expect(resolveLocale('system', 'en-US')).toBe('en');
+    expect(resolveLocale('system', '')).toBe('en');
+    expect(resolveLocale('zh-CN', 'en-US')).toBe('zh-CN');
   });
 
   it('survives storage that refuses to read', () => {
     const storage = { getItem: () => { throw new Error('blocked'); } };
-    expect(detectLocale(storage, 'zh-CN')).toBe('zh-CN');
+    expect(loadLocale(storage)).toBe('system');
   });
 });

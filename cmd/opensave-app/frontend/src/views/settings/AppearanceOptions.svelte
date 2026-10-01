@@ -7,7 +7,7 @@
   import MonitorCog from 'lucide-svelte/icons/monitor-cog';
   import { appearance, THEMES, ACCENTS, SCALES, onAccent } from '../../lib/appearance.js';
   import { systemReducesMotion, slidingIndicator } from '../../lib/motion.js';
-  import { locale, LOCALES, t } from '../../lib/i18n.js';
+  import { locale, LOCALES, t, SYSTEM_LOCALE } from '../../lib/i18n.js';
 
   const set = (patch) => appearance.update((v) => ({ ...v, ...patch }));
   const themeIcons = { dark: Moon, light: Sun, system: MonitorCog };
@@ -17,6 +17,7 @@
   <label class="group">
     <span class="label">{$t('settings.language')}</span>
     <select value={$locale} on:change={(e) => locale.set(e.currentTarget.value)}>
+      <option value={SYSTEM_LOCALE}>{$t('settings.systemDefault')}</option>
       {#each Object.entries(LOCALES) as [id, label]}
         <option value={id}>{label}</option>
       {/each}

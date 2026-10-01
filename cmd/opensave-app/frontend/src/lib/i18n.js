@@ -1,17 +1,24 @@
 // A tiny, dependency-free i18n layer. `t` is a Svelte store whose value is a
-// translate function: in a component, `$t('home.title')` re-renders when the
-// user switches language, with no framework wiring.
+// translate function: in a component, `$t('key')` re-renders when the user
+// switches language, with no framework wiring.
 //
 // Catalogs live in src/locales/ as flat, dot-keyed JSON. `en.json` is the
 // source of truth: any key missing from another locale falls back to English,
 // so a partial translation never shows a blank. A plural value is an object
 // keyed by Intl.PluralRules categories (`{ "one": …, "other": … }`); Chinese
 // and other single-form languages just use a string.
+//
+// The language choice is 'system' until the user picks one, and only an
+// explicit pick is persisted — so an unpicked app keeps following the OS
+// language as it changes.
 import { writable, derived } from 'svelte/store';
 
 import en from '../locales/en.json';
 import zhCN from '../locales/zh-CN.json';
 
+export const SYSTEM_LOCALE = 'system';
+
+/** The languages offered besides the system default. */
 export const LOCALES = { en: 'English', 'zh-CN': '简体中文' };
 
 const CATALOGS = { en, 'zh-CN': zhCN };
@@ -20,33 +27,35 @@ const KEY = 'opensave.locale';
 
 /** A locale id if valid, otherwise null. */
 export function sanitizeLocale(raw) {
-  return typeof raw === 'string' && raw in LOCALES ? raw : null;
+  return typeof raw === 'string' && (raw === SYSTEM_LOCALE || raw in LOCALES) ? raw : null;
 }
 
-/** The saved choice if any, else what the system asks for, else English. */
-export function detectLocale(storage = globalThis.localStorage, language = globalThis.navigator?.language) {
-  try {
-    const saved = sanitizeLocale(storage?.getItem(KEY));
-    if (saved) return saved;
-  } catch {
-    // Storage refused (private mode): fall through to the system language.
-  }
-  return (language ?? '').toLowerCase().startsWith('zh') ? 'zh-CN' : FALLBACK;
-}
-
+/** The saved choice, or 'system' when the user has never picked one. */
 export function loadLocale(storage = globalThis.localStorage) {
-  return detectLocale(storage);
+  try {
+    return sanitizeLocale(storage?.getItem(KEY)) ?? SYSTEM_LOCALE;
+  } catch {
+    return SYSTEM_LOCALE;
+  }
 }
 
+/** Persist an explicit pick; 'system' clears it, following the OS again. */
 export function saveLocale(l, storage = globalThis.localStorage) {
   try {
-    storage?.setItem(KEY, l);
+    if (l === SYSTEM_LOCALE) storage?.removeItem(KEY);
+    else storage?.setItem(KEY, l);
   } catch {
     // Storage refused: the choice lasts until restart.
   }
 }
 
-/** The chosen language. Setting it persists immediately. */
+/** 'system' settled against the OS language, or the explicit pick itself. */
+export function resolveLocale(l, language = globalThis.navigator?.language) {
+  if (l && l !== SYSTEM_LOCALE) return l;
+  return (language ?? '').toLowerCase().startsWith('zh') ? 'zh-CN' : FALLBACK;
+}
+
+/** The chosen language. Setting it persists immediately ('system' unpersists). */
 export const locale = writable(loadLocale());
 locale.subscribe((l) => saveLocale(l));
 
@@ -81,7 +90,24 @@ export function translate(catalog, key, params, rules) {
 
 /** The translate function, rebound whenever the language changes. */
 export const t = derived(locale, (l) => {
-  const catalog = CATALOGS[l] ?? {};
-  const rules = pluralRulesFor(l);
+  const catalog = CATALOGS[resolveLocale(l)] ?? {};
+  const rules = pluralRulesFor(resolveLocale(l));
   return (key, params) => translate(catalog, key, params, rules);
 });
+
+/** Split a translated template on its {placeholders}, marking which filled
+ *  parts should render in bold. Returns [{ text, bold }, …] in order. */
+export function segments(template, params = {}, boldNames = []) {
+  const out = [];
+  const re = /{(\w+)}/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(template))) {
+    if (m.index > last) out.push({ text: template.slice(last, m.index), bold: false });
+    const name = m[1];
+    out.push({ text: String(params[name] ?? m[0]), bold: boldNames.includes(name) });
+    last = re.lastIndex;
+  }
+  if (last < template.length) out.push({ text: template.slice(last), bold: false });
+  return out;
+}

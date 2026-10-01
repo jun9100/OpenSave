@@ -14,7 +14,7 @@
   import PauseButton from '../components/PauseButton.svelte';
   import { setupState, setupSteps, decideSetupFor } from '../lib/setup.js';
   import { settings } from '../lib/stores.js';
-  import { t } from '../lib/i18n.js';
+  import { t, segments } from '../lib/i18n.js';
   import ScanSearch from 'lucide-svelte/icons/scan-search';
   import RefreshCw from 'lucide-svelte/icons/refresh-cw';
   import FolderPlus from 'lucide-svelte/icons/folder-plus';
@@ -136,7 +136,11 @@
       </button>
       <button class="btn" on:click={trackFolder}><FolderPlus size={16} />{$t('home.welcome.trackManually')}</button>
     </div>
-    <p class="welcome-hint">{$t('home.welcome.hintA')}<strong>{$t('home.devices')}</strong>{$t('home.welcome.hintB')}<strong>{$t('home.cloudBackup')}</strong>{$t('home.welcome.hintC')}</p>
+    <p class="welcome-hint">
+      {#each segments($t('home.welcome.hint'), { devices: $t('home.devices'), cloud: $t('home.cloudBackup') }, ['devices', 'cloud']) as part}
+        {#if part.bold}<strong>{part.text}</strong>{:else}{part.text}{/if}
+      {/each}
+    </p>
   </div>
 {:else}
   {#if showGuide}

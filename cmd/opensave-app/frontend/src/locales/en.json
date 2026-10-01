@@ -1,5 +1,6 @@
 {
   "settings.language": "Language",
+  "settings.systemDefault": "System default",
   "home.title": "Home",
   "home.scanSaves": "Scan saves",
   "home.scanSavesTitle": "Look for game saves on this device",
@@ -14,9 +15,7 @@
   "home.welcome.intro": "Keep your game saves in sync across every device — no accounts, no cloud lock-in. Start by finding your saves:",
   "home.welcome.scanForSaves": "Scan for saves",
   "home.welcome.trackManually": "Track a folder manually",
-  "home.welcome.hintA": "Then open ",
-  "home.welcome.hintB": " to pair another PC or Steam Deck, or ",
-  "home.welcome.hintC": " to mirror snapshots online.",
+  "home.welcome.hint": "Then open {devices} to pair another PC or Steam Deck, or {cloud} to mirror snapshots online.",
   "home.devices": "Devices",
   "home.cloudBackup": "Cloud Backup"
 }
