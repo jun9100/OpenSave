@@ -1,0 +1,22 @@
+{
+  "settings.language": "语言",
+  "home.title": "主页",
+  "home.scanSaves": "扫描存档",
+  "home.scanSavesTitle": "查找本机上的游戏存档",
+  "home.scanning": "扫描中…",
+  "home.syncAll": "全部同步",
+  "home.syncPaused": "同步已暂停",
+  "home.trackFolder": "跟踪文件夹",
+  "home.trackFolderTitle": "选择要跟踪的存档文件夹或文件",
+  "home.chooseFolderDialog": "选择要跟踪的存档文件夹",
+  "home.syncAllToast": "已触发全部游戏的同步",
+  "home.welcome.title": "欢迎使用 OpenSave",
+  "home.welcome.intro": "让你的游戏存档在所有设备间保持同步——无需账号，不被云端绑架。先找到你的存档：",
+  "home.welcome.scanForSaves": "扫描存档",
+  "home.welcome.trackManually": "手动跟踪文件夹",
+  "home.welcome.hintA": "然后打开 ",
+  "home.welcome.hintB": " 配对另一台电脑或 Steam Deck，或打开 ",
+  "home.welcome.hintC": " 将快照镜像到云端。",
+  "home.devices": "设备",
+  "home.cloudBackup": "云备份"
+}

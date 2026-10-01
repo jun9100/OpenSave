@@ -1,0 +1,22 @@
+{
+  "settings.language": "Language",
+  "home.title": "Home",
+  "home.scanSaves": "Scan saves",
+  "home.scanSavesTitle": "Look for game saves on this device",
+  "home.scanning": "Scanning…",
+  "home.syncAll": "Sync all",
+  "home.syncPaused": "Syncing is paused",
+  "home.trackFolder": "Track folder",
+  "home.trackFolderTitle": "Pick a save folder or file to track",
+  "home.chooseFolderDialog": "Choose the save folder to track",
+  "home.syncAllToast": "Sync triggered for all games",
+  "home.welcome.title": "Welcome to OpenSave",
+  "home.welcome.intro": "Keep your game saves in sync across every device — no accounts, no cloud lock-in. Start by finding your saves:",
+  "home.welcome.scanForSaves": "Scan for saves",
+  "home.welcome.trackManually": "Track a folder manually",
+  "home.welcome.hintA": "Then open ",
+  "home.welcome.hintB": " to pair another PC or Steam Deck, or ",
+  "home.welcome.hintC": " to mirror snapshots online.",
+  "home.devices": "Devices",
+  "home.cloudBackup": "Cloud Backup"
+}
