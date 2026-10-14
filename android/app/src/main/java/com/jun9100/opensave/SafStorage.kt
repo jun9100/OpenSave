@@ -22,6 +22,7 @@ data class CopyReport(
     val byteCount: Long,
     val manifestHash: String,
     val files: List<FileRecord>,
+    val detected: List<DetectedSave> = emptyList(),
 )
 
 class SafStorage(private val context: Context) {
@@ -71,6 +72,7 @@ class SafStorage(private val context: Context) {
                 byteCount = files.sumOf { it.sizeBytes },
                 manifestHash = manifestHash,
                 files = files,
+                detected = SaveSourceDetector.detect(workspace, root.name),
             )
         }
     }
@@ -90,6 +92,28 @@ class SafStorage(private val context: Context) {
                 byteCount = files.sumOf { it.sizeBytes },
                 manifestHash = manifestHash(files),
                 files = files,
+                detected = SaveSourceDetector.detect(workspace),
+            )
+        }
+    }
+
+    suspend fun replaceTreeFromWorkspace(uri: Uri): Result<CopyReport> = withContext(Dispatchers.IO) {
+        runCatching {
+            val root = DocumentFile.fromTreeUri(context, uri)
+                ?: error("The selected storage provider is unavailable")
+            require(root.isDirectory) { "The selected URI is not a directory" }
+            val workspace = workspaceDirectory()
+            require(workspace.isDirectory) { "Restore a snapshot before writing it back" }
+
+            deleteChildren(root)
+            val files = mutableListOf<FileRecord>()
+            writeDirectory(root, workspace, workspace, files)
+            CopyReport(
+                fileCount = files.size,
+                byteCount = files.sumOf { it.sizeBytes },
+                manifestHash = manifestHash(files),
+                files = files,
+                detected = SaveSourceDetector.detect(workspace),
             )
         }
     }
@@ -189,6 +213,13 @@ class SafStorage(private val context: Context) {
             return existing
         }
         return parent.createDirectory(name) ?: error("Could not create directory $name")
+    }
+
+    private fun deleteChildren(parent: DocumentFile) {
+        for (child in parent.listFiles()) {
+            if (child.isDirectory) deleteChildren(child)
+            require(child.delete()) { "Could not remove ${child.name ?: "selected item"}" }
+        }
     }
 
     private fun manifestHash(files: List<FileRecord>): String {

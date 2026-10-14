@@ -11,6 +11,15 @@
 
 本计划针对 Android 客户端，不改变现有 Windows、macOS、Linux 和 Steam Deck 客户端的默认行为。第一阶段以“Android 本地存档管理 + WebDAV 云端备份”为目标，之后再扩展跨设备 P2P 同步。
 
+## 当前推进状态（2026-10-15）
+
+- 阶段 0/1：已完成 Android Compose、SAF 持久化权限、Odin2 API 33 基线、单元测试、lint、Debug APK 和 GitHub Actions。
+- 阶段 2：已完成私有工作区流式 ZIP 快照、manifest/SHA-256、本地历史索引、恢复前安全副本、确认后的授权目录替换和路径穿越防护。
+- 阶段 3：已完成 Kotlin WebDAV 客户端的 Basic Auth、连接测试、PROPFIND、流式下载、`.part` 上传、HEAD 大小校验、MOVE 发布、重试分类和云端历史展示。
+- 阶段 4：已完成授权工作区内的 Switch TitleID、Yuzu/Eden 系 NAND、Ryujinx/Ryubing BIS、PPSSPP/RetroArch/Dolphin 和 GameHub 痕迹识别；profile/account 自动映射仍需 Odin2 上的真实目录样本后实现。
+- Go mobilecore 技术闸门已通过：`gomobile bind -target=android -androidapi=26` 成功生成四 ABI AAR；Android 主构建暂用 Kotlin 实现保持不依赖本机 Go/NDK。
+- 阶段 5/6/7 仍需实机和真实 WebDAV 验收：普通 Android 游戏共享目录、GameHub 本地模拟器、Odin2 上的 SAF 写回、群晖端口/认证、WorkManager 调度和发布签名 APK。
+
 ## 2. 目标与边界
 
 ### 2.1 目标

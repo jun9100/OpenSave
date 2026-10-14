@@ -5,10 +5,16 @@ on:
     branches: ["**"]
     paths:
       - "android/**"
+      - "mobilecore/**"
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
       - "android/**"
+      - "mobilecore/**"
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/android.yml"
 
 jobs:
@@ -19,6 +25,9 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -27,5 +36,8 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
+      - name: Test shared Go mobile core
+        working-directory: .
+        run: go test ./internal/delta ./internal/snapshot ./internal/switchtitle ./mobilecore
       - name: Unit tests, lint, and debug APK
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug
