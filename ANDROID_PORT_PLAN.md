@@ -7,6 +7,7 @@
 - 本地仓库：`/Volumes/Data/Coding/游戏存档管理`
 - `origin` 指向 Fork，`upstream` 指向上游仓库。
 - 当前基线：OpenSave `v2.4.1`，提交 `346d9bda0749fb57b48fd266f13e535af80f0285`。
+- 首要 Android 真机：Odin2，Android 13（API 33；接入测试时用 `adb shell getprop ro.build.version.sdk` 再确认）。
 
 本计划针对 Android 客户端，不改变现有 Windows、macOS、Linux 和 Steam Deck 客户端的默认行为。第一阶段以“Android 本地存档管理 + WebDAV 云端备份”为目标，之后再扩展跨设备 P2P 同步。
 
@@ -287,7 +288,7 @@ Android 上不能假设 SAF 目录存在可靠的实时文件事件，因此自�
 - `gomobile bind` AAR 验证；或完成 Kotlin fallback 决策。
 - 真机日志和崩溃收集基础设施。
 
-验收：在至少两台不同 Android 设备上选择一个测试目录，能读取、生成快照并恢复，重启应用后权限仍有效。
+验收：先在 Odin2/Android 13 上选择一个测试目录，能读取、生成快照并恢复，重启应用后权限仍有效；进入发布验收前，再用一台不同厂商或不同 Android 版本的设备复测。
 
 ### 阶段 2：核心快照和本地库
 
@@ -362,10 +363,12 @@ Android 上不能假设 SAF 目录存在可靠的实时文件事件，因此自�
 
 ### Android 系统
 
+- **首要基线设备**：Odin2，Android 13（API 33）。阶段 1 的 SAF、WebDAV、通知和 WorkManager 基础验证先以此设备为准。
+- Android 13：单独验证通知运行时权限、后台电池限制、SAF 持久 URI 权限和 `Android/data` 访问结果。
 - Android 8/9：验证基本 SAF、网络和后台限制兼容性。
 - Android 11/12：验证 `Android/data` 限制和持久 URI 权限。
-- Android 13/14/15 及当前稳定版本：验证通知权限、前台服务和电池限制。
-- 至少一台 Pixel/AOSP 设备和一台国产厂商设备，验证后台任务差异。
+- Android 14/15 及当前稳定版本：作为后续兼容性验证，重点检查通知、前台服务和电池限制变化。
+- 发布前增加一台与 Odin2 不同的设备，验证后台任务差异；Odin2 的通过结果不代表所有 Android 设备都通过。
 
 ### 存档来源
 
