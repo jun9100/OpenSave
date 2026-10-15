@@ -36,6 +36,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -75,9 +78,17 @@ private fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
     if (state.pendingRestore != null) {
         AlertDialog(
             onDismissRequest = sourceViewModel::cancelRestore,
-            title = { Text("确认替换授权目录") },
+            title = {
+                Text(if (state.storageMode == StorageMode.ROOT) "确认替换 Root 目录" else "确认替换授权目录")
+            },
             text = {
-                Text("恢复前会在应用私有目录保留当前工作区安全副本，然后删除授权目录内现有内容并写入快照。请确认选择的是专用存档目录。")
+                Text(
+                    if (state.storageMode == StorageMode.ROOT) {
+                        "恢复前会在应用私有目录保留当前工作区安全副本，然后以 Root 权限替换目标目录内容并恢复目录所有者。请确认路径是专用存档目录。"
+                    } else {
+                        "恢复前会在应用私有目录保留当前工作区安全副本，然后删除授权目录内现有内容并写入快照。请确认选择的是专用存档目录。"
+                    },
+                )
             },
             confirmButton = {
                 Button(onClick = sourceViewModel::confirmRestore) { Text("确认恢复") }
@@ -127,35 +138,88 @@ private fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text("存档来源", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = state.selectedUri?.toString() ?: "尚未授权目录",
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = { folderPicker.launch(null) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Outlined.FolderOpen, contentDescription = "选择目录")
-                        Text("选择并授权存档目录", modifier = Modifier.padding(start = 8.dp))
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        SegmentedButton(
+                            selected = state.storageMode == StorageMode.SAF,
+                            onClick = { sourceViewModel.selectStorageMode(StorageMode.SAF) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("系统授权")
+                        }
+                        SegmentedButton(
+                            selected = state.storageMode == StorageMode.ROOT,
+                            onClick = { sourceViewModel.selectStorageMode(StorageMode.ROOT) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Root 路径")
+                        }
                     }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = if (state.hasPersistedPermission) {
-                            "已取得可持久化读写权限，重启应用后仍可使用。"
-                        } else {
-                            "通过系统文件选择器授权目录；不会扫描其他应用私有目录。"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (state.hasPersistedPermission) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
+                    Spacer(Modifier.height(12.dp))
+                    if (state.storageMode == StorageMode.ROOT) {
+                        OutlinedTextField(
+                            value = state.rootPath,
+                            onValueChange = sourceViewModel::updateRootPath,
+                            label = { Text("Root 绝对路径") },
+                            placeholder = { Text("/storage/emulated/0/Android/data/...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = sourceViewModel::applyRootPath,
+                            enabled = !state.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = "保存 Root 路径")
+                            Text("保存并使用 Root 路径", modifier = Modifier.padding(start = 8.dp))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = when {
+                                !state.rootChecked -> "正在检测 su 权限..."
+                                state.rootAvailable -> "Root 可用；路径由 su 直接访问。"
+                                else -> "未检测到 uid 0，请确认 Magisk 已授权 OpenSave。"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (state.rootAvailable) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    } else {
+                        Text(
+                            text = state.selectedUri?.toString() ?: "尚未授权目录",
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = { folderPicker.launch(null) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = "选择目录")
+                            Text("选择并授权存档目录", modifier = Modifier.padding(start = 8.dp))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = if (state.hasPersistedPermission) {
+                                "已取得可持久化读写权限，重启应用后仍可使用。"
+                            } else {
+                                "通过系统文件选择器授权目录；不会扫描其他应用私有目录。"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (state.hasPersistedPermission) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                 }
             }
 
@@ -196,7 +260,10 @@ private fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Outlined.UploadFile, contentDescription = "写回")
-                        Text("把工作区写回授权目录", modifier = Modifier.padding(start = 8.dp))
+                        Text(
+                            if (state.storageMode == StorageMode.ROOT) "把工作区写回 Root 目录" else "把工作区写回授权目录",
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
                     }
                     Spacer(Modifier.height(12.dp))
                     Row(

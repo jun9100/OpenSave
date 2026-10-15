@@ -1,10 +1,12 @@
 # OpenSave Android
 
-这是面向 Odin2 / Android 13 的原生客户端。界面使用 Jetpack Compose，文件访问使用 Storage Access Framework（SAF），不要求 Root，也不会绕过其他应用的私有目录权限。
+这是面向 Odin2 / Android 13 的原生客户端。界面使用 Jetpack Compose，默认使用 Storage Access Framework（SAF）；在已经 Root 并由 Magisk 授权的设备上，也可以使用 Root 绝对路径访问系统文件选择器无法进入的目录。
 
 ## 已实现
 
 - 选择并持久化授权一个存档目录，重启应用后继续使用。
+- 在 SAF 和 Root 绝对路径之间切换；Root 路径经过保护目录和 shell 参数校验。
+- Root 模式通过 `su` 复制目录到应用私有工作区；恢复使用临时目录发布，并保留目标目录的 UID/GID 和顶层权限。
 - 流式复制到应用私有工作区，按文件生成 SHA-256 和稳定 manifest hash。
 - 创建 OpenSave 兼容 ZIP 快照，保留本地历史；恢复前自动生成私有安全副本。
 - WebDAV Basic Auth、HTTPS、连接测试、目录列举、下载、删除。
@@ -12,7 +14,16 @@
 - Wi-Fi 条件下通过 WorkManager 每 15 分钟检查一次已授权来源；内容未变化则跳过，失败任务可重试。
 - 在授权工作区内识别 Eden/Yuzu/Suyu/Sudachi/Citron 的 NAND TitleID、Ryujinx/Ryubing 的 BIS 布局，以及 PPSSPP、RetroArch、Dolphin、Android 共享目录和 GameHub 痕迹。
 
-识别只是提示，不会自动扫描全盘或扩大权限。对 Eden 等 Switch 模拟器，第一版建议直接选择单个 TitleID 存档目录，不要选择整个 NAND 根目录；这样恢复不会把设备专属 profile 一起覆盖。GameHub 云游戏/串流的存档不在 Odin2 本地时无法备份。
+识别只是提示，不会自动扫描全盘。对 Eden 等 Switch 模拟器，第一版建议直接选择单个 TitleID 存档目录，不要选择整个 NAND 根目录；这样恢复不会把设备专属 profile 一起覆盖。GameHub 云游戏/串流的存档不在 Odin2 本地时无法备份。
+
+## Root 模式
+
+1. 在 Magisk 的“超级用户”页面打开 `OpenSave` 授权；ADB 显示 root 不等于 APK 已获得 `su` 授权。
+2. 在“存档来源”切换到“Root 路径”，输入实际绝对路径，例如 `/data/user/0/<游戏包名>/files`、`/storage/emulated/0/Android/data/<包名>/files` 或 Eden 的具体 TitleID 目录。
+3. 点击“保存并使用 Root 路径”，再执行“复制到工作区”或“创建快照”。
+4. 恢复前会保留当前工作区安全副本，然后通过临时目录替换目标目录，并尝试恢复目标目录原有的所有者和权限。
+
+Root 模式不会允许 `/`、`/data`、`/storage/emulated/0`、系统分区等过宽或受保护路径。请只输入专用存档目录；恢复操作会替换该目录下的内容。工作区不接受符号链接或特殊文件。
 
 ## 本地构建
 
@@ -84,7 +95,8 @@ adb connect 192.168.12.40:5555
 
 ## 已知边界
 
-- Android 13 对 `Android/data`、`Android/obb` 和 `/data/user/0/<package>` 的访问取决于系统文件选择器实际授予的权限；私有目录必须使用游戏导出、Root/Shizuku 或游戏自己的云同步。
+- SAF 模式仍受 Android 13 对 `Android/data`、`Android/obb` 和 `/data/user/0/<package>` 的限制；需要访问这些目录时切换到 Root 模式，或使用游戏导出、Shizuku 和游戏自己的云同步。
+- Root 模式依赖 Magisk 对 OpenSave 的 `su` 授权；没有授权时应用会显示 Root 不可用，不会假装完成备份。
 - 当前没有常驻实时文件监控；自动备份使用前台手动触发和 Wi-Fi WorkManager 检查，周期受 Android 系统调度影响。
 - Switch profile/account 的跨设备映射尚未自动化。跨设备恢复请按目标设备的单个 TitleID/profile 目录授权并检查模拟器能否读取。
 - 云端只显示完整 `.zip` 快照；上传中断留下的 `.part` 会被清理或隐藏，不会报告为成功。

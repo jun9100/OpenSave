@@ -18,8 +18,12 @@ data class RestoreRequest(
 )
 
 data class SourceUiState(
+    val storageMode: StorageMode = StorageMode.SAF,
     val selectedUri: Uri? = null,
     val hasPersistedPermission: Boolean = false,
+    val rootPath: String = "",
+    val rootAvailable: Boolean = false,
+    val rootChecked: Boolean = false,
     val busy: Boolean = false,
     val action: String? = null,
     val error: String? = null,
@@ -38,6 +42,8 @@ data class SourceUiState(
 class SourceViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application
     private val storage = SafStorage(application)
+    private val rootStorage = RootStorage(application)
+    private val selectionStore = SourceSelectionStore(application)
     private val snapshotEngine = SnapshotEngine()
     private val snapshotRepository = SnapshotRepository(File(application.filesDir, SNAPSHOT_DIRECTORY))
     private val webDavStore = WebDavConfigStore(application)
@@ -52,7 +58,9 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun onTreeSelected(uri: Uri) {
         storage.persistTreePermission(uri)
             .onSuccess {
+                selectionStore.saveMode(StorageMode.SAF)
                 state.value = state.value.copy(
+                    storageMode = StorageMode.SAF,
                     selectedUri = uri,
                     hasPersistedPermission = storage.hasReadWritePermission(uri),
                     action = "已保存目录权限",
@@ -70,10 +78,15 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun refreshPersistedSource() {
         val uri = storage.persistedTreeUri()
+        val mode = selectionStore.mode()
+        val rootPath = rootStorage.persistedRootPath().orEmpty()
         val config = runCatching { webDavStore.load() }.getOrDefault(WebDavConfig())
         state.value = state.value.copy(
+            storageMode = mode,
             selectedUri = uri,
             hasPersistedPermission = uri != null && storage.hasReadWritePermission(uri),
+            rootPath = rootPath,
+            rootChecked = false,
             snapshots = currentSnapshots(),
             webDavEnabled = config.enabled,
             webDavUrl = config.url,
@@ -83,6 +96,60 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             autoBackupEnabled = autoBackupScheduler.isEnabled(),
             error = null,
         )
+        viewModelScope.launch(Dispatchers.IO) {
+            val rootAvailable = rootStorage.checkRootAccess().isSuccess
+            state.value = state.value.copy(
+                rootAvailable = rootAvailable,
+                rootChecked = true,
+            )
+        }
+    }
+
+    fun selectStorageMode(mode: StorageMode) {
+        selectionStore.saveMode(mode)
+        updateState {
+            copy(
+                storageMode = mode,
+                action = if (mode == StorageMode.ROOT) "已切换到 Root 路径模式" else "已切换到系统授权模式",
+                error = null,
+            )
+        }
+        if (mode == StorageMode.ROOT) refreshRootAccess()
+    }
+
+    fun updateRootPath(value: String) = updateState { copy(rootPath = value) }
+
+    fun applyRootPath() {
+        rootStorage.persistRootPath(state.value.rootPath)
+            .onSuccess { canonical ->
+                selectionStore.saveMode(StorageMode.ROOT)
+                state.value = state.value.copy(
+                    storageMode = StorageMode.ROOT,
+                    rootPath = canonical,
+                    action = "已保存 Root 路径",
+                    error = null,
+                )
+                refreshRootAccess()
+            }
+            .onFailure { error ->
+                state.value = state.value.copy(error = "Root 路径无效：${error.message}")
+            }
+    }
+
+    private fun refreshRootAccess() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = rootStorage.checkRootAccess()
+            val rootAvailable = result.isSuccess
+            state.value = state.value.copy(
+                rootAvailable = rootAvailable,
+                rootChecked = true,
+                error = if (!rootAvailable && state.value.storageMode == StorageMode.ROOT) {
+                    "Root 不可用：${result.exceptionOrNull()?.message ?: "su 未返回 uid 0"}"
+                } else {
+                    state.value.error
+                },
+            )
+        }
     }
 
     fun updateWebDavUrl(value: String) = updateState { copy(webDavUrl = value, webDavSaved = false) }
@@ -132,25 +199,25 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun importSource() {
-        val uri = requiredSource() ?: return
+        val source = requiredSource() ?: return
         runSourceOperation("正在复制存档到私有工作区") {
-            storage.importTree(uri)
+            importSelection(source)
         }
     }
 
     fun restoreSource() {
-        val uri = requiredSource() ?: return
+        val source = requiredSource() ?: return
         runSourceOperation("正在把工作区写回授权目录") {
-            storage.restoreWorkspace(uri)
+            restoreSelection(source)
         }
     }
 
     fun backupNow() {
-        val uri = requiredSource() ?: return
+        val source = requiredSource() ?: return
         viewModelScope.launch {
             state.value = state.value.copy(busy = true, action = "正在检查并创建快照", error = null)
             val outcome = withContext(Dispatchers.IO) {
-                runCatching { captureSnapshot(uri, upload = true) }
+                runCatching { captureSnapshot(source, upload = true) }
             }
             outcome.onSuccess { captured ->
                 val uploadSuffix = captured.uploadError?.let { "；$it" }.orEmpty()
@@ -198,11 +265,11 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun confirmRestore() {
         val request = state.value.pendingRestore ?: return
-        val uri = requiredSource() ?: return
+        val source = requiredSource() ?: return
         viewModelScope.launch {
             state.value = state.value.copy(busy = true, pendingRestore = null, action = "正在下载并安全恢复快照", error = null)
             val result = withContext(Dispatchers.IO) {
-                runCatching { restoreRequest(request, uri) }
+                runCatching { restoreRequest(request, source) }
             }
             result.onSuccess { report ->
                 state.value = state.value.copy(
@@ -225,9 +292,9 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             .onFailure { error -> updateState { copy(error = "设置自动备份失败：${error.message}") } }
     }
 
-    private suspend fun captureSnapshot(uri: Uri, upload: Boolean): CaptureOutcome {
-        val report = storage.importTree(uri).getOrThrow()
-        val sourceId = SnapshotNaming.sourceId(uri.toString())
+    private suspend fun captureSnapshot(source: SourceSelection, upload: Boolean): CaptureOutcome {
+        val report = importSelection(source).getOrThrow()
+        val sourceId = SnapshotNaming.sourceId(source.idSeed)
         val config = webDavStore.load()
         val previous = snapshotRepository.list().firstOrNull {
             it.sourceId == sourceId && it.manifestHash == report.manifestHash && snapshotRepository.fileFor(it).isFile
@@ -277,8 +344,18 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         return CaptureOutcome(report, snapshotRepository.list().first { it.id == record.id }, uploadError)
     }
 
-    private suspend fun restoreRequest(request: RestoreRequest, uri: Uri): CopyReport {
-        val sourceId = SnapshotNaming.sourceId(uri.toString())
+    private suspend fun importSelection(source: SourceSelection): Result<CopyReport> = when (source) {
+        is SourceSelection.Saf -> storage.importTree(source.uri)
+        is SourceSelection.Root -> rootStorage.importPath(source.path)
+    }
+
+    private suspend fun restoreSelection(source: SourceSelection): Result<CopyReport> = when (source) {
+        is SourceSelection.Saf -> storage.restoreWorkspace(source.uri)
+        is SourceSelection.Root -> rootStorage.restoreWorkspace(source.path)
+    }
+
+    private suspend fun restoreRequest(request: RestoreRequest, source: SourceSelection): CopyReport {
+        val sourceId = SnapshotNaming.sourceId(source.idSeed)
         val archive = request.local?.let { snapshotRepository.fileFor(it) }
             ?: request.remote?.let { File(app.filesDir, "$SNAPSHOT_DIRECTORY/${it.name}") }
             ?: error("没有可恢复的快照")
@@ -309,14 +386,14 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
         snapshotEngine.restoreSnapshot(archive, workspace).getOrThrow()
-        return storage.replaceTreeFromWorkspace(uri).getOrThrow()
+        return restoreSelection(source).getOrThrow()
     }
 
-    private fun runSourceOperation(action: String, operation: suspend (Uri) -> Result<CopyReport>) {
-        val uri = requiredSource() ?: return
+    private fun runSourceOperation(action: String, operation: suspend () -> Result<CopyReport>) {
+        if (requiredSource() == null) return
         viewModelScope.launch {
             state.value = state.value.copy(busy = true, action = action, error = null)
-            operation(uri)
+            operation()
                 .onSuccess { report ->
                     state.value = state.value.copy(
                         busy = false,
@@ -330,13 +407,29 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun requiredSource(): Uri? {
-        val uri = state.value.selectedUri
-        if (uri == null || !state.value.hasPersistedPermission) {
-            updateState { copy(error = "请先选择并授权一个可读写目录") }
-            return null
+    private fun requiredSource(): SourceSelection? {
+        return when (state.value.storageMode) {
+            StorageMode.SAF -> {
+                val uri = state.value.selectedUri
+                if (uri == null || !state.value.hasPersistedPermission) {
+                    updateState { copy(error = "请先选择并授权一个可读写目录") }
+                    null
+                } else {
+                    SourceSelection.Saf(uri)
+                }
+            }
+
+            StorageMode.ROOT -> {
+                val result = runCatching { RootPathPolicy.canonicalize(state.value.rootPath) }
+                result.fold(
+                    onSuccess = { SourceSelection.Root(it) },
+                    onFailure = {
+                        updateState { copy(error = "请先填写有效的 Root 绝对路径：${it.message}") }
+                        null
+                    },
+                )
+            }
         }
-        return uri
     }
 
     private fun configFromState() = WebDavConfig(

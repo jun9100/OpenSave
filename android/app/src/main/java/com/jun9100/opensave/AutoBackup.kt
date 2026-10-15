@@ -49,17 +49,34 @@ class AutoBackupWorker(
 ) : CoroutineWorker(appContext, workerParameters) {
     override suspend fun doWork(): Result {
         val storage = SafStorage(applicationContext)
-        val uri = storage.persistedTreeUri() ?: return Result.success()
-        if (!storage.hasReadWritePermission(uri)) return Result.success()
+        val rootStorage = RootStorage(applicationContext)
+        val selectionStore = SourceSelectionStore(applicationContext)
+        val mode = selectionStore.mode()
 
         val config = WebDavConfigStore(applicationContext).load()
         if (!config.enabled || config.url.isBlank()) return Result.success()
 
-        val report = storage.importTree(uri).getOrElse { error ->
-            return if (runAttemptCount < 3) Result.retry() else Result.failure()
+        val sourceIdSeed: String
+        val report = when (mode) {
+            StorageMode.SAF -> {
+                val uri = storage.persistedTreeUri() ?: return Result.success()
+                if (!storage.hasReadWritePermission(uri)) return Result.success()
+                sourceIdSeed = uri.toString()
+                storage.importTree(uri).getOrElse {
+                    return if (runAttemptCount < 3) Result.retry() else Result.failure()
+                }
+            }
+
+            StorageMode.ROOT -> {
+                val path = rootStorage.persistedRootPath() ?: return Result.success()
+                sourceIdSeed = "root:$path"
+                rootStorage.importPath(path).getOrElse {
+                    return if (runAttemptCount < 3) Result.retry() else Result.failure()
+                }
+            }
         }
         val preferences = applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        val sourceId = SnapshotNaming.sourceId(uri.toString())
+        val sourceId = SnapshotNaming.sourceId(sourceIdSeed)
         if (preferences.getString(LAST_MANIFEST_KEY, null) == report.manifestHash) {
             return Result.success()
         }
