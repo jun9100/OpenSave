@@ -20,22 +20,60 @@ jobs:
         with:
           node-version: "22"
       - name: Install Wails and NSIS
-        shell: bash
+        shell: pwsh
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
-          choco install nsis -y --no-progress
-          echo 'C:\Program Files (x86)\NSIS' >> "$GITHUB_PATH"
+          function Find-Makensis {
+            $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
+            if ($command) { return $command.Source }
+            $programFilesX86 = ${env:ProgramFiles(x86)}
+            foreach ($candidate in @(
+              (Join-Path $programFilesX86 'NSIS\makensis.exe'),
+              (Join-Path $env:ProgramFiles 'NSIS\makensis.exe'),
+              (Join-Path $env:ChocolateyInstall 'bin\makensis.exe')
+            )) {
+              if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { return $candidate }
+            }
+            return $null
+          }
+
+          $makensis = Find-Makensis
+          if (-not $makensis) {
+            choco install nsis -y --no-progress
+            $makensis = Find-Makensis
+          }
+          if (-not $makensis) {
+            throw "NSIS installed but makensis.exe could not be located"
+          }
+          & $makensis /VERSION
+          $nsisDir = Split-Path -Parent $makensis
+          $nsisDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "NSIS_MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build Windows app, CLI, and relay
-        shell: bash
+        shell: pwsh
         run: |
-          V="${GITHUB_REF_NAME#v}"
-          LD="-s -w -X github.com/opensave/opensave/internal/version.Version=$V -X github.com/opensave/opensave/internal/version.BuildTime=$(date +%s)"
-          (cd cmd/opensave-app && OPENSAVE_VERSION="$V" wails build -nsis -ldflags "$LD")
-          go build -ldflags="$LD" -o dist/opensave-cli.exe ./cmd/opensave-cli
-          go build -ldflags="$LD" -o dist/opensave-relay.exe ./cmd/opensave-relay
-          installer=(cmd/opensave-app/build/bin/*installer*.exe)
-          test -f "${installer[0]}"
-          mv "${installer[0]}" cmd/opensave-app/build/bin/OpenSave.Setup.exe
+          $version = $env:GITHUB_REF_NAME -replace '^v'
+          $ldflags = "-s -w -X github.com/opensave/opensave/internal/version.Version=$version -X github.com/opensave/opensave/internal/version.BuildTime=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+          if (-not $env:NSIS_MAKENSIS -or -not (Test-Path -LiteralPath $env:NSIS_MAKENSIS -PathType Leaf)) {
+            throw 'makensis.exe was not prepared by the dependency step'
+          }
+          $env:PATH = "$(Split-Path -Parent $env:NSIS_MAKENSIS);$env:PATH"
+
+          Push-Location cmd/opensave-app
+          $env:OPENSAVE_VERSION = $version
+          wails build -nsis -ldflags $ldflags
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          go build -ldflags=$ldflags -o dist/opensave-cli.exe ./cmd/opensave-cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -ldflags=$ldflags -o dist/opensave-relay.exe ./cmd/opensave-relay
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $installer = Get-ChildItem cmd/opensave-app/build/bin -Filter '*installer*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Wails did not produce an NSIS installer' }
+          Move-Item -Force $installer.FullName cmd/opensave-app/build/bin/OpenSave.Setup.exe
       - uses: actions/upload-artifact@v4
         with:
           name: windows
