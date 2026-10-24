@@ -102,7 +102,7 @@
         <option value="emulator-ryujinx">Ryujinx</option>
         <option value="emulator-generic">Other emulator</option>
       </select>
-      <span class="hint">Types stay separate in the library and EDEN_SYNCD backup storage.</span>
+      <span class="hint">Types stay separate in the library and game-save backup storage.</span>
     </div>
     <div class="field">
       <label for="g-name">{$t('home.addGame.name')}</label>

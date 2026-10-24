@@ -6,7 +6,7 @@ export const providers = [
   { id: 'dropbox', label: 'Dropbox', oauth: true, img: 'cloud/dropbox.png' },
   { id: 'local', label: 'Local Folder', oauth: false, icon: 'folder' },
   { id: 'webdav', label: 'WebDAV Server', oauth: false, icon: 'cloud' },
-  { id: 'eden_syncd', label: 'EDEN_SYNCD', oauth: false, icon: 'server' },
+  { id: 'eden_syncd', label: 'game-save', oauth: false, icon: 'server' },
   { id: 'webhook', label: 'HTTP Webhook', oauth: false, icon: 'webhook' }
 ];
 

@@ -14,7 +14,7 @@ import (
 	"github.com/opensave/opensave/internal/store"
 )
 
-// NormalizeEdenSyncdURL validates an EDEN_SYNCD service address. Native
+// NormalizeEdenSyncdURL validates a game-save service address. Native
 // OpenSave endpoints live below /v1/opensave and are appended by the client.
 func NormalizeEdenSyncdURL(value string) (string, error) {
 	value = strings.TrimSpace(value)
@@ -23,25 +23,25 @@ func NormalizeEdenSyncdURL(value string) (string, error) {
 	}
 	parsed, err := url.Parse(value)
 	if err != nil || parsed == nil {
-		return "", fmt.Errorf("invalid EDEN_SYNCD service address")
+		return "", fmt.Errorf("invalid game-save service address")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("EDEN_SYNCD service address must use http or https")
+		return "", fmt.Errorf("game-save service address must use http or https")
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("EDEN_SYNCD service address must include a host")
+		return "", fmt.Errorf("game-save service address must include a host")
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("EDEN_SYNCD service address cannot include credentials, a query, or a fragment")
+		return "", fmt.Errorf("game-save service address cannot include credentials, a query, or a fragment")
 	}
 	escapedPath := strings.ToLower(parsed.EscapedPath())
 	if strings.Contains(escapedPath, "%2f") || strings.Contains(escapedPath, "%5c") {
-		return "", fmt.Errorf("EDEN_SYNCD service address cannot contain encoded path separators")
+		return "", fmt.Errorf("game-save service address cannot contain encoded path separators")
 	}
 	basePath := strings.TrimRight(parsed.Path, "/")
 	for _, segment := range strings.Split(strings.Trim(basePath, "/"), "/") {
 		if segment == "." || segment == ".." {
-			return "", fmt.Errorf("EDEN_SYNCD service address cannot contain relative path segments")
+			return "", fmt.Errorf("game-save service address cannot contain relative path segments")
 		}
 	}
 	if strings.EqualFold(path.Base(basePath), "opensave") {
@@ -90,7 +90,7 @@ func (p edenSyncd) authorize(req *http.Request) {
 
 func (p edenSyncd) upload(f *os.File, size int64, fileName string) error {
 	if p.token() == "" {
-		return fmt.Errorf("EDEN_SYNCD sync key is required")
+		return fmt.Errorf("game-save sync key is required")
 	}
 	req, err := http.NewRequest(http.MethodPut, p.endpoint(p.fileType(fileName), fileName), f)
 	if err != nil {
@@ -109,7 +109,7 @@ func (p edenSyncd) upload(f *os.File, size int64, fileName string) error {
 
 func (p edenSyncd) list() ([]CloudFile, error) {
 	if p.token() == "" {
-		return nil, fmt.Errorf("EDEN_SYNCD sync key is required")
+		return nil, fmt.Errorf("game-save sync key is required")
 	}
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(p.cfg.URL, "/")+"/v1/opensave/files", nil)
 	if err != nil {
