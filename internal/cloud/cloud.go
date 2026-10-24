@@ -1,5 +1,5 @@
-// Package cloud implements snapshot backup to six providers — Google
-// Drive, Dropbox, OneDrive, WebDAV, webhook, and a local folder — porting
+// Package cloud implements snapshot backup to Google Drive, Dropbox, OneDrive,
+// WebDAV, EDEN_SYNCD, webhook, and a local folder — porting
 // src/daemon/cloud.js. API base URLs are injectable so tests can stand in
 // httptest servers for every provider.
 package cloud
@@ -109,6 +109,9 @@ func Ready(cfg store.CloudConfig) bool {
 	switch cfg.Provider {
 	case "local", "webdav", "webhook":
 		return strings.TrimSpace(cfg.URL) != ""
+	case "eden_syncd":
+		_, err := NormalizeEdenSyncdURL(cfg.URL)
+		return err == nil && strings.TrimSpace(cfg.URL) != ""
 	case "google_drive", "dropbox", "onedrive":
 		return cfg.AccessToken != "" || cfg.RefreshToken != ""
 	}

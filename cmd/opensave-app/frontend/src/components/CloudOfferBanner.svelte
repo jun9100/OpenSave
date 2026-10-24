@@ -24,6 +24,7 @@
     onedrive: 'OneDrive',
     dropbox: 'Dropbox',
     webdav: 'your WebDAV server',
+    eden_syncd: 'EDEN_SYNCD',
     local: 'your backup folder'
   };
 

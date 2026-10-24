@@ -31,6 +31,13 @@ func (s *Service) providerFor(cfg store.CloudConfig) (provider, bool) {
 		return localFolder{cfg: cfg}, true
 	case "webdav":
 		return webDAV{s: s, cfg: cfg}, true
+	case "eden_syncd":
+		normalized, err := NormalizeEdenSyncdURL(cfg.URL)
+		if err != nil {
+			return failedProvider{err: err}, true
+		}
+		cfg.URL = normalized
+		return webDAV{s: s, cfg: cfg}, true
 	case "webhook":
 		return webhook{s: s, cfg: cfg}, true
 	case "google_drive":
@@ -42,3 +49,15 @@ func (s *Service) providerFor(cfg store.CloudConfig) (provider, bool) {
 	}
 	return nil, false
 }
+
+// failedProvider keeps a malformed built-in provider distinct from an
+// unsupported provider. Callers can surface its concrete setup error instead
+// of quietly treating EDEN_SYNCD as a provider this build does not know.
+type failedProvider struct {
+	err error
+}
+
+func (p failedProvider) upload(*os.File, int64, string) error { return p.err }
+func (p failedProvider) list() ([]CloudFile, error)           { return nil, p.err }
+func (p failedProvider) download(string, string) error        { return p.err }
+func (p failedProvider) remove(CloudFile) error               { return p.err }

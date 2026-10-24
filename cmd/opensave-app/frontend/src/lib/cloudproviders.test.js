@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudTiles, connectedProviderOf, isEmail, providerStatus } from './cloudproviders.js';
+import { cloudTiles, connectedProviderOf, isEmail, providerStatus, providers } from './cloudproviders.js';
 
 describe('connectedProviderOf', () => {
   it('is the OAuth provider the tokens were issued for', () => {
@@ -32,8 +32,21 @@ describe('providerStatus', () => {
     expect(providerStatus('webdav', null, local)).toBe('Not configured');
     expect(providerStatus('local', null, { provider: 'local', url: '' })).toBe('Not configured');
   });
+  it('treats EDEN_SYNCD as a configured non-OAuth provider', () => {
+    const eden = { provider: 'eden_syncd', url: 'https://nas.example/opensave' };
+    expect(providerStatus('eden_syncd', null, eden)).toBe('Configured');
+  });
   it('says nothing before the settings load', () => {
     expect(providerStatus('local', null, null)).toBe('');
+  });
+});
+
+describe('providers', () => {
+  it('offers EDEN_SYNCD as a first-class cloud destination', () => {
+    expect(providers.find((provider) => provider.id === 'eden_syncd')).toMatchObject({
+      label: 'EDEN_SYNCD',
+      oauth: false
+    });
   });
 });
 
