@@ -31,6 +31,47 @@ type CloudFile struct {
 	CreatedTime string `json:"createdTime"`
 }
 
+// IsTypedStorageProvider reports whether a provider separates snapshots by
+// their save type. The ID of an eden_syncd CloudFile is its server namespace;
+// IDs from other providers are provider-specific opaque identifiers instead.
+func IsTypedStorageProvider(provider string) bool {
+	return provider == "eden_syncd"
+}
+
+// SaveTypeScope returns the namespace used for a save category. Databases
+// created before save types existed have an empty value, which is PC by
+// definition and must remain compatible with their existing cloud copies.
+func SaveTypeScope(saveType string) string {
+	saveType = strings.TrimSpace(saveType)
+	if saveType == "" {
+		return "pc"
+	}
+	return saveType
+}
+
+// MatchesSaveType reports whether a listed cloud item belongs to a game's
+// save type. Flat providers do not expose a type namespace, so all their
+// items keep the historical matching behavior.
+func MatchesSaveType(provider, itemType, saveType string) bool {
+	return !IsTypedStorageProvider(provider) || SaveTypeScope(itemType) == SaveTypeScope(saveType)
+}
+
+// ScopedName is a map key for a cloud item. Other providers have one flat
+// namespace, while eden_syncd keeps pc, switch, and emulator saves separate.
+func ScopedName(provider, saveType, name string) string {
+	if !IsTypedStorageProvider(provider) {
+		return name
+	}
+	return SaveTypeScope(saveType) + "\x00" + name
+}
+
+// RetryKey identifies an unfinished upload locally. Unlike a provider's
+// layout it is always typed, so switching providers while offline does not
+// collapse pending PC and emulator copies with the same remote filename.
+func RetryKey(saveType, name string) string {
+	return SaveTypeScope(saveType) + "\x00" + name
+}
+
 // Endpoints holds provider API bases; override in tests.
 type Endpoints struct {
 	GoogleAPI      string // https://www.googleapis.com
@@ -350,6 +391,13 @@ func errListTooLong(provider string) error {
 
 // Download fetches a remote snapshot to localPath.
 func (s *Service) Download(fileName, localPath string) error {
+	return s.DownloadFile(CloudFile{Name: fileName}, localPath)
+}
+
+// DownloadFile fetches one listed cloud item to localPath. Most providers
+// address files by name, but typed providers also need the item's namespace
+// so two same-named PC and emulator snapshots cannot be confused.
+func (s *Service) DownloadFile(file CloudFile, localPath string) error {
 	cfg, err := s.config()
 	if err != nil {
 		return err
@@ -358,7 +406,12 @@ func (s *Service) Download(fileName, localPath string) error {
 	if !ok {
 		return fmt.Errorf("downloading is not supported for provider: %s", cfg.Provider)
 	}
-	return p.download(fileName, localPath)
+	if typed, ok := p.(interface {
+		downloadFile(CloudFile, string) error
+	}); ok {
+		return typed.downloadFile(file, localPath)
+	}
+	return p.download(file.Name, localPath)
 }
 
 // Delete removes one remote snapshot. Webhook destinations are fire-and-
@@ -377,10 +430,9 @@ func (s *Service) Delete(f CloudFile) error {
 
 // PruneGameBranch keeps the newest `keep` remote snapshots of one game
 // branch and deletes the rest — the cloud-side mirror of local snapshot
-// retention. matchName reports whether a remote file belongs to the
-// game+branch (the caller owns the naming scheme). keep <= 0 disables
-// pruning.
-func (s *Service) PruneGameBranch(matchName func(string) bool, keep int) (int, error) {
+// retention. match reports whether an item belongs to the game, branch, and
+// (where present) save-type namespace. keep <= 0 disables pruning.
+func (s *Service) PruneGameBranch(match func(CloudFile) bool, keep int) (int, error) {
 	if keep <= 0 {
 		return 0, nil
 	}
@@ -390,7 +442,7 @@ func (s *Service) PruneGameBranch(matchName func(string) bool, keep int) (int, e
 	}
 	var matches []CloudFile
 	for _, f := range files {
-		if matchName(f.Name) {
+		if match(f) {
 			matches = append(matches, f)
 		}
 	}

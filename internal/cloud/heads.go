@@ -173,13 +173,19 @@ func (s *Service) PublishHead(h Head, at time.Time) (string, error) {
 
 // FetchHead downloads and reads one head file.
 func (s *Service) FetchHead(name string) (Head, error) {
+	return s.FetchHeadFile(CloudFile{Name: name})
+}
+
+// FetchHeadFile downloads and reads one listed head file. Keeping the
+// CloudFile type reaches the correct native namespace when names coincide.
+func (s *Service) FetchHeadFile(file CloudFile) (Head, error) {
 	dir, err := os.MkdirTemp("", "opensave-head-*")
 	if err != nil {
 		return Head{}, err
 	}
 	defer os.RemoveAll(dir)
 	tmp := filepath.Join(dir, "head.zip")
-	if err := s.Download(name, tmp); err != nil {
+	if err := s.DownloadFile(file, tmp); err != nil {
 		return Head{}, err
 	}
 	return ReadHeadFile(tmp)

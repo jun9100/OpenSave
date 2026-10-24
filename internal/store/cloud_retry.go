@@ -3,8 +3,10 @@ package store
 import "fmt"
 
 // CloudRetry is a snapshot whose cloud copy failed to go up, kept until it
-// does. See migrations/0036_cloud_upload_retry.sql.
+// does. RemoteKey is local bookkeeping: it separates save types even when
+// their provider filenames are equal. See migrations/0039_cloud_retry_key.sql.
 type CloudRetry struct {
+	RemoteKey  string `db:"remote_key"`
 	RemoteName string `db:"remote_name"`
 	GameID     string `db:"game_id"`
 	ZipPath    string `db:"zip_path"`
@@ -14,15 +16,16 @@ type CloudRetry struct {
 
 // NoteCloudUploadFailed keeps a failed upload to try again, counting the
 // attempts when it has failed before.
-func (s *Store) NoteCloudUploadFailed(gameID, remoteName, zipPath string, atMs int64) error {
+func (s *Store) NoteCloudUploadFailed(remoteKey, gameID, remoteName, zipPath string, atMs int64) error {
 	_, err := s.db.Exec(`
-		INSERT INTO cloud_upload_retry (remote_name, game_id, zip_path, failed_at_ms)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(remote_name) DO UPDATE SET
+		INSERT INTO cloud_upload_retry (remote_key, remote_name, game_id, zip_path, failed_at_ms)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(remote_key) DO UPDATE SET
+			remote_name = excluded.remote_name,
 			zip_path = excluded.zip_path,
 			failed_at_ms = excluded.failed_at_ms,
 			attempts = attempts + 1`,
-		remoteName, gameID, zipPath, atMs)
+		remoteKey, remoteName, gameID, zipPath, atMs)
 	if err != nil {
 		return fmt.Errorf("note failed upload of %s: %w", remoteName, err)
 	}
@@ -34,17 +37,17 @@ func (s *Store) NoteCloudUploadFailed(gameID, remoteName, zipPath string, atMs i
 func (s *Store) CloudRetries() ([]CloudRetry, error) {
 	var out []CloudRetry
 	if err := s.db.Select(&out, `
-		SELECT remote_name, game_id, zip_path, failed_at_ms, attempts
-		FROM cloud_upload_retry ORDER BY failed_at_ms, remote_name`); err != nil {
+		SELECT remote_key, remote_name, game_id, zip_path, failed_at_ms, attempts
+		FROM cloud_upload_retry ORDER BY failed_at_ms, remote_key`); err != nil {
 		return nil, fmt.Errorf("list failed uploads: %w", err)
 	}
 	return out, nil
 }
 
 // ForgetCloudRetry drops a failed upload: sent now, or nothing left to send.
-func (s *Store) ForgetCloudRetry(remoteName string) error {
-	if _, err := s.db.Exec(`DELETE FROM cloud_upload_retry WHERE remote_name = ?`, remoteName); err != nil {
-		return fmt.Errorf("forget failed upload of %s: %w", remoteName, err)
+func (s *Store) ForgetCloudRetry(remoteKey string) error {
+	if _, err := s.db.Exec(`DELETE FROM cloud_upload_retry WHERE remote_key = ?`, remoteKey); err != nil {
+		return fmt.Errorf("forget failed upload of %s: %w", remoteKey, err)
 	}
 	return nil
 }

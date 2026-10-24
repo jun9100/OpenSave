@@ -92,6 +92,11 @@ func (s *Server) handleCloudCheck(w http.ResponseWriter, r *http.Request) {
 // by game, so the UI can present a browsable explorer rather than a flat
 // per-game list. Games with no cloud snapshots are omitted.
 func (s *Server) handleCloudBrowse(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.Daemon.Store.GetCloudConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	files, err := s.Daemon.Cloud.List()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -106,6 +111,7 @@ func (s *Server) handleCloudBrowse(w http.ResponseWriter, r *http.Request) {
 	type gameGroup struct {
 		GameID    string       `json:"gameId"`
 		GameName  string       `json:"gameName"`
+		SaveType  string       `json:"saveType"`
 		Count     int          `json:"count"`
 		TotalSize int64        `json:"totalSize"`
 		Snapshots []remoteSnap `json:"snapshots"`
@@ -139,15 +145,22 @@ func (s *Server) handleCloudBrowse(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		gameID := resolve(rawID)
-		g, exists := groups[gameID]
+		saveType := cloud.SaveTypeScope(f.ID)
+		key := cloud.ScopedName(cfg.Provider, saveType, gameID)
+		g, exists := groups[key]
 		if !exists {
 			name := gameID
 			if game, err := s.Daemon.Store.GetGame(gameID); err == nil && game.Name != "" {
 				name = game.Name
+				// Flat providers do not return a namespace. A tracked game's
+				// type still lets the client match its existing cloud tile.
+				if !cloud.IsTypedStorageProvider(cfg.Provider) {
+					saveType = cloud.SaveTypeScope(game.SaveType)
+				}
 			}
-			g = &gameGroup{GameID: gameID, GameName: name}
-			groups[gameID] = g
-			order = append(order, gameID)
+			g = &gameGroup{GameID: gameID, GameName: name, SaveType: saveType}
+			groups[key] = g
+			order = append(order, key)
 		}
 		g.Snapshots = append(g.Snapshots, remoteSnap{CloudFile: f, Branch: branch, SnapshotID: snapID})
 		g.Count++
@@ -155,8 +168,8 @@ func (s *Server) handleCloudBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]*gameGroup, 0, len(order))
-	for _, id := range order {
-		out = append(out, groups[id])
+	for _, key := range order {
+		out = append(out, groups[key])
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -233,6 +246,16 @@ func (s *Server) handleAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 // (names encode gameId__branch__snapId.zip).
 func (s *Server) handleCloudSnapshots(w http.ResponseWriter, r *http.Request) {
 	gameID := chi.URLParam(r, "gameId")
+	game, err := s.Daemon.Store.GetGame(gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	cfg, err := s.Daemon.Store.GetCloudConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	files, err := s.Daemon.Cloud.List()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -252,7 +275,7 @@ func (s *Server) handleCloudSnapshots(w http.ResponseWriter, r *http.Request) {
 	matches := []remoteSnap{}
 	for _, f := range files {
 		g, branch, snapID, ok := snapshot.ParseExportEntryName(f.Name)
-		if !ok || !accepted[g] {
+		if !ok || !accepted[g] || !cloud.MatchesSaveType(cfg.Provider, f.ID, game.SaveType) {
 			continue
 		}
 		matches = append(matches, remoteSnap{CloudFile: f, Branch: branch, SnapshotID: snapID})
@@ -289,6 +312,7 @@ func (s *Server) handleCloudRestore(w http.ResponseWriter, r *http.Request) {
 	gameID := chi.URLParam(r, "gameId")
 	var body struct {
 		FileName string `json:"fileName"`
+		ID       string `json:"id"`
 	}
 	if err := readJSON(r, &body); err != nil || body.FileName == "" {
 		writeError(w, http.StatusBadRequest, "fileName is required")
@@ -317,6 +341,20 @@ func (s *Server) handleCloudRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	cfg, err := s.Daemon.Store.GetCloudConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cloud.IsTypedStorageProvider(cfg.Provider) {
+		if body.ID != "" && !cloud.MatchesSaveType(cfg.Provider, body.ID, game.SaveType) {
+			writeError(w, http.StatusBadRequest, "snapshot save type does not match this game")
+			return
+		}
+		// Older CLI clients did not send an id. Deriving it server-side keeps
+		// them safe while current clients carry the listed namespace explicitly.
+		body.ID = cloud.SaveTypeScope(game.SaveType)
+	}
 
 	settings, err := s.Daemon.Store.GetSettings()
 	if err != nil {
@@ -330,7 +368,7 @@ func (s *Server) handleCloudRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	destPath := filepath.Join(destDir, snapID+".zip")
 
-	if err := s.Daemon.Cloud.Download(body.FileName, destPath); err != nil {
+	if err := s.Daemon.Cloud.DownloadFile(cloud.CloudFile{ID: body.ID, Name: body.FileName}, destPath); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -382,6 +420,23 @@ func (s *Server) handleCloudDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "fileName does not belong to this game")
 		return
 	}
+	game, err := s.Daemon.Store.GetGame(gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	cfg, err := s.Daemon.Store.GetCloudConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cloud.IsTypedStorageProvider(cfg.Provider) {
+		if body.ID != "" && !cloud.MatchesSaveType(cfg.Provider, body.ID, game.SaveType) {
+			writeError(w, http.StatusBadRequest, "snapshot save type does not match this game")
+			return
+		}
+		body.ID = cloud.SaveTypeScope(game.SaveType)
+	}
 
 	if err := s.Daemon.Cloud.Delete(cloud.CloudFile{ID: body.ID, Name: body.FileName}); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -396,6 +451,16 @@ func (s *Server) handleCloudDelete(w http.ResponseWriter, r *http.Request) {
 // provider forever. Local snapshots are untouched.
 func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 	gameID := chi.URLParam(r, "gameId")
+	game, err := s.Daemon.Store.GetGame(gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	cfg, err := s.Daemon.Store.GetCloudConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	files, err := s.Daemon.Cloud.List()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -418,6 +483,9 @@ func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 	}
 	deleted, failed := 0, 0
 	for _, f := range files {
+		if !cloud.MatchesSaveType(cfg.Provider, f.ID, game.SaveType) {
+			continue
+		}
 		if g, dev, _, ok := cloud.ParseHeadFileName(f.Name); ok {
 			if g == gameID && ownKey != "" && dev == ownKey {
 				_ = s.Daemon.Cloud.Delete(f)
@@ -443,8 +511,14 @@ func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 // provider doesn't have yet.
 func (s *Server) handleCloudSyncLocal(w http.ResponseWriter, r *http.Request) {
 	gameID := chi.URLParam(r, "gameId")
-	if _, err := s.Daemon.Store.GetGame(gameID); err != nil {
+	game, err := s.Daemon.Store.GetGame(gameID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	cfg, err := s.Daemon.Store.GetCloudConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -460,7 +534,7 @@ func (s *Server) handleCloudSyncLocal(w http.ResponseWriter, r *http.Request) {
 	// left behind looks like a backup while containing nothing.
 	remoteSizes := map[string]int64{}
 	for _, f := range remote {
-		remoteSizes[f.Name] = f.SizeBytes
+		remoteSizes[cloud.ScopedName(cfg.Provider, f.ID, f.Name)] = f.SizeBytes
 	}
 
 	branches, err := s.Daemon.Store.ListBranches(gameID)
@@ -485,7 +559,8 @@ func (s *Server) handleCloudSyncLocal(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, snap := range snaps {
 			remoteName := fmt.Sprintf("%s__%s__%s.zip", gameID, branch, snap.ID)
-			if size, present := remoteSizes[remoteName]; present && size == snap.SizeBytes {
+			remoteKey := cloud.ScopedName(cfg.Provider, game.SaveType, remoteName)
+			if size, present := remoteSizes[remoteKey]; present && size == snap.SizeBytes {
 				skipped++
 				continue
 			} else if present {

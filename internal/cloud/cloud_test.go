@@ -281,8 +281,8 @@ func TestPruneGameBranch(t *testing.T) {
 		_ = os.Chtimes(filepath.Join(destDir, n), older, older)
 	}
 
-	pruned, err := svc.PruneGameBranch(func(name string) bool {
-		return strings.HasPrefix(name, "game__main__")
+	pruned, err := svc.PruneGameBranch(func(file CloudFile) bool {
+		return strings.HasPrefix(file.Name, "game__main__")
 	}, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -308,7 +308,7 @@ func TestPruneGameBranch(t *testing.T) {
 	}
 
 	// keep <= 0 disables pruning entirely.
-	if n, _ := svc.PruneGameBranch(func(string) bool { return true }, 0); n != 0 {
+	if n, _ := svc.PruneGameBranch(func(CloudFile) bool { return true }, 0); n != 0 {
 		t.Errorf("keep=0 pruned %d files; retention should be disabled", n)
 	}
 }

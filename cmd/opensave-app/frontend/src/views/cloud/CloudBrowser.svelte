@@ -5,7 +5,7 @@
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { gameList, toast, cloudUploadEvent, askConfirm } from '../../lib/stores.js';
   import { api, gameCover } from '../../lib/api.js';
-  import { cloudTiles } from '../../lib/cloudproviders.js';
+  import { cloudTiles, saveTypeLabel } from '../../lib/cloudproviders.js';
   import { fmtSize } from '../../lib/format.js';
   import Modal from '../../components/ui/Modal.svelte';
   import ModalFoot from '../../components/ui/ModalFoot.svelte';
@@ -77,7 +77,7 @@
       (tab === 'all' || (tab === 'cloud' ? !!t.cloud : !t.cloud)) &&
       t.name.toLowerCase().includes(filter.trim().toLowerCase())
   );
-  $: detail = detailId ? tiles.find((t) => t.id === detailId) : null;
+  $: detail = detailId ? tiles.find((t) => t.key === detailId) : null;
   $: totals = (cloudGames ?? []).reduce((a, g) => ({ snaps: a.snaps + g.count, size: a.size + g.totalSize }), {
     snaps: 0,
     size: 0
@@ -111,7 +111,7 @@
     if (!(await askConfirm(`Restore ${file.snapshotId} from the cloud over your current save?`, { title: 'Restore from cloud?', confirmText: 'Restore' }))) return;
     busy.set(true);
     try {
-      await api.post(`/api/cloud/restore/${gameId}`, { fileName: file.name });
+      await api.post(`/api/cloud/restore/${gameId}`, { fileName: file.name, id: file.id ?? '' });
       toast('Restored from cloud', 'success');
     } catch (e) {
       handleCloudError(e);
@@ -168,6 +168,7 @@
       <div class="detail-title">
         <strong>{detail.name}</strong>
         <span class="quiet">
+          {saveTypeLabel(detail.saveType)} ·
           {#if detail.cloud}
             {detail.cloud.count} snapshot{detail.cloud.count === 1 ? '' : 's'} · {fmtSize(detail.cloud.totalSize)} in the cloud
           {:else}
@@ -238,7 +239,7 @@
 
     <div class="list">
       <div class="grid">
-        {#each filtered as t (t.id)}
+        {#each filtered as t (t.key)}
           <CoverTile
             name={t.name}
             src={t.coverUrl}
@@ -246,11 +247,12 @@
             badge={t.cloud ? String(t.cloud.count) : 'local only'}
             badgeIcon={t.cloud ? Cloud : null}
             badgeAccent={!!t.cloud}
+            meta={saveTypeLabel(t.saveType)}
             hoverLayout="center"
-            on:activate={() => (detailId = t.id)}
+            on:activate={() => (detailId = t.key)}
           >
             <svelte:fragment slot="hover">
-              <button class="btn small primary" on:click|stopPropagation={() => (detailId = t.id)}>
+              <button class="btn small primary" on:click|stopPropagation={() => (detailId = t.key)}>
                 {t.cloud ? 'Browse' : 'Upload'}
               </button>
             </svelte:fragment>
