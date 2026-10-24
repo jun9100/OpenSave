@@ -556,6 +556,7 @@ func (s *Server) gamePayload(g store.Game) map[string]any {
 		"appId":              g.AppID,
 		"exePath":            g.ExePath,
 		"coverUrl":           g.CoverURL,
+		"saveType":           g.SaveType,
 		// Whether the art cached for this game is explicit, so the client can
 		// blur it until someone asks to see it. An <img src> cannot read a
 		// response header, so it travels with the game rather than the image.

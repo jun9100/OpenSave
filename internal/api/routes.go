@@ -350,6 +350,7 @@ func (s *Server) handleTrackGame(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		SavePath string `json:"savePath"`
 		AppID    string `json:"appId"`
+		SaveType string `json:"saveType"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -359,8 +360,12 @@ func (s *Server) handleTrackGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and savePath are required")
 		return
 	}
+	if !validSaveType(body.SaveType) {
+		writeError(w, http.StatusBadRequest, "invalid saveType")
+		return
+	}
 
-	game, err := s.Daemon.TrackGame(store.Game{Name: body.Name, SavePath: body.SavePath, AppID: body.AppID})
+	game, err := s.Daemon.TrackGame(store.Game{Name: body.Name, SavePath: body.SavePath, AppID: body.AppID, SaveType: body.SaveType})
 	if err != nil {
 		// Duplicates (id or path) are conflicts; anything else the daemon
 		// rejects is bad input.
@@ -392,6 +397,10 @@ func (s *Server) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	game.ID = gameID // id is not client-mutable
+	if !validSaveType(game.SaveType) {
+		writeError(w, http.StatusBadRequest, "invalid saveType")
+		return
+	}
 
 	// A changed save path is validated exactly as a fresh track is. This
 	// decoded straight into the stored game and wrote it back, so a path that
@@ -475,6 +484,22 @@ func (s *Server) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
 
 	s.BroadcastGamesUpdate()
 	writeJSON(w, http.StatusOK, s.gamePayload(game))
+}
+
+func validSaveType(value string) bool {
+	if value == "" || value == "pc" || value == "switch" {
+		return true
+	}
+	if !strings.HasPrefix(value, "emulator-") || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // isSteamCover reports whether a cover URL is an auto-generated Steam CDN

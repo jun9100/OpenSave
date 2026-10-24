@@ -43,6 +43,9 @@ type Game struct {
 	AppID              string `db:"app_id" json:"appId"`
 	ExePath            string `db:"exe_path" json:"exePath"`
 	CoverURL           string `db:"cover_url" json:"coverUrl"`
+	// SaveType prevents a PC title and an emulator title with the same game id
+	// from sharing a cloud backup namespace. Old databases migrate to pc.
+	SaveType string `db:"save_type" json:"saveType"`
 	// LastManifestHash is the manifest hash at the moment of the last
 	// auto-snapshot; the watcher compares against it before snapshotting
 	// again, preventing feedback loops (snapshot -> event -> snapshot).
@@ -84,6 +87,9 @@ func (s *Store) CreateGame(g Game) error {
 	if g.MaxSnapshots == 0 {
 		g.MaxSnapshots = 20
 	}
+	if g.SaveType == "" {
+		g.SaveType = "pc"
+	}
 
 	tx, err := s.db.Beginx()
 	if err != nil {
@@ -92,8 +98,8 @@ func (s *Store) CreateGame(g Game) error {
 	defer tx.Rollback()
 
 	_, err = tx.NamedExec(`
-		INSERT INTO games (id, name, save_path, active_branch, auto_sync, max_snapshots, max_manual_snapshots, app_id, exe_path, cover_url)
-		VALUES (:id, :name, :save_path, :active_branch, :auto_sync, :max_snapshots, :max_manual_snapshots, :app_id, :exe_path, :cover_url)`,
+		INSERT INTO games (id, name, save_path, active_branch, auto_sync, max_snapshots, max_manual_snapshots, app_id, exe_path, cover_url, save_type)
+		VALUES (:id, :name, :save_path, :active_branch, :auto_sync, :max_snapshots, :max_manual_snapshots, :app_id, :exe_path, :cover_url, :save_type)`,
 		g)
 	if err != nil {
 		return fmt.Errorf("insert game: %w", err)
@@ -158,6 +164,7 @@ func (s *Store) UpdateGame(g Game) error {
 			app_id = :app_id,
 			exe_path = :exe_path,
 			cover_url = :cover_url,
+			save_type = :save_type,
 			last_manifest_hash = :last_manifest_hash,
 			sync_ignore = :sync_ignore
 		WHERE id = :id`, g)

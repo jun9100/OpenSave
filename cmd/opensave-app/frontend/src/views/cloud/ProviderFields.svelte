@@ -27,10 +27,17 @@
       placeholder={config.provider === 'eden_syncd' ? 'https://nas.example:8788' : 'https://nas.local/dav/opensave/'}
     />
     {#if config.provider === 'eden_syncd'}
-      <span class="hint">Use the EDEN_SYNCD service address. OpenSave adds its dedicated <code>/opensave</code> collection automatically.</span>
+      <span class="hint">Use the EDEN_SYNCD service address. OpenSave uses its native sync API; WebDAV is not used.</span>
     {/if}
   </div>
   <div class="two">
+    {#if config.provider === 'eden_syncd'}
+      <div class="field two-wide">
+        <label for="cb-pass">Sync key</label>
+        <input id="cb-pass" type="password" bind:value={config.password} autocomplete="off" />
+        <span class="hint">The EDEN_SYNCD sync key. It is used directly for authenticated save synchronization.</span>
+      </div>
+    {:else}
     <div class="field">
       <label for="cb-user">Username</label>
       <input id="cb-user" bind:value={config.username} />
@@ -39,6 +46,7 @@
       <label for="cb-pass">Password</label>
       <input id="cb-pass" type="password" bind:value={config.password} />
     </div>
+    {/if}
   </div>
 {:else if config.provider === 'webhook'}
   <div class="field">
@@ -57,4 +65,5 @@
     grid-template-columns: 1fr 1fr;
     gap: 12px;
   }
+  .two-wide { grid-column: 1 / -1; }
 </style>

@@ -39,6 +39,7 @@
   let scanResults = null;
   let scanFilter = '';
   let scanType = 'all';
+	let saveType = 'pc';
   let selected = new Set();
   let selectedCount = 0; // reactive mirror of selected.size
   let showTracked = false; // include saves already being tracked
@@ -136,7 +137,8 @@
 
   $: filteredResults = scanPool.filter((r) => {
     if (!showTracked && trackedPaths.has(normPath(r.savePath))) return false;
-    if (scanType !== 'all' && r.type !== scanType) return false;
+    if (scanType === 'pc' && r.type === 'emulator') return false;
+    if (scanType === 'emulator' && r.type !== 'emulator') return false;
     if (scanFilter && !`${r.name} ${r.savePath}`.toLowerCase().includes(scanFilter.toLowerCase())) return false;
     return true;
   });
@@ -149,9 +151,8 @@
   $: orderedGroups = [...availableGroups, ...trackedGroups];
   $: scanCounts = {
     all: scanPool.length,
-    emulator: scanPool.filter((r) => r.type === 'emulator').length,
-    repack: scanPool.filter((r) => r.type === 'repack').length,
-    game: scanPool.filter((r) => r.type === 'game').length
+    pc: scanPool.filter((r) => r.type !== 'emulator').length,
+    emulator: scanPool.filter((r) => r.type === 'emulator').length
   };
 
   function toggleSelect(id) {
@@ -193,7 +194,8 @@
     const created = await api.post('/api/games', {
       name: primary.name,
       savePath: primary.savePath,
-      appId: primary.appId ?? ''
+      appId: primary.appId ?? '',
+      saveType: primary.type === 'emulator' ? saveType : 'pc'
     });
     const gameId = created?.id;
     const failed = [];
@@ -299,9 +301,8 @@
   const typeIcon = (t) => (t === 'emulator' ? Joystick : t === 'repack' ? Package : Gamepad2);
   $: typeTabs = [
     ['all', $t('home.scan.tab.all')],
-    ['game', $t('home.scan.tab.games')],
-    ['emulator', $t('home.scan.tab.emulators')],
-    ['repack', $t('home.scan.tab.repacks')]
+    ['pc', 'PC'],
+    ['emulator', $t('home.scan.tab.emulators')]
   ];
 </script>
 
@@ -319,6 +320,18 @@
       <div class="toolbar">
         <SearchInput placeholder={$t('home.scan.filterPlaceholder')} bind:value={scanFilter} />
         <FilterTabs options={typeTabs} counts={scanCounts} bind:value={scanType} />
+        {#if scanType === 'emulator'}
+          <label class="save-type">
+            <span>Emulator</span>
+            <select bind:value={saveType}>
+              <option value="switch">Switch</option>
+              <option value="emulator-eden">Eden</option>
+              <option value="emulator-yuzu">Yuzu / Suyu</option>
+              <option value="emulator-ryujinx">Ryujinx</option>
+              <option value="emulator-generic">Other emulator</option>
+            </select>
+          </label>
+        {/if}
         <label class="toggle" title={$t('home.scan.showTrackedTitle')}>
           <input type="checkbox" bind:checked={showTracked} />
           {$t('home.scan.showTracked')}
@@ -435,6 +448,8 @@
     align-items: center;
     flex-wrap: wrap;
   }
+  .save-type { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 0.82rem; }
+  .save-type select { min-height: 30px; }
   .toggle {
     display: flex;
     align-items: center;

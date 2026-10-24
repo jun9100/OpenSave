@@ -111,7 +111,7 @@ func Ready(cfg store.CloudConfig) bool {
 		return strings.TrimSpace(cfg.URL) != ""
 	case "eden_syncd":
 		_, err := NormalizeEdenSyncdURL(cfg.URL)
-		return err == nil && strings.TrimSpace(cfg.URL) != ""
+		return err == nil && strings.TrimSpace(cfg.URL) != "" && strings.TrimSpace(cfg.Password) != ""
 	case "google_drive", "dropbox", "onedrive":
 		return cfg.AccessToken != "" || cfg.RefreshToken != ""
 	}

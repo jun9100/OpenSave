@@ -23,6 +23,7 @@
   let name = '';
   let typed = false; // once typed in, a late suggestion must not replace it
   let adding = false;
+  let saveType = 'pc';
   let nameInput;
   const canPick = native.isWails();
 
@@ -65,7 +66,7 @@
     if (!name.trim() || !path || adding) return;
     adding = true;
     try {
-      const game = await api.post('/api/games', { name: name.trim(), savePath: path });
+      const game = await api.post('/api/games', { name: name.trim(), savePath: path, saveType });
       toast($t('common.nowTracking', { name: game.name ?? name }), 'success');
       dispatch('close');
       navigate('game', { gameId: game.id });
@@ -90,6 +91,18 @@
       {:else}
         <input id="g-path" placeholder="C:\Users\you\AppData\…" bind:value={path} />
       {/if}
+    </div>
+    <div class="field">
+      <label for="g-save-type">Save type</label>
+      <select id="g-save-type" bind:value={saveType}>
+        <option value="pc">PC game</option>
+        <option value="switch">Switch</option>
+        <option value="emulator-eden">Eden</option>
+        <option value="emulator-yuzu">Yuzu / Suyu</option>
+        <option value="emulator-ryujinx">Ryujinx</option>
+        <option value="emulator-generic">Other emulator</option>
+      </select>
+      <span class="hint">Types stay separate in the library and EDEN_SYNCD backup storage.</span>
     </div>
     <div class="field">
       <label for="g-name">{$t('home.addGame.name')}</label>

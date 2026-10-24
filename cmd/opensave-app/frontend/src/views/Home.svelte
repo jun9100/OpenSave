@@ -24,6 +24,7 @@
 
   let scanner;
   let scanning = false;
+  let libraryType = 'all';
 
   // Tracking by hand: "Track folder" goes straight to the system's folder
   // picker, and the folder picked is then named (AddGameCard). A folder
@@ -90,7 +91,7 @@
     !$setupState.dismissed &&
     !setupSteps({ games: $gameList.length, peers: Object.keys($peers).length, cloud: $settings?.cloudSync?.ready, skipped: $setupState.skipped }).finished;
 
-  $: rows = $visibleGames.map((game) => ({
+  $: rows = $visibleGames.filter((game) => libraryType === 'all' || (libraryType === 'emulator' ? game.saveType?.startsWith('emulator-') : game.saveType === libraryType)).map((game) => ({
     game,
     status: gameStatus(game, {
       peers: $peers,
@@ -111,6 +112,15 @@
     <PauseButton />
     <button class="btn" on:click={trackFolder} title={$t('home.trackFolderTitle')}><FolderPlus size={16} />{$t('home.trackFolder')}</button>
   </div>
+
+  {#if $gameList.length > 0}
+    <div class="type-filter" aria-label="Save type filter">
+      <button class:active={libraryType === 'all'} on:click={() => (libraryType = 'all')}>All</button>
+      <button class:active={libraryType === 'pc'} on:click={() => (libraryType = 'pc')}>PC</button>
+      <button class:active={libraryType === 'switch'} on:click={() => (libraryType = 'switch')}>Switch</button>
+      <button class:active={libraryType === 'emulator'} on:click={() => (libraryType = 'emulator')}>Emulators</button>
+    </div>
+  {/if}
 </div>
 
 <OfferedGames />
@@ -171,6 +181,9 @@
     display: flex;
     gap: 8px;
   }
+  .type-filter { display: flex; gap: 6px; margin: -8px 0 16px; }
+  .type-filter button { border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 10px; background: var(--bg); color: var(--text-dim); cursor: pointer; }
+  .type-filter button.active { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
 
   .welcome {
     text-align: center;
