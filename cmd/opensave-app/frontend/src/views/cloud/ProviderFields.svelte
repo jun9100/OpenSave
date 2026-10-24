@@ -18,10 +18,17 @@
       <button class="btn" on:click={pickFolder}>Browse</button>
     </div>
   </div>
-{:else if config.provider === 'webdav'}
+{:else if config.provider === 'webdav' || config.provider === 'eden_syncd'}
   <div class="field">
-    <label for="cb-url">WebDAV URL</label>
-    <input id="cb-url" bind:value={config.url} placeholder="https://nas.local/dav/opensave/" />
+    <label for="cb-url">{config.provider === 'eden_syncd' ? 'EDEN_SYNCD service address' : 'WebDAV URL'}</label>
+    <input
+      id="cb-url"
+      bind:value={config.url}
+      placeholder={config.provider === 'eden_syncd' ? 'https://nas.example:8788' : 'https://nas.local/dav/opensave/'}
+    />
+    {#if config.provider === 'eden_syncd'}
+      <span class="hint">Use the EDEN_SYNCD service address. OpenSave adds its dedicated <code>/opensave</code> collection automatically.</span>
+    {/if}
   </div>
   <div class="two">
     <div class="field">

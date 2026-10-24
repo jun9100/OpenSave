@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/opensave/opensave/internal/cloud"
 	"github.com/opensave/opensave/internal/daemon"
 	"github.com/opensave/opensave/internal/p2p/syncengine"
 	"github.com/opensave/opensave/internal/snapshot"
@@ -287,6 +288,13 @@ func (s *Server) applyCloudPatch(patch *cloudSyncPatch) error {
 		for k, v := range patch.CustomClientSecrets {
 			cfg.CustomClientSecrets[k] = v
 		}
+	}
+	if cfg.Provider == "eden_syncd" && strings.TrimSpace(cfg.URL) != "" {
+		normalized, err := cloud.NormalizeEdenSyncdURL(cfg.URL)
+		if err != nil {
+			return err
+		}
+		cfg.URL = normalized
 	}
 	return s.Daemon.Store.UpdateCloudConfig(cfg)
 }

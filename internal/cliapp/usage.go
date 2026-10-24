@@ -79,7 +79,7 @@ var commandGroups = []commandGroup{
 	}},
 	{"Cloud backup", []commandEntry{
 		{"cloud connect <provider>", "Sign in to Google Drive, Dropbox or OneDrive"},
-		{"cloud setup <provider>", "Configure WebDAV, a webhook, or a local folder"},
+		{"cloud setup <provider>", "Configure WebDAV, EDEN_SYNCD, a webhook, or a local folder"},
 		{"cloud disconnect", "Forget the current provider"},
 		{"cloud status", "Provider and connection state"},
 		{"cloud browse", "Everything stored in the cloud"},

@@ -77,7 +77,7 @@ const cloudUsage = `usage:
   opensave cloud take <gameId>            Bring the newer save for a game here
   opensave cloud skip <gameId>            Keep this device's save instead
 
-  providers: google-drive, dropbox, onedrive, webdav, webhook, local
+  providers: google-drive, dropbox, onedrive, webdav, eden-syncd, webhook, local
 
   Signing in needs a browser, but not this machine's browser — connect prints
   a link you can open anywhere and paste the code back.`
@@ -94,6 +94,8 @@ func providerID(name string) string {
 		return "onedrive"
 	case "webdav":
 		return "webdav"
+	case "eden-syncd", "eden_syncd", "edensyncd":
+		return "eden_syncd"
 	case "webhook":
 		return "webhook"
 	case "local", "folder", "nas":
@@ -223,10 +225,10 @@ func cloudSetup(asJSON bool, args []string) int {
 		}
 		patch["url"] = abs
 
-	case "webdav":
+	case "webdav", "eden_syncd":
 		u := flagValue(rest, "--url")
 		if u == "" {
-			return fail(asJSON, fmt.Errorf("webdav needs --url <https://...>"))
+			return fail(asJSON, fmt.Errorf("%s needs --url <https://...>", provider))
 		}
 		patch["url"] = u
 		if v := flagValue(rest, "--user"); v != "" {
@@ -266,6 +268,7 @@ func cloudSetup(asJSON bool, args []string) int {
 const cloudSetupUsage = `usage:
   opensave cloud setup local   --path <folder>
   opensave cloud setup webdav  --url <url> [--user <u>] [--password <p>]
+  opensave cloud setup eden-syncd --url <service-url> [--user <u>] [--password <p>]
   opensave cloud setup webhook --url <url> [--headers '<json>']
 
   Google Drive, Dropbox and OneDrive sign in instead:
