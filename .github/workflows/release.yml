@@ -66,9 +66,9 @@ jobs:
           Pop-Location
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          go build -ldflags=$ldflags -o dist/opensave-cli.exe ./cmd/opensave-cli
+          go build -ldflags $ldflags -o dist/opensave-cli.exe ./cmd/opensave-cli
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go build -ldflags=$ldflags -o dist/opensave-relay.exe ./cmd/opensave-relay
+          go build -ldflags $ldflags -o dist/opensave-relay.exe ./cmd/opensave-relay
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $installer = Get-ChildItem cmd/opensave-app/build/bin -Filter '*installer*.exe' | Select-Object -First 1
