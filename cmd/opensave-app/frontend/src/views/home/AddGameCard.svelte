@@ -13,6 +13,7 @@
   import { navigate, toast } from '../../lib/stores.js';
   import { api, native } from '../../lib/api.js';
   import { folderName } from '../../lib/filedrop.js';
+  import { t } from '../../lib/i18n.js';
 
   const dispatch = createEventDispatcher();
 
@@ -22,6 +23,7 @@
   let name = '';
   let typed = false; // once typed in, a late suggestion must not replace it
   let adding = false;
+  let saveType = 'pc';
   let nameInput;
   const canPick = native.isWails();
 
@@ -45,7 +47,7 @@
   onMount(() => nameInput?.focus());
 
   async function pickFolder() {
-    const dir = await native.selectDirectory('Choose the save folder to track');
+    const dir = await native.selectDirectory($t('home.chooseFolderDialog'));
     if (dir) {
       typed = false;
       path = dir;
@@ -53,7 +55,7 @@
   }
 
   async function pickFile() {
-    const file = await native.selectFile('Choose the save file to track');
+    const file = await native.selectFile($t('home.addGame.chooseFile'));
     if (file) {
       typed = false;
       path = file;
@@ -64,8 +66,8 @@
     if (!name.trim() || !path || adding) return;
     adding = true;
     try {
-      const game = await api.post('/api/games', { name: name.trim(), savePath: path });
-      toast(`Now tracking "${game.name ?? name}"`, 'success');
+      const game = await api.post('/api/games', { name: name.trim(), savePath: path, saveType });
+      toast($t('common.nowTracking', { name: game.name ?? name }), 'success');
       dispatch('close');
       navigate('game', { gameId: game.id });
     } catch (e) {
@@ -76,39 +78,51 @@
   }
 </script>
 
-<Modal title="Track a game" icon={FolderPlus} width={560} height="auto" onClose={() => dispatch('close')}>
+<Modal title={$t('home.addGame.title')} icon={FolderPlus} width={560} height="auto" onClose={() => dispatch('close')}>
   <div class="body">
     <div class="field">
-      <span class="label">Save folder or file</span>
+      <span class="label">{$t('home.addGame.savePath')}</span>
       {#if canPick}
         <div class="picked" title={path}><bdi>{path}</bdi></div>
         <div class="alt">
-          <button class="linklike" on:click={pickFolder}>Change folder…</button>
-          <button class="linklike" on:click={pickFile}>Track a single file instead…</button>
+          <button class="linklike" on:click={pickFolder}>{$t('home.addGame.changeFolder')}</button>
+          <button class="linklike" on:click={pickFile}>{$t('home.addGame.trackFileInstead')}</button>
         </div>
       {:else}
         <input id="g-path" placeholder="C:\Users\you\AppData\…" bind:value={path} />
       {/if}
     </div>
     <div class="field">
-      <label for="g-name">Name</label>
+      <label for="g-save-type">Save type</label>
+      <select id="g-save-type" bind:value={saveType}>
+        <option value="pc">PC game</option>
+        <option value="switch">Switch</option>
+        <option value="emulator-eden">Eden</option>
+        <option value="emulator-yuzu">Yuzu / Suyu</option>
+        <option value="emulator-ryujinx">Ryujinx</option>
+        <option value="emulator-generic">Other emulator</option>
+      </select>
+      <span class="hint">Types stay separate in the library and EDEN_SYNCD backup storage.</span>
+    </div>
+    <div class="field">
+      <label for="g-name">{$t('home.addGame.name')}</label>
       <input
         id="g-name"
         bind:this={nameInput}
-        placeholder="e.g. Elden Ring"
+        placeholder={$t('home.addGame.namePlaceholder')}
         bind:value={name}
         on:input={() => (typed = true)}
         on:keydown={(e) => e.key === 'Enter' && add()}
       />
-      <span class="hint">How it shows in your library, and on your other devices.</span>
+      <span class="hint">{$t('home.addGame.nameHint')}</span>
     </div>
   </div>
   <ModalFoot>
     <span />
     <div class="actions">
-      <button class="btn" on:click={() => dispatch('close')}>Cancel</button>
+      <button class="btn" on:click={() => dispatch('close')}>{$t('common.cancel')}</button>
       <button class="btn primary" disabled={!name.trim() || !path || adding} on:click={add}>
-        {adding ? 'Adding…' : 'Start tracking'}
+        {adding ? $t('home.addGame.adding') : $t('home.addGame.startTracking')}
       </button>
     </div>
   </ModalFoot>

@@ -1,16 +1,21 @@
 package cloud
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
+	"time"
+
+	"github.com/opensave/opensave/internal/snapshot"
+	"github.com/opensave/opensave/internal/store"
 )
 
-// NormalizeEdenSyncdURL turns the eden-syncd service address into the
-// dedicated WebDAV collection used by OpenSave. It accepts an already-complete
-// /opensave URL as well, which makes saved settings and copy-pasted examples
-// idempotent.
+// NormalizeEdenSyncdURL validates an EDEN_SYNCD service address. Native
+// OpenSave endpoints live below /v1/opensave and are appended by the client.
 func NormalizeEdenSyncdURL(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -42,7 +47,111 @@ func NormalizeEdenSyncdURL(value string) (string, error) {
 	if strings.EqualFold(path.Base(basePath), "opensave") {
 		basePath = path.Dir(basePath)
 	}
-	parsed.Path = strings.TrimRight(basePath, "/") + "/opensave"
+	parsed.Path = strings.TrimRight(basePath, "/")
 	parsed.RawPath = ""
 	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+type edenSyncd struct {
+	s   *Service
+	cfg store.CloudConfig
+}
+
+func (p edenSyncd) token() string { return strings.TrimSpace(p.cfg.Password) }
+
+func (p edenSyncd) fileType(name string) string {
+	gameID, _, _, ok := snapshot.ParseExportEntryName(name)
+	if !ok {
+		return "pc"
+	}
+	game, err := p.s.Store.GetGame(gameID)
+	if err != nil || game.SaveType == "" {
+		return "pc"
+	}
+	return game.SaveType
+}
+
+func (p edenSyncd) endpoint(kind, name string) string {
+	return strings.TrimRight(p.cfg.URL, "/") + "/v1/opensave/files/" + url.PathEscape(kind) + "/" + url.PathEscape(name)
+}
+
+func (p edenSyncd) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token())
+	req.Header.Set("X-Eden-Platform", "opensave")
+}
+
+func (p edenSyncd) upload(f *os.File, size int64, fileName string) error {
+	if p.token() == "" {
+		return fmt.Errorf("EDEN_SYNCD sync key is required")
+	}
+	req, err := http.NewRequest(http.MethodPut, p.endpoint(p.fileType(fileName), fileName), f)
+	if err != nil {
+		return err
+	}
+	req.ContentLength = size
+	req.Header.Set("Content-Type", "application/zip")
+	p.authorize(req)
+	resp, err := p.s.doTransfer(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return transferOK(resp)
+}
+
+func (p edenSyncd) list() ([]CloudFile, error) {
+	if p.token() == "" {
+		return nil, fmt.Errorf("EDEN_SYNCD sync key is required")
+	}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(p.cfg.URL, "/")+"/v1/opensave/files", nil)
+	if err != nil {
+		return nil, err
+	}
+	p.authorize(req)
+	resp, err := p.s.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := transferOK(resp); err != nil {
+		return nil, err
+	}
+	var body struct {
+		Files []struct {
+			Type        string    `json:"type"`
+			Name        string    `json:"name"`
+			SizeBytes   int64     `json:"sizeBytes"`
+			CreatedTime time.Time `json:"createdTime"`
+		} `json:"files"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	files := make([]CloudFile, 0, len(body.Files))
+	for _, item := range body.Files {
+		files = append(files, CloudFile{ID: item.Type, Name: item.Name, SizeBytes: item.SizeBytes, CreatedTime: item.CreatedTime.UTC().Format(time.RFC3339)})
+	}
+	return files, nil
+}
+
+func (p edenSyncd) download(fileName, localPath string) error {
+	req, err := http.NewRequest(http.MethodGet, p.endpoint(p.fileType(fileName), fileName), nil)
+	if err != nil {
+		return err
+	}
+	p.authorize(req)
+	return p.s.fetchToFile(req, localPath)
+}
+
+func (p edenSyncd) remove(f CloudFile) error {
+	kind := f.ID
+	if kind == "" {
+		kind = p.fileType(f.Name)
+	}
+	req, err := http.NewRequest(http.MethodDelete, p.endpoint(kind, f.Name), nil)
+	if err != nil {
+		return err
+	}
+	p.authorize(req)
+	return p.s.doOK(req)
 }

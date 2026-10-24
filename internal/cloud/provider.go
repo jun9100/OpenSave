@@ -37,7 +37,7 @@ func (s *Service) providerFor(cfg store.CloudConfig) (provider, bool) {
 			return failedProvider{err: err}, true
 		}
 		cfg.URL = normalized
-		return webDAV{s: s, cfg: cfg}, true
+		return edenSyncd{s: s, cfg: cfg}, true
 	case "webhook":
 		return webhook{s: s, cfg: cfg}, true
 	case "google_drive":
