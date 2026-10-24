@@ -4,7 +4,7 @@
 
 ## 已实现
 
-- 自动扫描已授权 SAF 目录，以及 Root 可访问的 GameHub PC、Eden/Yuzu/Suyu/Sudachi/Citron、PPSSPP、RetroArch、Dolphin 和 Android 应用数据预设来源；不存在或未授权的来源只显示为跳过。
+- 自动扫描已授权 SAF 目录，以及 Root 可访问的 GameHub PC、Eden/Yuzu/Suyu/Sudachi/Citron、PPSSPP、RetroArch、Dolphin 和 Android 应用数据预设来源；首次默认全部启用，可在“备份与设置”逐项取消，手动扫描和 Wi-Fi 自动备份会共用该选择。
 - 把已识别的游戏存档按 `PC 游戏`、`Switch 游戏`、PPSSPP、RetroArch、Dolphin、Android 游戏和其他模拟器分类；筛选、全选和批量备份只作用于当前分类。
 - 识别 Eden/Yuzu 系 NAND 与 Ryujinx/Ryubing BIS 中的 Switch TitleID；常见 Switch 游戏显示中文名，Steam AppID 游戏可解析中文名并缓存封面。没有可用封面时显示对应平台图标。
 - 创建流式 ZIP 快照、本地历史、SHA-256、稳定 manifest hash、恢复前安全副本，以及恢复时的路径/ZIP-slip 防护。

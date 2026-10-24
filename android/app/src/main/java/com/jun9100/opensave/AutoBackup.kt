@@ -115,12 +115,15 @@ class AutoBackupWorker(
         return if (retryableFailure && runAttemptCount < MAX_RETRIES) Result.retry() else Result.success()
     }
 
-    /** Includes every source OpenSave can read; a missing preset is simply skipped. */
+    /** Includes every selected source OpenSave can read; a missing preset is simply skipped. */
     private suspend fun backupSources(storage: SafStorage, rootStorage: RootStorage): List<SourceSelection> {
         val sources = linkedMapOf<String, SourceSelection>()
+        val selectionStore = SourceSelectionStore(applicationContext)
         storage.persistedTreeUri()?.takeIf(storage::hasReadWritePermission)?.let { uri ->
             val source = SourceSelection.Saf(uri)
-            sources[source.idSeed] = source
+            if (source.idSeed !in selectionStore.disabledSourceIds()) {
+                sources[source.idSeed] = source
+            }
         }
 
         if (rootStorage.checkRootAccess().isFailure) return sources.values.toList()
@@ -131,7 +134,9 @@ class AutoBackupWorker(
         for (path in rootPaths) {
             if (rootStorage.pathExists(path).getOrDefault(false)) {
                 val source = SourceSelection.Root(path)
-                sources[source.idSeed] = source
+                if (source.idSeed !in selectionStore.disabledSourceIds()) {
+                    sources[source.idSeed] = source
+                }
             }
         }
         return sources.values.toList()

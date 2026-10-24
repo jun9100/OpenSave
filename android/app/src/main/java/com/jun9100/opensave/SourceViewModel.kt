@@ -38,6 +38,7 @@ data class SourceUiState(
     val report: CopyReport? = null,
     val scan: SaveScanReport? = null,
     val sourceScans: List<SourceScanResult> = emptyList(),
+    val sourceOptions: List<SaveSourceOption> = emptyList(),
     val scanRevision: Long = 0L,
     val snapshots: List<SnapshotRecord> = emptyList(),
     val remoteSnapshots: List<RemoteSnapshot> = emptyList(),
@@ -81,6 +82,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     error = null,
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(uri.toString()),
+                    sourceOptions = buildSourceOptions(uri, state.value.rootPath),
                 )
                 scanSource()
             }
@@ -119,6 +121,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             gameSaveSaved = config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank(),
             autoBackupEnabled = autoBackupScheduler.isEnabled(),
             scan = persistedScan,
+            sourceOptions = buildSourceOptions(uri, rootPath),
             error = null,
         )
         viewModelScope.launch {
@@ -168,6 +171,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     error = null,
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(SourceSelection.Root(canonical).idSeed),
+                    sourceOptions = buildSourceOptions(state.value.selectedUri, canonical),
                 )
                 refreshRootAccess()
             }
@@ -248,27 +252,14 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun scanSource() {
         if (state.value.busy) return
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在扫描所有已知存档来源", error = null)
-            val (rootAvailable, scans) = withContext(Dispatchers.IO) {
+            state.value = state.value.copy(busy = true, action = "正在扫描已选存档来源", error = null)
+            val (rootAvailable, options, scans) = withContext(Dispatchers.IO) {
                 val rootAvailable = rootStorage.checkRootAccess().isSuccess
                 val current = state.value
-                val candidates = linkedMapOf<String, Pair<SourceSelection, String>>()
-                val uri = current.selectedUri
-                if (uri != null) {
-                    val source = SourceSelection.Saf(uri)
-                    candidates[source.idSeed] = source to "系统授权目录"
-                }
-                RootSourcePresets.all.forEach { preset ->
-                    val source = SourceSelection.Root(preset.path)
-                    candidates.putIfAbsent(source.idSeed, source to preset.label)
-                }
-                current.rootPath.takeIf(String::isNotBlank)?.let { path ->
-                    val source = SourceSelection.Root(path)
-                    val label = RootSourcePresets.find(path)?.label ?: "自定义 Root"
-                    candidates.putIfAbsent(source.idSeed, source to label)
-                }
-
-                val results = candidates.values.map { (source, label) ->
+                val options = buildSourceOptions(current.selectedUri, current.rootPath)
+                val results = options.filter { it.selected }.map { option ->
+                    val source = option.source
+                    val label = option.label
                     when (source) {
                         is SourceSelection.Saf -> if (!current.hasPersistedPermission) {
                             SourceScanResult(source, label, skippedReason = "目录授权已失效")
@@ -299,7 +290,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
-                rootAvailable to results
+                Triple(rootAvailable, options, results)
             }
             val games = GameLibrary.sourceGames(scans)
             val availableSourceCount = scans.count { it.scan != null }
@@ -311,11 +302,37 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 rootChecked = true,
                 action = "扫描完成：${games.size} 个游戏条目，$availableSourceCount 个来源可读，跳过 $skippedSourceCount 个",
                 sourceScans = scans,
+                sourceOptions = options,
                 scanRevision = state.value.scanRevision + 1,
                 scan = activeScan,
                 error = null,
             )
         }
+    }
+
+    fun setSourceEnabled(sourceId: String, enabled: Boolean) {
+        if (state.value.busy) return
+        selectionStore.setSourcesEnabled(listOf(sourceId), enabled)
+        val current = state.value
+        state.value = current.copy(
+            sourceOptions = buildSourceOptions(current.selectedUri, current.rootPath),
+            action = if (enabled) "已启用存档来源" else "已停用存档来源",
+            error = null,
+        )
+        scanSource()
+    }
+
+    fun setAllSourcesEnabled(enabled: Boolean) {
+        if (state.value.busy) return
+        val current = state.value
+        val sourceIds = buildSourceOptions(current.selectedUri, current.rootPath).map(SaveSourceOption::id)
+        selectionStore.setSourcesEnabled(sourceIds, enabled)
+        state.value = current.copy(
+            sourceOptions = buildSourceOptions(current.selectedUri, current.rootPath),
+            action = if (enabled) "已启用全部存档来源" else "已停用全部存档来源",
+            error = null,
+        )
+        scanSource()
     }
 
     fun restoreSource() {
@@ -898,6 +915,9 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         snapshotRepository.list()
             .filter { record -> runCatching { snapshotRepository.fileFor(record).isFile }.getOrDefault(false) }
             .take(MAX_HISTORY)
+
+    private fun buildSourceOptions(selectedUri: Uri?, rootPath: String): List<SaveSourceOption> =
+        SaveSourceOptions.build(selectedUri, rootPath, selectionStore.disabledSourceIds())
 
     private fun updateState(update: SourceUiState.() -> SourceUiState) {
         state.value = state.value.update()

@@ -658,6 +658,53 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                     color = if (state.hasPersistedPermission) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (state.sourceOptions.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(12.dp))
+                val selectedCount = state.sourceOptions.count(SaveSourceOption::selected)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("自动扫描来源", style = MaterialTheme.typography.titleSmall)
+                    Text("$selectedCount / ${state.sourceOptions.size} 已选", style = MaterialTheme.typography.labelMedium)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        onClick = { viewModel.setAllSourcesEnabled(true) },
+                        enabled = !state.busy && selectedCount < state.sourceOptions.size,
+                    ) { Text("全选") }
+                    TextButton(
+                        onClick = { viewModel.setAllSourcesEnabled(false) },
+                        enabled = !state.busy && selectedCount > 0,
+                    ) { Text("全不选") }
+                }
+                state.sourceOptions.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = option.selected,
+                            onCheckedChange = { selected -> viewModel.setSourceEnabled(option.id, selected) },
+                            enabled = !state.busy,
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "${option.saveType.label} · ${if (option.source is SourceSelection.Root) "Root" else "系统授权"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

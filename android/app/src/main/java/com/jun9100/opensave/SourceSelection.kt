@@ -49,6 +49,49 @@ object RootSourcePresets {
     }
 }
 
+/** A user-visible source choice shared by interactive and scheduled scans. */
+data class SaveSourceOption(
+    val source: SourceSelection,
+    val label: String,
+    val saveType: GameSaveType,
+    val selected: Boolean,
+) {
+    val id: String
+        get() = source.idSeed
+}
+
+/** Builds the complete, de-duplicated source list. Sources are enabled by default. */
+object SaveSourceOptions {
+    fun build(
+        selectedUri: Uri?,
+        rootPath: String?,
+        disabledSourceIds: Set<String>,
+    ): List<SaveSourceOption> {
+        val candidates = linkedMapOf<String, Pair<SourceSelection, String>>()
+        selectedUri?.let { uri ->
+            val source = SourceSelection.Saf(uri)
+            candidates[source.idSeed] = source to "系统授权目录"
+        }
+        RootSourcePresets.all.forEach { preset ->
+            val source = SourceSelection.Root(preset.path)
+            candidates.putIfAbsent(source.idSeed, source to preset.label)
+        }
+        rootPath?.takeIf(String::isNotBlank)?.let { path ->
+            val source = SourceSelection.Root(path)
+            val label = RootSourcePresets.find(path)?.label ?: "自定义 Root"
+            candidates.putIfAbsent(source.idSeed, source to label)
+        }
+        return candidates.values.map { (source, label) ->
+            SaveSourceOption(
+                source = source,
+                label = label,
+                saveType = GameSaveTypes.forSource(source),
+                selected = source.idSeed !in disabledSourceIds,
+            )
+        }
+    }
+}
+
 class SourceSelectionStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
@@ -68,9 +111,30 @@ class SourceSelectionStore(context: Context) {
         canonical
     }
 
+    fun disabledSourceIds(): Set<String> =
+        preferences.getStringSet(DISABLED_SOURCE_IDS_KEY, emptySet()).orEmpty().toSet()
+
+    fun setSourcesEnabled(sourceIds: Collection<String>, enabled: Boolean) {
+        if (sourceIds.isEmpty()) return
+        val disabled = disabledSourceIds().toMutableSet()
+        if (enabled) {
+            disabled.removeAll(sourceIds.toSet())
+        } else {
+            disabled.addAll(sourceIds)
+        }
+        val editor = preferences.edit()
+        if (disabled.isEmpty()) {
+            editor.remove(DISABLED_SOURCE_IDS_KEY)
+        } else {
+            editor.putStringSet(DISABLED_SOURCE_IDS_KEY, disabled)
+        }
+        editor.apply()
+    }
+
     private companion object {
         const val PREFERENCES = "opensave_mobile"
         const val MODE_KEY = "source_mode"
         const val ROOT_PATH_KEY = "root_source_path"
+        const val DISABLED_SOURCE_IDS_KEY = "disabled_source_ids"
     }
 }
