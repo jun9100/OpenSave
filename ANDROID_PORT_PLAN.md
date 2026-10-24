@@ -99,4 +99,4 @@ Authorization: Bearer <同步密钥>
 2. 根据真实 Eden 与 GameHub 目录样本补充识别预设；不凭猜测扩大 Root 扫描范围。
 3. 补充 Android instrumentation 测试和 CI，在真机基线稳定后再决定是否增加独立 APK 构建工作流。
 4. 处理 Switch profile/account 映射和 Android 跨设备同步策略，仍以显式确认恢复和安全副本为前提。
-5. 真机回归通过后创建签名 Release APK、更新版本号和发布说明。
+5. 真机回归通过后创建签名 Release APK，并确认版本号和发布说明。
