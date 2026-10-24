@@ -24,7 +24,7 @@
     onedrive: 'OneDrive',
     dropbox: 'Dropbox',
     webdav: 'your WebDAV server',
-    eden_syncd: 'EDEN_SYNCD',
+    eden_syncd: 'game-save',
     local: 'your backup folder'
   };
 

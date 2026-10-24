@@ -32,7 +32,7 @@ describe('providerStatus', () => {
     expect(providerStatus('webdav', null, local)).toBe('Not configured');
     expect(providerStatus('local', null, { provider: 'local', url: '' })).toBe('Not configured');
   });
-  it('treats EDEN_SYNCD as a configured non-OAuth provider', () => {
+  it('treats game-save as a configured non-OAuth provider', () => {
     const eden = { provider: 'eden_syncd', url: 'https://nas.example/opensave' };
     expect(providerStatus('eden_syncd', null, eden)).toBe('Configured');
   });
@@ -42,9 +42,9 @@ describe('providerStatus', () => {
 });
 
 describe('providers', () => {
-  it('offers EDEN_SYNCD as a first-class cloud destination', () => {
+  it('offers game-save as a first-class cloud destination', () => {
     expect(providers.find((provider) => provider.id === 'eden_syncd')).toMatchObject({
-      label: 'EDEN_SYNCD',
+      label: 'game-save',
       oauth: false
     });
   });

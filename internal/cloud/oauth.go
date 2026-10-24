@@ -305,7 +305,7 @@ func ProviderLabel(provider string) string {
 	case "webdav":
 		return "WebDAV"
 	case "eden_syncd":
-		return "EDEN_SYNCD"
+		return "game-save"
 	case "webhook":
 		return "Webhook"
 	}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/opensave/opensave/internal/cloud"
 )
 
 // Cloud backup from the terminal, including sign-in.
@@ -64,7 +66,7 @@ func cmdCloud(args []string) int {
 
 const cloudUsage = `usage:
   opensave cloud connect <provider>       Sign in to Google Drive, Dropbox or OneDrive
-  opensave cloud setup <provider> [opts]  Configure WebDAV, a webhook, or a local folder
+  opensave cloud setup <provider> [opts]  Configure WebDAV, game-save, a webhook, or a local folder
   opensave cloud disconnect               Forget the current provider
   opensave cloud status                   Provider, and whether it's connected
   opensave cloud browse                   Everything stored in the cloud
@@ -77,7 +79,7 @@ const cloudUsage = `usage:
   opensave cloud take <gameId>            Bring the newer save for a game here
   opensave cloud skip <gameId>            Keep this device's save instead
 
-  providers: google-drive, dropbox, onedrive, webdav, eden-syncd, webhook, local
+  providers: google-drive, dropbox, onedrive, webdav, game-save, webhook, local
 
   Signing in needs a browser, but not this machine's browser — connect prints
   a link you can open anywhere and paste the code back.`
@@ -94,7 +96,7 @@ func providerID(name string) string {
 		return "onedrive"
 	case "webdav":
 		return "webdav"
-	case "eden-syncd", "eden_syncd", "edensyncd":
+	case "game-save", "game_save", "gamesave", "eden-syncd", "eden_syncd", "edensyncd":
 		return "eden_syncd"
 	case "webhook":
 		return "webhook"
@@ -118,7 +120,7 @@ func cloudConnect(asJSON bool, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr,
 			"usage: opensave cloud connect <google-drive|dropbox|onedrive>\n"+
-				"  For WebDAV, a webhook or a local folder use `opensave cloud setup`.")
+				"  For WebDAV, game-save, a webhook or a local folder use `opensave cloud setup`.")
 		return 1
 	}
 	provider := providerID(args[0])
@@ -260,7 +262,7 @@ func cloudSetup(asJSON bool, args []string) int {
 	if asJSON {
 		return emitJSON(map[string]any{"provider": provider, "configured": true})
 	}
-	success("Cloud backup set to %s", bold(provider))
+	success("Cloud backup set to %s", bold(cloud.ProviderLabel(provider)))
 	hint("opensave cloud status", "opensave cloud push <gameId>")
 	return 0
 }
@@ -268,7 +270,7 @@ func cloudSetup(asJSON bool, args []string) int {
 const cloudSetupUsage = `usage:
   opensave cloud setup local   --path <folder>
   opensave cloud setup webdav  --url <url> [--user <u>] [--password <p>]
-  opensave cloud setup eden-syncd --url <service-url> [--user <u>] [--password <p>]
+  opensave cloud setup game-save  --url <service-url> [--password <sync-key>]
   opensave cloud setup webhook --url <url> [--headers '<json>']
 
   Google Drive, Dropbox and OneDrive sign in instead:
@@ -332,7 +334,7 @@ func cloudStatus(asJSON bool) int {
 		fmt.Println()
 		return 0
 	}
-	field("provider", accent(provider))
+	field("provider", accent(cloud.ProviderLabel(provider)))
 	if enabled {
 		field("state", okText("enabled"))
 	} else {
