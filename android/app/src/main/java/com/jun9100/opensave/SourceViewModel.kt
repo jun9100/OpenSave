@@ -43,12 +43,10 @@ data class SourceUiState(
     val remoteSnapshots: List<RemoteSnapshot> = emptyList(),
     val activeSourceId: String? = null,
     val page: OpenSavePage = OpenSavePage.LIBRARY,
-    val webDavEnabled: Boolean = false,
-    val webDavProvider: WebDavProvider = WebDavProvider.WEBDAV,
-    val webDavUrl: String = "",
-    val webDavUsername: String = "",
-    val webDavPassword: String = "",
-    val webDavSaved: Boolean = false,
+    val gameSaveEnabled: Boolean = false,
+    val gameSaveUrl: String = "",
+    val gameSaveSyncKey: String = "",
+    val gameSaveSaved: Boolean = false,
     val autoBackupEnabled: Boolean = false,
     val pendingRestore: RestoreRequest? = null,
     val pendingGameBackup: SourceGameEntry? = null,
@@ -61,7 +59,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     private val selectionStore = SourceSelectionStore(application)
     private val snapshotEngine = SnapshotEngine()
     private val snapshotRepository = SnapshotRepository(File(application.filesDir, SNAPSHOT_DIRECTORY))
-    private val webDavStore = WebDavConfigStore(application)
+    private val gameSaveStore = GameSaveConfigStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
     private val state = MutableStateFlow(SourceUiState())
     val uiState: StateFlow<SourceUiState> = state.asStateFlow()
@@ -99,7 +97,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         val uri = storage.persistedTreeUri()
         val mode = selectionStore.mode()
         val rootPath = rootStorage.persistedRootPath().orEmpty()
-        val config = runCatching { webDavStore.load() }.getOrDefault(WebDavConfig())
+        val config = runCatching { gameSaveStore.load() }.getOrDefault(GameSaveConfig())
         val previous = state.value
         val sameSource = previous.storageMode == mode && previous.selectedUri == uri && previous.rootPath == rootPath
         val persistedScan = previous.scan.takeIf { sameSource }
@@ -115,12 +113,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             rootChecked = false,
             snapshots = currentSnapshots(),
             activeSourceId = source?.let { SnapshotNaming.sourceId(it.idSeed) },
-            webDavEnabled = config.enabled,
-            webDavProvider = config.provider,
-            webDavUrl = config.url,
-            webDavUsername = config.username,
-            webDavPassword = config.password,
-            webDavSaved = config.url.isNotBlank(),
+            gameSaveEnabled = config.enabled,
+            gameSaveUrl = config.serviceUrl,
+            gameSaveSyncKey = config.syncKey,
+            gameSaveSaved = config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank(),
             autoBackupEnabled = autoBackupScheduler.isEnabled(),
             scan = persistedScan,
             error = null,
@@ -197,52 +193,47 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun updateWebDavUrl(value: String) = updateState { copy(webDavUrl = value, webDavSaved = false) }
+    fun updateGameSaveUrl(value: String) = updateState { copy(gameSaveUrl = value, gameSaveSaved = false) }
 
-    fun updateWebDavUsername(value: String) = updateState { copy(webDavUsername = value, webDavSaved = false) }
+    fun updateGameSaveSyncKey(value: String) = updateState { copy(gameSaveSyncKey = value, gameSaveSaved = false) }
 
-    fun updateWebDavPassword(value: String) = updateState { copy(webDavPassword = value, webDavSaved = false) }
+    fun updateGameSaveEnabled(value: Boolean) = updateState { copy(gameSaveEnabled = value, gameSaveSaved = false) }
 
-    fun updateWebDavEnabled(value: Boolean) = updateState { copy(webDavEnabled = value, webDavSaved = false) }
-
-    fun updateWebDavProvider(value: WebDavProvider) = updateState {
-        copy(webDavProvider = value, webDavSaved = false)
-    }
-
-    fun saveWebDav() {
-        val config = configFromState()
+    fun saveGameSave() {
+        val config = gameSaveConfigFromState()
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在加密保存 WebDAV 配置", error = null)
+            state.value = state.value.copy(busy = true, action = "正在加密保存 game-save 配置", error = null)
             val result = withContext(Dispatchers.IO) {
-                runCatching { webDavStore.save(config) }
+                runCatching { gameSaveStore.save(config) }
             }
             result.onSuccess {
                 state.value = state.value.copy(
                     busy = false,
-                    action = "WebDAV 配置已保存",
-                    webDavSaved = true,
+                    action = "game-save 配置已保存",
+                    gameSaveUrl = GameSaveClient.normalizeServiceUrl(config.serviceUrl),
+                    gameSaveSaved = true,
                 )
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "保存 WebDAV 配置失败：${error.message}")
+                state.value = state.value.copy(busy = false, action = null, error = "保存 game-save 配置失败：${error.message}")
             }
         }
     }
 
-    fun testWebDav() {
-        val config = configFromState()
-        if (config.url.isBlank()) {
-            updateState { copy(error = "请先填写 WebDAV 地址") }
+    fun testGameSave() {
+        val config = gameSaveConfigFromState()
+        if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
+            updateState { copy(error = "请先填写 game-save 服务地址和同步密钥") }
             return
         }
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在测试 WebDAV 连接", error = null)
+            state.value = state.value.copy(busy = true, action = "正在测试 game-save 连接", error = null)
             val result = withContext(Dispatchers.IO) {
-                runCatching { WebDavClient(config).testConnection().getOrThrow() }
+                runCatching { GameSaveClient(config).testConnection().getOrThrow() }
             }
             result.onSuccess {
-                state.value = state.value.copy(busy = false, action = "WebDAV 连接成功")
+                state.value = state.value.copy(busy = false, action = "game-save 连接成功")
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "WebDAV 连接失败：${error.message}")
+                state.value = state.value.copy(busy = false, action = null, error = "game-save 连接失败：${error.message}")
             }
         }
     }
@@ -405,7 +396,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 val result = withContext(Dispatchers.IO) {
                     runCatching {
                         StorageOperationLock.withLock {
-                            captureGameSnapshotLocked(entry.source, manifest.getOrThrow())
+                            captureGameSnapshotLocked(entry, manifest.getOrThrow())
                         }
                     }
                 }
@@ -443,7 +434,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             state.value = state.value.copy(busy = true, action = "正在备份 ${manifest.gameName}", error = null)
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    StorageOperationLock.withLock { captureGameSnapshotLocked(entry.source, manifest) }
+                    StorageOperationLock.withLock { captureGameSnapshotLocked(entry, manifest) }
                 }
             }
             result.onSuccess { captured ->
@@ -461,23 +452,34 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun captureGameSnapshotLocked(
-        source: SourceSelection,
+        entry: SourceGameEntry,
         manifest: GameSnapshotManifest,
     ): GameCaptureOutcome {
+        val source = entry.source
+        val selectedGame = entry.game.copy(
+            saves = entry.game.saves.filter { save -> manifest.locations.any { it.relativePath == save.relativePath } },
+        )
+        val cloudIdentity = GameCloudNaming.identity(entry.sourceId, selectedGame)
         val workspace = File(app.filesDir, GAME_WORKSPACE_DIRECTORY)
         try {
             copyGameLocations(source, manifest.locations, workspace).getOrThrow()
             val manifestFile = File(workspace, GameSnapshotManifest.FILE_NAME)
-            manifest.write(manifestFile)
 
-            val sourceId = SnapshotNaming.sourceId(source.idSeed)
+            val sourceId = entry.sourceId
             val timestamp = maxOf(
                 System.currentTimeMillis(),
                 (snapshotRepository.list().maxOfOrNull { it.createdAtMillis } ?: 0L) + 1L,
             )
-            val remoteName = SnapshotNaming.gameRemoteName(sourceId, manifest.gameKey, timestamp)
+            val remoteName = GameCloudNaming.remoteName(cloudIdentity, timestamp)
             val archive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$remoteName")
-            val build = snapshotEngine.createSnapshot(workspace, archive).getOrThrow()
+            val build = if (cloudIdentity.desktopCompatible) {
+                val saveRoot = File(workspace, manifest.locations.single().archivePath)
+                require(saveRoot.isDirectory) { "Switch 存档暂存目录不完整" }
+                snapshotEngine.createSnapshot(saveRoot, archive).getOrThrow()
+            } else {
+                manifest.write(manifestFile)
+                snapshotEngine.createSnapshot(workspace, archive).getOrThrow()
+            }
             val record = SnapshotRecord(
                 id = "game_${UUID.randomUUID()}",
                 sourceId = sourceId,
@@ -486,16 +488,18 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 createdAtMillis = timestamp,
                 sizeBytes = build.archive.length(),
                 sha256 = build.archiveSha256,
-                manifestHash = Hashing.sha256(manifestFile),
+                manifestHash = if (cloudIdentity.desktopCompatible) build.archiveSha256 else Hashing.sha256(manifestFile),
                 gameKey = manifest.gameKey,
                 gameName = manifest.gameName,
+                saveType = cloudIdentity.saveType.id,
+                cloudGameId = cloudIdentity.gameId,
             )
             snapshotRepository.add(record)
 
-            val config = webDavStore.load()
+            val config = gameSaveStore.load()
             var uploadError: String? = null
-            if (config.enabled && config.url.isNotBlank()) {
-                val upload = WebDavClient(config).upload(archive, remoteName)
+            if (config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) {
+                val upload = GameSaveClient(config).upload(archive, cloudIdentity.saveType, remoteName)
                 if (upload.isSuccess) {
                     snapshotRepository.markUploaded(record.id)
                 } else {
@@ -518,15 +522,15 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun listCloud() {
-        val config = configFromState()
-        if (config.url.isBlank()) {
-            updateState { copy(error = "请先填写并保存 WebDAV 地址") }
+        val config = gameSaveConfigFromState()
+        if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
+            updateState { copy(error = "请先填写并保存 game-save 服务地址和同步密钥") }
             return
         }
         viewModelScope.launch {
             state.value = state.value.copy(busy = true, action = "正在列举云端快照", error = null)
             val result = withContext(Dispatchers.IO) {
-                runCatching { WebDavClient(config).list().getOrThrow() }
+                runCatching { GameSaveClient(config).list().getOrThrow() }
             }
             result.onSuccess { files ->
                 state.value = state.value.copy(busy = false, action = "找到 ${files.size} 个云端快照", remoteSnapshots = files)
@@ -561,7 +565,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun requestRemoteGameRestore(entry: SourceGameEntry, remote: RemoteSnapshot) {
         val game = entry.game
-        if (!remote.name.startsWith(SnapshotNaming.gameRemotePrefix(entry.sourceId, game.gameKey))) {
+        val identity = GameCloudNaming.identity(entry.sourceId, game)
+        if (remote.type != identity.saveType.id || !remote.name.startsWith(GameCloudNaming.remotePrefix(identity))) {
             updateState { copy(error = "云端快照不属于当前游戏或存档来源") }
             return
         }
@@ -621,14 +626,14 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 snapshotRepository.fileFor(request.local)
             }
             request.remote != null -> {
-                require(request.remote.name.startsWith(SnapshotNaming.gameRemotePrefix(sourceId, requestedGame.gameKey))) {
+                val identity = GameCloudNaming.identity(sourceId, requestedGame)
+                require(request.remote.type == identity.saveType.id && request.remote.name.startsWith(GameCloudNaming.remotePrefix(identity))) {
                     "云端快照不属于当前游戏或存档来源"
                 }
-                PathPolicy.requireSafeDocumentName(request.remote.name)
-                val downloaded = File(app.filesDir, "$SNAPSHOT_DIRECTORY/${request.remote.name}")
+                val downloaded = remoteCacheFile(request.remote)
                 if (!downloaded.isFile) {
-                    val config = webDavStore.load()
-                    WebDavClient(config).download(request.remote.name, downloaded).getOrThrow()
+                    val config = gameSaveStore.load()
+                    GameSaveClient(config).download(request.remote, downloaded).getOrThrow()
                 }
                 downloaded
             }
@@ -650,7 +655,35 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         require(workingRoot.mkdirs()) { "无法创建游戏恢复暂存目录" }
         try {
             snapshotEngine.restoreSnapshot(archive, extractedRoot).getOrThrow()
-            val manifest = GameSnapshotManifest.read(File(extractedRoot, GameSnapshotManifest.FILE_NAME))
+            val manifestFile = File(extractedRoot, GameSnapshotManifest.FILE_NAME)
+            val manifest = if (manifestFile.isFile) {
+                GameSnapshotManifest.read(manifestFile)
+            } else {
+                // A single TitleID directory uses the desktop ZIP layout so it can
+                // be shared with the Windows client. Stage it behind our normal
+                // location manifest before the same guarded restore path runs.
+                val identity = GameCloudNaming.identity(sourceId, requestedGame)
+                require(identity.desktopCompatible) { "此云端快照不是可跨端恢复的 Switch 单存档快照" }
+                val save = GameLibrary.batchBackupLocations(requestedGame).singleOrNull()
+                    ?: error("当前 Switch 游戏没有唯一的已识别存档位置")
+                val portable = File(workingRoot, "portable-switch-save")
+                require(extractedRoot.renameTo(portable)) { "无法准备 Switch 存档恢复目录" }
+                require(extractedRoot.mkdirs()) { "无法创建 Switch 存档恢复目录" }
+                val archivePath = "desktop-switch-save"
+                require(portable.renameTo(File(extractedRoot, archivePath))) { "无法准备 Switch 存档内容" }
+                GameSnapshotManifest(
+                    gameKey = requestedGame.gameKey,
+                    gameName = requestedGame.presentation.primaryName,
+                    locations = listOf(
+                        GameSnapshotLocation(
+                            kind = save.kind,
+                            relativePath = save.relativePath,
+                            archivePath = archivePath,
+                            candidate = false,
+                        ),
+                    ),
+                )
+            }
             require(manifest.matches(currentGame)) { "游戏快照路径与当前扫描清单不匹配；请重新扫描并检查游戏身份" }
             require(manifest.gameKey == requestedGame.gameKey) { "游戏快照身份与所选游戏不匹配" }
 
@@ -661,7 +694,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 System.currentTimeMillis(),
                 (snapshotRepository.list().maxOfOrNull { it.createdAtMillis } ?: 0L) + 1L,
             )
-            val safetyName = SnapshotNaming.gameRemoteName(sourceId, manifest.gameKey, timestamp)
+            val safetyIdentity = GameCloudNaming.identity(sourceId, requestedGame)
+            val safetyName = GameCloudNaming.remoteName(safetyIdentity, timestamp)
             val safetyArchive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$safetyName")
             val safetyBuild = snapshotEngine.createSnapshot(safetyRoot, safetyArchive).getOrThrow()
             snapshotRepository.add(
@@ -677,6 +711,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     comment = "恢复前安全副本",
                     gameKey = manifest.gameKey,
                     gameName = manifest.gameName,
+                    saveType = safetyIdentity.saveType.id,
+                    cloudGameId = safetyIdentity.gameId,
                 ),
             )
 
@@ -703,14 +739,16 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun captureSnapshotLocked(source: SourceSelection, upload: Boolean): CaptureOutcome {
         val report = importSelection(source).getOrThrow()
         val sourceId = SnapshotNaming.sourceId(source.idSeed)
-        val config = webDavStore.load()
+        val saveType = GameSaveTypes.forSource(source)
+        val config = gameSaveStore.load()
         val previous = snapshotRepository.list().firstOrNull {
             it.sourceId == sourceId && it.manifestHash == report.manifestHash && snapshotRepository.fileFor(it).isFile
         }
         if (previous != null) {
             var uploadError: String? = null
-            if (upload && config.enabled && config.url.isNotBlank() && !previous.uploaded) {
-                val uploadResult = WebDavClient(config).upload(snapshotRepository.fileFor(previous), previous.remoteName)
+            if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank() && !previous.uploaded) {
+                val recordType = GameSaveTypes.fromId(previous.saveType)
+                val uploadResult = GameSaveClient(config).upload(snapshotRepository.fileFor(previous), recordType, previous.remoteName)
                 if (uploadResult.isSuccess) {
                     snapshotRepository.markUploaded(previous.id)
                 } else {
@@ -737,12 +775,14 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             sizeBytes = build.archive.length(),
             sha256 = build.archiveSha256,
             manifestHash = report.manifestHash,
+            saveType = saveType.id,
+            cloudGameId = sourceId,
         )
         snapshotRepository.add(record)
 
         var uploadError: String? = null
-        if (upload && config.enabled && config.url.isNotBlank()) {
-            val uploadResult = WebDavClient(config).upload(build.archive, remoteName)
+        if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) {
+            val uploadResult = GameSaveClient(config).upload(build.archive, saveType, remoteName)
             if (uploadResult.isSuccess) {
                 snapshotRepository.markUploaded(record.id)
             } else {
@@ -768,11 +808,11 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun restoreRequestLocked(request: RestoreRequest, source: SourceSelection): CopyReport {
         val sourceId = SnapshotNaming.sourceId(source.idSeed)
         val archive = request.local?.let { snapshotRepository.fileFor(it) }
-            ?: request.remote?.let { File(app.filesDir, "$SNAPSHOT_DIRECTORY/${it.name}") }
+            ?: request.remote?.let(::remoteCacheFile)
             ?: error("没有可恢复的快照")
         if (request.remote != null && !archive.isFile) {
-            val config = webDavStore.load()
-            WebDavClient(config).download(request.remote.name, archive).getOrThrow()
+            val config = gameSaveStore.load()
+            GameSaveClient(config).download(request.remote, archive).getOrThrow()
         }
         require(archive.isFile) { "快照文件不存在" }
 
@@ -843,12 +883,15 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun configFromState() = WebDavConfig(
-        enabled = state.value.webDavEnabled,
-        url = state.value.webDavUrl,
-        username = state.value.webDavUsername,
-        password = state.value.webDavPassword,
-        provider = state.value.webDavProvider,
+    private fun gameSaveConfigFromState() = GameSaveConfig(
+        enabled = state.value.gameSaveEnabled,
+        serviceUrl = state.value.gameSaveUrl,
+        syncKey = state.value.gameSaveSyncKey,
+    )
+
+    private fun remoteCacheFile(remote: RemoteSnapshot): File = File(
+        app.filesDir,
+        "$SNAPSHOT_DIRECTORY/remote-${remote.type}-${Hashing.sha256(remote.name).take(16)}.zip",
     )
 
     private fun currentSnapshots(): List<SnapshotRecord> =

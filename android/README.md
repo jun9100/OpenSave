@@ -1,31 +1,53 @@
 # OpenSave Android
 
-这是面向 Odin2 / Android 13 的原生客户端。界面使用 Jetpack Compose，默认使用 Storage Access Framework（SAF）；在已经 Root 并由 Magisk 授权的设备上，也可以使用 Root 绝对路径访问系统文件选择器无法进入的目录。
+这是面向 Odin2 / Android 13 的原生 OpenSave 客户端。界面使用 Jetpack Compose；默认通过 Storage Access Framework (SAF) 访问用户授权的目录，在已经 Root 并由 Magisk 授权的设备上也可以读取受限的模拟器或 GameHub 本地路径。
 
 ## 已实现
 
-- 选择并持久化授权一个存档目录，重启应用后继续使用。
-- 在 SAF 和 Root 绝对路径之间切换；Root 路径经过保护目录和 shell 参数校验。
-- 游戏库启动或刷新时自动汇总已授权 SAF 与所有可访问的内置目录；无需逐个切换 GameHub、Eden 或其他模拟器来源。
-- 自动选中所有含明确存档位置的游戏条目；候选目录只展示、不默认纳入批量备份，且每个条目保留独立来源身份。
-- Root 模式通过 `su` 复制目录到应用私有工作区；恢复使用临时目录发布，并保留目标目录的 UID/GID 和顶层权限。
-- 流式复制到应用私有工作区，按文件生成 SHA-256 和稳定 manifest hash。
-- 创建 OpenSave 兼容 ZIP 快照，保留本地历史；恢复前自动生成私有安全副本。
-- WebDAV Basic Auth、HTTPS、连接测试、目录列举、下载、删除。
-- WebDAV 上传使用唯一 `.part` 临时对象，`HEAD` 校验大小后用 `MOVE` 发布到最终 `.zip` 名称；云端列举会过滤临时对象。
-- Wi-Fi 条件下通过 WorkManager 每 15 分钟检查一次已授权来源；内容未变化则跳过，失败任务可重试。
-- 在授权工作区内识别 Eden/Yuzu/Suyu/Sudachi/Citron 的 NAND TitleID、Ryujinx/Ryubing 的 BIS 布局，以及 PPSSPP、RetroArch、Dolphin、Android 共享目录和 GameHub 痕迹。
+- 自动扫描已授权 SAF 目录，以及 Root 可访问的 GameHub PC、Eden/Yuzu/Suyu/Sudachi/Citron、PPSSPP、RetroArch、Dolphin 和 Android 应用数据预设来源；不存在或未授权的来源只显示为跳过。
+- 把已识别的游戏存档按 `PC 游戏`、`Switch 游戏`、PPSSPP、RetroArch、Dolphin、Android 游戏和其他模拟器分类；筛选、全选和批量备份只作用于当前分类。
+- 识别 Eden/Yuzu 系 NAND 与 Ryujinx/Ryubing BIS 中的 Switch TitleID；常见 Switch 游戏显示中文名，Steam AppID 游戏可解析中文名并缓存封面。没有可用封面时显示对应平台图标。
+- 创建流式 ZIP 快照、本地历史、SHA-256、稳定 manifest hash、恢复前安全副本，以及恢复时的路径/ZIP-slip 防护。
+- 通过 `game-save` 原生 API 上传、列举、下载和删除云端快照。同步密钥使用 Android Keystore 的 AES-GCM 密文保存，应用数据不会参与 Android 云备份或设备迁移。
+- Wi-Fi 条件下，WorkManager 每 15 分钟检查所有当前可访问的预设来源和用户授权来源；未变化的游戏跳过，临时网络失败会重试。
 
-扫描只访问内置来源路径和已授权目录，不会遍历整个设备。内置来源包括 GameHub PC、Eden/Yuzu/Suyu/Sudachi/Citron、PPSSPP、RetroArch、Dolphin，以及 Android 外部应用数据目录。对 Eden 等 Switch 模拟器，只识别已发现的 TitleID 位置；自定义到这些路径之外的 NAND 仍需在备份设置中指定。GameHub 云游戏/串流的存档不在 Odin2 本地时无法备份。
+扫描只访问预设路径和已经授权的目录，不会遍历整个设备，也不会备份 ROM、密钥、固件、着色器缓存、日志或游戏安装文件。GameHub 云游戏、串流游戏的存档若实际在远端电脑或服务器，必须由对应电脑上的 OpenSave 备份。
+
+## game-save 云端
+
+Android 和新版 Windows OpenSave 使用同一个 `game-save` 服务根地址和同步密钥，不配置 WebDAV 地址、用户名或密码。例如服务根地址是：
+
+```text
+https://game-save.example:8788
+```
+
+客户端会以 `Authorization: Bearer <同步密钥>` 调用：
+
+```text
+GET    /v1/opensave/files
+PUT    /v1/opensave/files/{type}/{name}
+GET    /v1/opensave/files/{type}/{name}
+DELETE /v1/opensave/files/{type}/{name}
+```
+
+云端类型隔离如下：
+
+- `pc`：PC 游戏。
+- `switch`：Switch 游戏。
+- `emulator-*`：可扩展的模拟器类别，例如 `emulator-ppsspp`、`emulator-retroarch` 和 `emulator-dolphin`。
+
+单一、已识别的 Switch TitleID 使用桌面兼容名称 `switch-<titleid>__main__snap_<timestamp>.zip`，因此同一 TitleID 可以在 Windows 与 Android 间浏览和恢复。PC 与多位置模拟器快照保留 Android 的位置清单，避免把不同设备的目录布局静默覆盖。
+
+在“备份与设置”保存服务根地址和同步密钥后，可测试连接、列举云端快照。游戏卡片会显示该游戏的本地和已列举云端历史；恢复仍需要用户确认，并且只替换对应游戏的已验证存档位置。
 
 ## Root 模式
 
-1. 在 Magisk 的“超级用户”页面打开 `OpenSave` 授权；ADB 显示 root 不等于 APK 已获得 `su` 授权。
-2. 在“存档来源”切换到“Root 路径”，输入实际绝对路径，例如 `/data/user/0/<游戏包名>/files`、`/storage/emulated/0/Android/data/<包名>/files` 或 Eden 的具体 TitleID 目录。
-3. 点击“保存并使用 Root 路径”，再执行“复制到工作区”或“创建快照”。
-4. 恢复前会保留当前工作区安全副本，然后通过临时目录替换目标目录，并尝试恢复目标目录原有的所有者和权限。
+1. 在 Magisk 的超级用户页面授予 `OpenSave` 的 `su` 权限；ADB 可 root 不代表 APK 已获得权限。
+2. 在“备份与设置”切换到“Root 路径”，选择一个专用存档目录，例如某个 Eden TitleID 目录或特定游戏目录。
+3. 应用会扫描所有存在的已知 Root 来源；手动路径只作为额外来源，不会关闭其他已发现来源。
+4. 恢复前应用创建私有安全快照，随后通过临时目录替换目标存档内容，并尽量保留 Root 目标目录的 UID/GID 与顶层权限。
 
-Root 模式不会允许 `/`、`/data`、`/storage/emulated/0`、系统分区等过宽或受保护路径。请只输入专用存档目录；恢复操作会替换该目录下的内容。工作区不接受符号链接或特殊文件。
+Root 模式拒绝 `/`、`/data`、`/storage/emulated/0`、系统分区等过宽路径。恢复只应指向专用存档目录；工作区不会接受符号链接或特殊文件。
 
 ## 本地构建
 
@@ -42,63 +64,31 @@ Debug APK：`app/build/outputs/apk/debug/app-debug.apk`
 已覆盖的本地测试包括：
 
 - ZIP 快照往返、空目录、Unicode 文件名和 zip-slip 防护。
-- 本地快照索引重载和特殊字符。
-- WebDAV 的 `PUT -> HEAD -> MOVE`、Basic Auth、列举、下载和删除。
-- Switch TitleID 目录识别。
+- 快照索引重载、中文/特殊字符、存档类型和云端游戏 ID 持久化。
+- 原生 `game-save` 的 Bearer 认证、按类型上传、列举、下载和删除。
+- Switch TitleID、PC 和各模拟器类别的分类及跨桌面兼容命名。
 
-## Go mobilecore 闸门
+## Odin2 验收
 
-桌面端的 `delta`、`snapshot` 和 `switchtitle` 仍保持共用。移动核心的 AAR 可以单独验证，不作为 Android Gradle 主构建的前置条件：
-
-```bash
-cd ..
-go test ./internal/delta ./internal/snapshot ./internal/switchtitle ./mobilecore
-
-export JAVA_HOME=/path/to/jdk-17
-export ANDROID_SDK_ROOT="$HOME/Library/Android/sdk"
-export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-gomobile init
-gomobile bind -target=android -androidapi=26 \
-  -o /tmp/OpenSaveMobileCore.aar ./mobilecore
-```
-
-AAR 暴露 `buildManifestJSON`、`createSnapshot`、`manifestHash`、`restoreSnapshot`、`sha256`、`switchTitleID` 和 `version`。Android 端当前使用 Kotlin 流式实现以避免 APK 构建依赖主机 Go/NDK；两边的 ZIP 和 manifest 合同保持兼容。
-
-## Odin2 / Android 13 实测
-
-设备 IP：`192.168.12.40`。先在 Odin2 打开 **开发者选项 -> 无线调试**，按设备显示的端口执行：
+使用一次性测试目录或可恢复副本进行首轮真机测试：
 
 ```bash
-adb pair 192.168.12.40:<配对端口> <配对码>
-adb connect 192.168.12.40:<连接端口>
 adb devices -l
-adb -s 192.168.12.40:<连接端口> shell getprop ro.build.version.sdk
-adb -s 192.168.12.40:<连接端口> install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-如果已经有 USB ADB，也可以：
-
-```bash
-adb devices
-adb -s <usb-serial> tcpip 5555
-adb connect 192.168.12.40:5555
+adb -s <usb-serial> install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 验收顺序：
 
-1. 用一次性测试目录授权，不要先使用真实存档。
-2. 重启应用，确认 URI 读写权限仍然存在。
-3. 复制工作区，创建本地快照，核对文件数、manifest hash 和 ZIP SHA-256。
-4. 配置群晖 WebDAV 的 HTTPS 地址，先点“测试连接”，再创建快照并列举云端。
-5. 下载一个云端快照，确认弹窗后恢复；核对源目录文件 hash。
-6. 修改测试文件，打开 Wi-Fi 自动备份；等待 WorkManager 周期或手动创建快照确认上传。
-
-不要把群晖 WebDAV 的网页端口误填成 WebDAV 端口；地址必须是实际 WebDAV collection URL，例如 `https://nas.example:55006/home/save/OpenSave`。
+1. 确认 Magisk 授权和 SAF 持久权限均可用。
+2. 扫描后核对 Eden、GameHub、PC 与模拟器来源的跳过/发现结果。
+3. 检查分类、中文游戏名与可获取的 Steam 封面。
+4. 用测试存档完成单游戏备份、当前分类批量备份、本地恢复和文件 hash 校验。
+5. 用 `game-save` 服务完成连接测试、上传、云端列举、下载和确认恢复。
+6. 修改测试存档后，验证 Wi-Fi 自动备份任务的变化检测与重试行为。
 
 ## 已知边界
 
-- SAF 模式仍受 Android 13 对 `Android/data`、`Android/obb` 和 `/data/user/0/<package>` 的限制；需要访问这些目录时切换到 Root 模式，或使用游戏导出、Shizuku 和游戏自己的云同步。
-- Root 模式依赖 Magisk 对 OpenSave 的 `su` 授权；没有授权时应用会显示 Root 不可用，不会假装完成备份。
-- 当前没有常驻实时文件监控；自动备份使用前台手动触发和 Wi-Fi WorkManager 检查，周期受 Android 系统调度影响。
-- Switch profile/account 的跨设备映射尚未自动化。跨设备恢复请按目标设备的单个 TitleID/profile 目录授权并检查模拟器能否读取。
-- 云端只显示完整 `.zip` 快照；上传中断留下的 `.part` 会被清理或隐藏，不会报告为成功。
+- SAF 受 Android 13 对 `Android/data`、`Android/obb` 和其他应用私有目录的限制；这些目录需要 Root 或系统实际授予的权限。
+- Switch 的 profile/account 映射尚未自动化。跨设备恢复时只同步单个 TitleID 内容，目标设备仍需存在可识别的 TitleID 目录。
+- 当前没有常驻实时文件监控。后台自动备份受 Android 的 WorkManager 调度与网络条件约束。
+- Android 端不会自动把云端快照静默写回游戏目录；用户必须从对应游戏历史中选择并确认恢复。

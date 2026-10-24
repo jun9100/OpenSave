@@ -145,6 +145,23 @@ object GameCatalog {
         .trim()
         .lowercase()
 
-    /** TitleID entries can be expanded without touching filesystem detection. */
-    private val titleIdEntries: Map<String, Entry> = emptyMap()
+    /**
+     * Frequently used Switch TitleIDs. Unknown titles still show their TitleID
+     * and a Switch badge; adding names here never changes filesystem detection.
+     */
+    private val titleIdEntries = mapOf(
+        "0100000000010000" to Entry("超级马力欧 奥德赛", "Super Mario Odyssey"),
+        "01007EF00011E000" to Entry("塞尔达传说：旷野之息", "The Legend of Zelda: Breath of the Wild"),
+        "0100F2C0115B6000" to Entry("塞尔达传说：王国之泪", "The Legend of Zelda: Tears of the Kingdom"),
+        "0100152000022000" to Entry("马力欧卡丁车8 豪华版", "Mario Kart 8 Deluxe"),
+        "01006F8002326000" to Entry("集合啦！动物森友会", "Animal Crossing: New Horizons"),
+        "01006A800016E000" to Entry("任天堂明星大乱斗 特别版", "Super Smash Bros. Ultimate"),
+        "01001F5010DFA000" to Entry("宝可梦传说 阿尔宙斯", "Pokemon Legends: Arceus"),
+        "0100A3D008C5C000" to Entry("宝可梦 朱", "Pokemon Scarlet"),
+        "01008F6008C5E000" to Entry("宝可梦 紫", "Pokemon Violet"),
+        "010074F013262000" to Entry("异度神剑3", "Xenoblade Chronicles 3"),
+        "010015100B514000" to Entry("超级马力欧兄弟 惊奇", "Super Mario Bros. Wonder"),
+        "010093801237C000" to Entry("密特罗德 生存恐惧", "Metroid Dread"),
+        "0100A6301214E000" to Entry("火焰之纹章 Engage", "Fire Emblem Engage"),
+    )
 }

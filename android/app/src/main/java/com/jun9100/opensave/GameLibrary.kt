@@ -36,6 +36,9 @@ data class SourceGameEntry(
 ) {
     val libraryKey: String
         get() = "$sourceId::${game.gameKey}"
+
+    val saveType: GameSaveType
+        get() = GameSaveTypes.forGame(game)
 }
 
 object GameLibrary {

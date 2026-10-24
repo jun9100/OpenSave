@@ -22,6 +22,8 @@ class SnapshotRepositoryTest {
                 comment = "恢复前\t安全副本",
                 gameKey = "steam:123456",
                 gameName = "示例游戏",
+                saveType = GameSaveTypes.PPSSPP.id,
+                cloudGameId = "android-emu-1234567890abcdef",
             )
             val repository = SnapshotRepository(root)
             repository.add(record)

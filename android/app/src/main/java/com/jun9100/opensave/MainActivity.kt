@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +50,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -244,6 +246,21 @@ private fun GameLibraryPage(
     var selectedGameKeys by remember(state.scanRevision, batchEligibleKeys) {
         mutableStateOf(batchEligibleKeys.toSet())
     }
+    val typeOptions = remember(games) {
+        listOf("all" to "全部") + games
+            .map(SourceGameEntry::saveType)
+            .distinctBy(GameSaveType::id)
+            .sortedBy(GameSaveType::label)
+            .map { it.id to it.label }
+    }
+    var selectedTypeId by remember(state.scanRevision) { mutableStateOf("all") }
+    val visibleGames = remember(games, selectedTypeId) {
+        if (selectedTypeId == "all") games else games.filter { it.saveType.id == selectedTypeId }
+    }
+    val visibleEligibleKeys = remember(visibleGames) {
+        GameLibrary.batchBackupEligibleEntries(visibleGames).map { it.libraryKey }
+    }
+    val visibleSelectedKeys = selectedGameKeys.intersect(visibleEligibleKeys.toSet())
     var sourceDetailsExpanded by remember(state.scanRevision) { mutableStateOf(false) }
     val context = LocalContext.current
     val coverRepository = remember(context) { CoverRepository(context.applicationContext) }
@@ -261,7 +278,7 @@ private fun GameLibraryPage(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    if (state.sourceScans.isEmpty()) "游戏存档" else "${games.size} 个存档条目 · ${batchEligibleKeys.size} 款默认勾选",
+                    if (state.sourceScans.isEmpty()) "游戏存档" else "${visibleGames.size} / ${games.size} 个存档条目 · ${batchEligibleKeys.size} 款默认勾选",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -359,17 +376,30 @@ private fun GameLibraryPage(
             Text(it, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error)
         }
 
-        if (batchEligibleKeys.isNotEmpty()) {
+        if (games.isNotEmpty()) {
+            SaveTypeFilterBar(
+                options = typeOptions,
+                selectedTypeId = selectedTypeId,
+                enabled = !state.busy,
+                onSelected = { selectedTypeId = it },
+            )
+        }
+
+        if (visibleEligibleKeys.isNotEmpty()) {
             BatchSelectionToolbar(
-                selectedCount = selectedGameKeys.size,
-                eligibleKeys = batchEligibleKeys,
+                selectedCount = visibleSelectedKeys.size,
+                eligibleKeys = visibleEligibleKeys,
                 enabled = !state.busy,
                 onToggleAll = {
-                    val allSelected = batchEligibleKeys.isNotEmpty() &&
-                        selectedGameKeys.containsAll(batchEligibleKeys)
-                    selectedGameKeys = if (allSelected) emptySet() else batchEligibleKeys.toSet()
+                    val allSelected = visibleEligibleKeys.isNotEmpty() &&
+                        selectedGameKeys.containsAll(visibleEligibleKeys)
+                    selectedGameKeys = if (allSelected) {
+                        selectedGameKeys - visibleEligibleKeys.toSet()
+                    } else {
+                        selectedGameKeys + visibleEligibleKeys
+                    }
                 },
-                onBackup = { viewModel.requestBatchGameBackup(selectedGameKeys) },
+                onBackup = { viewModel.requestBatchGameBackup(visibleSelectedKeys) },
             )
         }
 
@@ -391,7 +421,7 @@ private fun GameLibraryPage(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(games, key = { it.libraryKey }) { entry ->
+                items(visibleGames, key = { it.libraryKey }) { entry ->
                     GameLibraryCard(
                         entry = entry,
                         state = state,
@@ -412,6 +442,31 @@ private fun GameLibraryPage(
         }
         state.action?.takeIf { !state.busy && !it.startsWith("扫描完成：") }?.let {
             Text(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun SaveTypeFilterBar(
+    options: List<Pair<String, String>>,
+    selectedTypeId: String,
+    enabled: Boolean,
+    onSelected: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { (id, label) ->
+            FilterChip(
+                selected = selectedTypeId == id,
+                onClick = { onSelected(id) },
+                enabled = enabled,
+                label = { Text(label) },
+            )
         }
     }
 }
@@ -526,7 +581,7 @@ private fun SourceManagementPage(
                 }
             }
         }
-        WebDavCard(state, viewModel)
+        GameSaveCard(state, viewModel)
         LocalSnapshotCard(state, viewModel)
         RemoteSnapshotCard(state, viewModel)
         state.action?.takeIf { !state.busy }?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
@@ -608,64 +663,30 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
 }
 
 @Composable
-private fun WebDavCard(state: SourceUiState, viewModel: SourceViewModel) {
-    val isEdenSyncd = state.webDavProvider == WebDavProvider.EDEN_SYNCD
+private fun GameSaveCard(state: SourceUiState, viewModel: SourceViewModel) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Text("云端备份", style = MaterialTheme.typography.titleMedium)
+            Text("game-save 云端备份", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
             Text(
-                if (isEdenSyncd) {
-                    "EDEN_SYNCD 使用独立的 OpenSave WebDAV 凭据。Android 端支持备份和手动恢复，不会自动覆写电脑上的存档。"
-                } else {
-                    "支持 HTTPS；局域网 HTTP 仅适用于可信网络。用户名和密码保存在 Android Keystore 加密区域，不写入日志。"
-                },
+                "OpenSave 直接调用 game-save API。同步密钥使用 Android Keystore 加密保存；PC、Switch 和各模拟器存档在云端分开存放。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(10.dp))
-            Text("云端类型", style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(6.dp))
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                SegmentedButton(
-                    selected = state.webDavProvider == WebDavProvider.WEBDAV,
-                    onClick = { viewModel.updateWebDavProvider(WebDavProvider.WEBDAV) },
-                    enabled = !state.busy,
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    modifier = Modifier.weight(1f),
-                ) { Text("普通 WebDAV") }
-                SegmentedButton(
-                    selected = isEdenSyncd,
-                    onClick = { viewModel.updateWebDavProvider(WebDavProvider.EDEN_SYNCD) },
-                    enabled = !state.busy,
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                    modifier = Modifier.weight(1f),
-                ) { Text("EDEN_SYNCD") }
-            }
-            Spacer(Modifier.height(10.dp))
             OutlinedTextField(
-                value = state.webDavUrl,
-                onValueChange = viewModel::updateWebDavUrl,
-                label = { Text(if (isEdenSyncd) "EDEN_SYNCD 服务地址" else "WebDAV 地址") },
-                placeholder = {
-                    Text(if (isEdenSyncd) "https://nas.example:8788" else "https://nas.example/dav/OpenSave")
-                },
+                value = state.gameSaveUrl,
+                onValueChange = viewModel::updateGameSaveUrl,
+                label = { Text("game-save 服务地址") },
+                placeholder = { Text("http://nas.example:8788") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
-                value = state.webDavUsername,
-                onValueChange = viewModel::updateWebDavUsername,
-                label = { Text("用户名") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = state.webDavPassword,
-                onValueChange = viewModel::updateWebDavPassword,
-                label = { Text("密码") },
+                value = state.gameSaveSyncKey,
+                onValueChange = viewModel::updateGameSaveSyncKey,
+                label = { Text("同步密钥") },
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -676,17 +697,17 @@ private fun WebDavCard(state: SourceUiState, viewModel: SourceViewModel) {
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text("启用新快照自动上传")
-                Switch(checked = state.webDavEnabled, onCheckedChange = viewModel::updateWebDavEnabled)
+                Switch(checked = state.gameSaveEnabled, onCheckedChange = viewModel::updateGameSaveEnabled)
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(onClick = viewModel::saveWebDav, modifier = Modifier.weight(1f)) {
+                Button(onClick = viewModel::saveGameSave, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "保存")
                     Text("保存", modifier = Modifier.padding(start = 6.dp))
                 }
-                OutlinedButton(onClick = viewModel::testWebDav, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = viewModel::testGameSave, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.CloudUpload, contentDescription = "测试")
                     Text("测试连接", modifier = Modifier.padding(start = 6.dp))
                 }
@@ -741,7 +762,8 @@ private fun LocalSnapshotCard(state: SourceUiState, viewModel: SourceViewModel) 
 
 @Composable
 private fun RemoteSnapshotCard(state: SourceUiState, viewModel: SourceViewModel) {
-    val snapshots = state.remoteSnapshots.filterNot { "__game-" in it.name }
+    val sourceId = state.activeSourceId ?: return
+    val snapshots = state.remoteSnapshots.filter { it.name.startsWith(SnapshotNaming.remotePrefix(sourceId)) }
     if (snapshots.isEmpty()) return
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp)) {
@@ -756,7 +778,7 @@ private fun RemoteSnapshotCard(state: SourceUiState, viewModel: SourceViewModel)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(remote.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${formatBytes(remote.sizeBytes)}${if (remote.modified.isBlank()) "" else " · ${remote.modified}"}",
+                            "${GameSaveTypes.fromId(remote.type).label} · ${formatBytes(remote.sizeBytes)}${if (remote.modified.isBlank()) "" else " · ${remote.modified}"}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -848,6 +870,7 @@ private fun GameLibraryCard(
     onSelectedChange: (Boolean) -> Unit,
 ) {
     val game = entry.game
+    val cloudIdentity = GameCloudNaming.identity(entry.sourceId, game)
     var expanded by remember(entry.libraryKey) { mutableStateOf(false) }
     var presentation by remember(entry.libraryKey) { mutableStateOf(game.presentation) }
     LaunchedEffect(entry.libraryKey) {
@@ -858,7 +881,7 @@ private fun GameLibraryCard(
         it.gameKey == game.gameKey && it.sourceId == sourceId
     }
     val remoteHistory = state.remoteSnapshots.filter {
-        it.name.startsWith(SnapshotNaming.gameRemotePrefix(sourceId, game.gameKey))
+        it.type == cloudIdentity.saveType.id && it.name.startsWith(GameCloudNaming.remotePrefix(cloudIdentity))
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -875,6 +898,13 @@ private fun GameLibraryCard(
                         entry.sourceLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        entry.saveType.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -997,9 +1027,9 @@ private fun GameLibraryCard(
                         )
                     }
                 }
-                if (state.webDavEnabled && remoteHistory.isEmpty()) {
+                if (state.gameSaveEnabled && remoteHistory.isEmpty()) {
                     Text(
-                        "云端记录为空时，可在“备份与设置”中列举 WebDAV 快照。",
+                        "云端记录为空时，可在“备份与设置”中列举 game-save 快照。",
                         modifier = Modifier.padding(top = 8.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

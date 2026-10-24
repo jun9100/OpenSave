@@ -16,6 +16,8 @@ data class SnapshotRecord(
     val comment: String = "",
     val gameKey: String? = null,
     val gameName: String = "",
+    val saveType: String = GameSaveTypes.PC.id,
+    val cloudGameId: String = "",
 )
 
 /** Small atomic catalog; the archives remain ordinary files and are never put in preferences. */
@@ -82,12 +84,15 @@ class SnapshotRepository(private val root: File) {
         record.comment,
         record.gameKey.orEmpty(),
         record.gameName,
+        record.saveType,
+        record.cloudGameId,
     ).joinToString("\t", transform = ::encodeField)
 
     private fun decode(line: String): SnapshotRecord? {
         return runCatching {
             val fields = line.split('\t').map(::decodeField)
-            if (fields.size != 10 && fields.size != 12) return null
+            if (fields.size != 10 && fields.size != 12 && fields.size != 14) return null
+            val gameKey = fields.getOrNull(10)?.takeIf(String::isNotBlank)
             SnapshotRecord(
                 id = fields[0],
                 sourceId = fields[1],
@@ -99,8 +104,11 @@ class SnapshotRepository(private val root: File) {
                 manifestHash = fields[7],
                 uploaded = fields[8].toBooleanStrict(),
                 comment = fields[9],
-                gameKey = fields.getOrNull(10)?.takeIf(String::isNotBlank),
+                gameKey = gameKey,
                 gameName = fields.getOrNull(11).orEmpty(),
+                saveType = fields.getOrNull(12)?.takeIf(GameSaveTypes::isValid)
+                    ?: if (gameKey?.startsWith("switch:") == true) GameSaveTypes.SWITCH.id else GameSaveTypes.PC.id,
+                cloudGameId = fields.getOrNull(13).orEmpty(),
             )
         }.getOrNull()
     }

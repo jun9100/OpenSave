@@ -37,11 +37,7 @@ class AutoBackupScheduler(context: Context) {
         val request = PeriodicWorkRequestBuilder<AutoBackupWorker>(15, TimeUnit.MINUTES)
             .setConstraints(constraints)
             .build()
-        WorkManager.getInstance(appContext).enqueueUniquePeriodicWork(
-            WORK_NAME,
-            policy,
-            request,
-        )
+        WorkManager.getInstance(appContext).enqueueUniquePeriodicWork(WORK_NAME, policy, request)
     }
 
     private companion object {
@@ -89,55 +85,65 @@ class AutoBackupWorker(
     appContext: Context,
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParameters) {
-    override suspend fun doWork(): Result =
-        StorageOperationLock.withLock { doWorkLocked() }
+    override suspend fun doWork(): Result = StorageOperationLock.withLock { doWorkLocked() }
 
     private suspend fun doWorkLocked(): Result {
+        val config = GameSaveConfigStore(applicationContext).load()
+        if (!config.enabled || config.serviceUrl.isBlank() || config.syncKey.isBlank()) return Result.success()
+
         val storage = SafStorage(applicationContext)
         val rootStorage = RootStorage(applicationContext)
-        val selectionStore = SourceSelectionStore(applicationContext)
-        val config = WebDavConfigStore(applicationContext).load()
-        if (!config.enabled || config.url.isBlank()) return Result.success()
-
-        val source = when (selectionStore.mode()) {
-            StorageMode.SAF -> {
-                val uri = storage.persistedTreeUri() ?: return Result.success()
-                if (!storage.hasReadWritePermission(uri)) return Result.success()
-                SourceSelection.Saf(uri)
-            }
-
-            StorageMode.ROOT -> {
-                val path = rootStorage.persistedRootPath() ?: return Result.success()
-                SourceSelection.Root(path)
-            }
-        }
-        val scan = when (source) {
-            is SourceSelection.Saf -> storage.scanTree(source.uri)
-                .getOrElse { return scanFailure(it) }
-
-            is SourceSelection.Root -> rootStorage.scanPath(source.path)
-                .getOrElse { return scanFailure(it) }
-        }
-        val games = AutoBackupPolicy.eligibleGames(scan)
-        if (games.isEmpty()) return Result.success()
-
-        val sourceId = SnapshotNaming.sourceId(source.idSeed)
         val repository = SnapshotRepository(File(applicationContext.filesDir, SNAPSHOT_DIRECTORY))
-        for (game in games) {
-            val outcome = runCatching {
-                backupGame(source, sourceId, game, repository, storage, rootStorage, config)
-            }.getOrElse { error ->
-                return if (error is WebDavException && error.retryable && runAttemptCount < 3) {
-                    Result.retry()
-                } else {
-                    Result.failure()
+        var retryableFailure = false
+
+        for (source in backupSources(storage, rootStorage)) {
+            val scan = scanSource(source, storage, rootStorage)
+            if (scan.isFailure) {
+                retryableFailure = true
+                continue
+            }
+            val sourceId = SnapshotNaming.sourceId(source.idSeed)
+            for (game in AutoBackupPolicy.eligibleGames(scan.getOrThrow())) {
+                when (val outcome = runCatching {
+                    backupGame(source, sourceId, game, repository, storage, rootStorage, config)
+                }.getOrElse { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) }) {
+                    GameBackupOutcome.Skipped, GameBackupOutcome.Uploaded -> Unit
+                    is GameBackupOutcome.UploadFailed -> retryableFailure = retryableFailure || outcome.error.retryable
                 }
             }
-            if (outcome is GameBackupOutcome.UploadFailed) {
-                return if (outcome.error.retryable && runAttemptCount < 3) Result.retry() else Result.failure()
+        }
+        return if (retryableFailure && runAttemptCount < MAX_RETRIES) Result.retry() else Result.success()
+    }
+
+    /** Includes every source OpenSave can read; a missing preset is simply skipped. */
+    private suspend fun backupSources(storage: SafStorage, rootStorage: RootStorage): List<SourceSelection> {
+        val sources = linkedMapOf<String, SourceSelection>()
+        storage.persistedTreeUri()?.takeIf(storage::hasReadWritePermission)?.let { uri ->
+            val source = SourceSelection.Saf(uri)
+            sources[source.idSeed] = source
+        }
+
+        if (rootStorage.checkRootAccess().isFailure) return sources.values.toList()
+        val rootPaths = buildList {
+            RootSourcePresets.all.forEach { add(it.path) }
+            rootStorage.persistedRootPath()?.let(::add)
+        }.distinct()
+        for (path in rootPaths) {
+            if (rootStorage.pathExists(path).getOrDefault(false)) {
+                val source = SourceSelection.Root(path)
+                sources[source.idSeed] = source
             }
         }
-        return Result.success()
+        return sources.values.toList()
+    }
+
+    private suspend fun scanSource(
+        source: SourceSelection,
+        storage: SafStorage,
+        rootStorage: RootStorage,
+    ): kotlin.Result<SaveScanReport> = when (source) {
+        is SourceSelection.Saf -> storage.scanTree(source.uri)
+        is SourceSelection.Root -> rootStorage.scanPath(source.path)
     }
 
     private suspend fun backupGame(
@@ -147,17 +153,20 @@ class AutoBackupWorker(
         repository: SnapshotRepository,
         storage: SafStorage,
         rootStorage: RootStorage,
-        config: WebDavConfig,
+        config: GameSaveConfig,
     ): GameBackupOutcome {
-        val manifest = GameSnapshotManifest.from(game)
+        val saves = GameLibrary.batchBackupLocations(game)
+        val manifest = GameSnapshotManifest.from(game, saves)
+        val selectedGame = game.copy(saves = saves)
+        val cloudIdentity = GameCloudNaming.identity(sourceId, selectedGame)
         val workspace = File(applicationContext.filesDir, AUTO_GAME_WORKSPACE_DIRECTORY)
         try {
-            val copyResult = when (source) {
+            when (source) {
                 is SourceSelection.Saf -> storage.copyGameLocations(source.uri, manifest.locations, workspace)
                 is SourceSelection.Root -> rootStorage.copyGameLocations(source.path, manifest.locations, workspace)
-            }
-            copyResult.getOrThrow()
-            manifest.write(File(workspace, GameSnapshotManifest.FILE_NAME))
+            }.getOrThrow()
+            val manifestFile = File(workspace, GameSnapshotManifest.FILE_NAME)
+            manifest.write(manifestFile)
             val fingerprint = AutoBackupPolicy.fingerprint(workspace)
             if (fingerprint.dataFileCount == 0) return GameBackupOutcome.Skipped
 
@@ -173,19 +182,15 @@ class AutoBackupWorker(
                 fingerprint = fingerprint,
                 workspace = workspace,
                 repository = repository,
+                cloudIdentity = cloudIdentity,
             )
 
-            val upload = WebDavClient(config).upload(repository.fileFor(record), record.remoteName)
-            upload.fold(
+            return GameSaveClient(config).upload(repository.fileFor(record), cloudIdentity.saveType, record.remoteName).fold(
                 onSuccess = {
                     repository.markUploaded(record.id)
-                    return GameBackupOutcome.Uploaded
+                    GameBackupOutcome.Uploaded
                 },
-                onFailure = { error ->
-                    return GameBackupOutcome.UploadFailed(
-                        error as? WebDavException ?: WebDavException(error.message ?: "WebDAV 上传失败", true),
-                    )
-                },
+                onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
             )
         } finally {
             workspace.deleteRecursively()
@@ -199,14 +204,20 @@ class AutoBackupWorker(
         fingerprint: AutoBackupFingerprint,
         workspace: File,
         repository: SnapshotRepository,
+        cloudIdentity: GameCloudIdentity,
     ): SnapshotRecord {
         val timestamp = maxOf(
             System.currentTimeMillis(),
             (repository.list().maxOfOrNull { it.createdAtMillis } ?: 0L) + 1L,
         )
-        val remoteName = SnapshotNaming.gameRemoteName(sourceId, game.gameKey, timestamp)
+        val remoteName = GameCloudNaming.remoteName(cloudIdentity, timestamp)
         val archive = File(applicationContext.filesDir, "$SNAPSHOT_DIRECTORY/$remoteName")
-        val build = SnapshotEngine().createSnapshot(workspace, archive).getOrThrow()
+        val source = if (cloudIdentity.desktopCompatible) {
+            File(workspace, manifest.locations.single().archivePath)
+        } else {
+            workspace
+        }
+        val build = SnapshotEngine().createSnapshot(source, archive).getOrThrow()
         val record = SnapshotRecord(
             id = "auto-game_$timestamp",
             sourceId = sourceId,
@@ -218,23 +229,27 @@ class AutoBackupWorker(
             manifestHash = fingerprint.manifestHash,
             gameKey = game.gameKey,
             gameName = manifest.gameName,
+            saveType = cloudIdentity.saveType.id,
+            cloudGameId = cloudIdentity.gameId,
         )
         repository.add(record)
         return record
     }
 
-    private fun scanFailure(error: Throwable): Result {
-        return if (runAttemptCount < 3) Result.retry() else Result.failure()
+    private fun asGameSaveError(error: Throwable): GameSaveException = when (error) {
+        is GameSaveException -> error
+        else -> GameSaveException(error.message ?: "game-save 上传失败", retryable = true)
     }
 
     private sealed interface GameBackupOutcome {
         data object Skipped : GameBackupOutcome
         data object Uploaded : GameBackupOutcome
-        data class UploadFailed(val error: WebDavException) : GameBackupOutcome
+        data class UploadFailed(val error: GameSaveException) : GameBackupOutcome
     }
 
     private companion object {
         const val SNAPSHOT_DIRECTORY = "snapshots"
         const val AUTO_GAME_WORKSPACE_DIRECTORY = "auto-game-workspace"
+        const val MAX_RETRIES = 3
     }
 }

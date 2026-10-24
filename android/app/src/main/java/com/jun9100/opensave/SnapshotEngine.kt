@@ -163,6 +163,8 @@ object SnapshotNaming {
     fun remoteName(sourceId: String, timestampMillis: Long): String =
         "${sanitize(sourceId)}__main__snap_$timestampMillis.zip"
 
+    fun remotePrefix(sourceId: String): String = "${sanitize(sourceId)}__main__snap_"
+
     fun gameRemoteName(sourceId: String, gameKey: String, timestampMillis: Long): String =
         "${sanitize(sourceId)}__game-${Hashing.sha256(gameKey).take(12)}__snap_$timestampMillis.zip"
 

@@ -10,27 +10,28 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class WebDavConfigStore(context: Context) {
+data class GameSaveConfig(
+    val enabled: Boolean = false,
+    val serviceUrl: String = "",
+    val syncKey: String = "",
+)
+
+/** Persists only the service address in plaintext; the sync key stays in Android Keystore encryption. */
+class GameSaveConfigStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
-    fun load(): WebDavConfig {
-        return WebDavConfig(
-            enabled = preferences.getBoolean(ENABLED_KEY, false),
-            url = preferences.getString(URL_KEY, "").orEmpty(),
-            username = decrypt(preferences.getString(USERNAME_KEY, null)),
-            password = decrypt(preferences.getString(PASSWORD_KEY, null)),
-            provider = WebDavProvider.fromStored(preferences.getString(PROVIDER_KEY, null)),
-        )
-    }
+    fun load(): GameSaveConfig = GameSaveConfig(
+        enabled = preferences.getBoolean(ENABLED_KEY, false),
+        serviceUrl = preferences.getString(URL_KEY, "").orEmpty(),
+        syncKey = decrypt(preferences.getString(SYNC_KEY, null)),
+    )
 
-    fun save(config: WebDavConfig) {
+    fun save(config: GameSaveConfig) {
         preferences.edit()
             .putBoolean(ENABLED_KEY, config.enabled)
-            .putString(URL_KEY, config.url.trim())
-            .putString(PROVIDER_KEY, config.provider.name)
+            .putString(URL_KEY, GameSaveClient.normalizeServiceUrl(config.serviceUrl))
             .apply {
-                if (config.username.isBlank()) remove(USERNAME_KEY) else putString(USERNAME_KEY, encrypt(config.username))
-                if (config.password.isBlank()) remove(PASSWORD_KEY) else putString(PASSWORD_KEY, encrypt(config.password))
+                if (config.syncKey.isBlank()) remove(SYNC_KEY) else putString(SYNC_KEY, encrypt(config.syncKey))
             }
             .apply()
     }
@@ -46,6 +47,7 @@ class WebDavConfigStore(context: Context) {
         if (value.isNullOrBlank()) return ""
         return runCatching {
             val combined = Base64.getDecoder().decode(value)
+            require(combined.size > GCM_IV_BYTES) { "同步密钥密文无效" }
             val iv = combined.copyOfRange(0, GCM_IV_BYTES)
             val ciphertext = combined.copyOfRange(GCM_IV_BYTES, combined.size)
             Cipher.getInstance(TRANSFORMATION).apply {
@@ -73,13 +75,11 @@ class WebDavConfigStore(context: Context) {
     }
 
     private companion object {
-        const val PREFERENCES = "opensave_webdav"
+        const val PREFERENCES = "opensave_game_save"
         const val ENABLED_KEY = "enabled"
-        const val URL_KEY = "url"
-        const val PROVIDER_KEY = "provider"
-        const val USERNAME_KEY = "username"
-        const val PASSWORD_KEY = "password"
-        const val KEY_ALIAS = "opensave_webdav_credentials"
+        const val URL_KEY = "service_url"
+        const val SYNC_KEY = "sync_key"
+        const val KEY_ALIAS = "opensave_game_save_sync_key"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val GCM_IV_BYTES = 12
