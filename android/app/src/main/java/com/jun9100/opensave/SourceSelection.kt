@@ -41,6 +41,9 @@ object RootSourcePresets {
         RootSourcePreset("PPSSPP", "/storage/emulated/0/PSP"),
         RootSourcePreset("RetroArch", "/storage/emulated/0/RetroArch"),
         RootSourcePreset("Dolphin", "/storage/emulated/0/dolphin-emu"),
+        RootSourcePreset("DuckStation", "/storage/emulated/0/DuckStation"),
+        RootSourcePreset("AetherSX2 / NetherSX2", "/storage/emulated/0/AetherSX2"),
+        RootSourcePreset("NetherSX2", "/storage/emulated/0/NetherSX2"),
         RootSourcePreset("Android 应用数据", "/storage/emulated/0/Android/data"),
     )
 

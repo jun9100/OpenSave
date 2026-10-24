@@ -72,6 +72,22 @@ class SaveSourceDetectorTest {
     }
 
     @Test
+    fun separatesDuckStationAndAetherSx2SaveRoots() {
+        val root = "/storage/emulated/0"
+        val report = SaveSourceDetector.scanDirectories(
+            root,
+            listOf(
+                root,
+                "$root/DuckStation/memcards",
+                "$root/NetherSX2/memcards",
+            ),
+        )
+
+        assertTrue(report.detected.any { it.kind == "duckstation" && it.relativePath == "DuckStation/memcards" })
+        assertTrue(report.detected.any { it.kind == "aethersx2" && it.relativePath == "NetherSX2/memcards" })
+    }
+
+    @Test
     fun ignoresSwitchAccountAndSystemSaveDirectories() {
         val root = "/storage/emulated/0/Android/data/dev.eden.eden_emulator/files"
         val directories = listOf(

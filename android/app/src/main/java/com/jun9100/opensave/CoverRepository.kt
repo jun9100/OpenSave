@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/** Downloads only known Steam covers and keeps them in app-private storage. */
+/** Downloads Steam and Switch title covers, then keeps them in app-private storage. */
 class CoverRepository(context: Context) {
     private val directory = File(context.filesDir, "covers")
     private val client = OkHttpClient.Builder()
@@ -22,6 +22,7 @@ class CoverRepository(context: Context) {
 
     suspend fun load(presentation: GamePresentation): Bitmap? = withContext(Dispatchers.IO) {
         val cacheKey = presentation.coverCacheKey ?: return@withContext null
+        val coverUrl = presentation.coverUrl ?: return@withContext null
         val target = File(directory, "$cacheKey.jpg")
         decode(target)?.let { return@withContext it }
 
@@ -29,7 +30,7 @@ class CoverRepository(context: Context) {
         val temporary = File(directory, ".$cacheKey.part")
         val downloaded = runCatching {
             val request = Request.Builder()
-                .url(presentation.coverUrl!!)
+                .url(coverUrl)
                 .header("User-Agent", "OpenSave Android")
                 .build()
             client.newCall(request).execute().use { response ->

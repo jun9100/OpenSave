@@ -2,6 +2,7 @@ package com.jun9100.opensave
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GameCatalogTest {
@@ -85,6 +86,29 @@ class GameCatalogTest {
         assertEquals("0100ABCDEF123456", presentation.identity)
         assertEquals("未命名游戏", presentation.primaryName)
         assertEquals(GameIconKey.SWITCH, presentation.iconKey)
+        assertEquals(
+            "https://tinfoil.media/ti/0100ABCDEF123456/0/0/",
+            presentation.coverUrl,
+        )
+        assertEquals("switch-0100abcdef123456", presentation.coverCacheKey)
+    }
+
+    @Test
+    fun suppliesKnownSwitchGameArtworkAndChineseName() {
+        val presentation = GameCatalog.present(
+            DetectedSave(
+                kind = "yuzu-switch",
+                relativePath = "nand/user/save/0100000000010000",
+                titleId = "0100000000010000",
+                note = "test",
+                displayName = "Switch 0100000000010000",
+                gameKey = "switch:0100000000010000",
+            ),
+        )
+
+        assertEquals("超级马力欧 奥德赛", presentation.localizedName)
+        assertEquals("Super Mario Odyssey", presentation.originalName)
+        assertTrue(presentation.coverUrl?.startsWith("https://tinfoil.media/ti/") == true)
     }
 
     @Test

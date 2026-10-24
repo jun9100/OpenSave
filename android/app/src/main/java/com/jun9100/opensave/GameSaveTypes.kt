@@ -23,10 +23,12 @@ object GameSaveTypes {
     val PPSSPP = GameSaveType("emulator-ppsspp", "PPSSPP", GameSaveFamily.EMULATOR)
     val RETROARCH = GameSaveType("emulator-retroarch", "RetroArch", GameSaveFamily.EMULATOR)
     val DOLPHIN = GameSaveType("emulator-dolphin", "Dolphin", GameSaveFamily.EMULATOR)
+    val DUCKSTATION = GameSaveType("emulator-duckstation", "DuckStation", GameSaveFamily.EMULATOR)
+    val AETHERSX2 = GameSaveType("emulator-aethersx2", "AetherSX2 / NetherSX2", GameSaveFamily.EMULATOR)
     val ANDROID = GameSaveType("emulator-android", "Android 游戏", GameSaveFamily.EMULATOR)
     val GENERIC = GameSaveType("emulator-generic", "其他模拟器", GameSaveFamily.EMULATOR)
 
-    private val known = listOf(PC, SWITCH, PPSSPP, RETROARCH, DOLPHIN, ANDROID, GENERIC)
+    private val known = listOf(PC, SWITCH, PPSSPP, RETROARCH, DOLPHIN, DUCKSTATION, AETHERSX2, ANDROID, GENERIC)
         .associateBy(GameSaveType::id)
     private val emulatorTypePattern = Regex("^emulator-[a-z0-9][a-z0-9-]{0,53}$")
 
@@ -46,6 +48,8 @@ object GameSaveTypes {
         "ppsspp" -> PPSSPP
         "retroarch" -> RETROARCH
         "dolphin" -> DOLPHIN
+        "duckstation" -> DUCKSTATION
+        "aethersx2" -> AETHERSX2
         "android-app" -> ANDROID
         else -> GENERIC
     }
@@ -66,6 +70,8 @@ object GameSaveTypes {
             "PPSSPP" -> PPSSPP
             "RetroArch" -> RETROARCH
             "Dolphin" -> DOLPHIN
+            "DuckStation" -> DUCKSTATION
+            "AetherSX2 / NetherSX2", "NetherSX2" -> AETHERSX2
             "Android 应用数据" -> ANDROID
             else -> GENERIC
         }

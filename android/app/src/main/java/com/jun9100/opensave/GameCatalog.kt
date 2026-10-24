@@ -11,6 +11,8 @@ enum class GameIconKey {
     PPSSPP,
     RETROARCH,
     DOLPHIN,
+    DUCKSTATION,
+    AETHERSX2,
     EMULATOR,
     UNKNOWN,
 }
@@ -22,6 +24,7 @@ data class GamePresentation(
     val iconKey: GameIconKey,
     val androidPackageName: String? = null,
     val steamAppId: String? = null,
+    val switchTitleId: String? = null,
 ) {
     val primaryName: String
         get() = localizedName ?: originalName ?: "未命名游戏"
@@ -31,9 +34,11 @@ data class GamePresentation(
 
     val coverUrl: String?
         get() = steamAppId?.let { "https://cdn.cloudflare.steamstatic.com/steam/apps/$it/header.jpg" }
+            ?: switchTitleId?.let { "https://tinfoil.media/ti/$it/0/0/" }
 
     val coverCacheKey: String?
         get() = steamAppId?.let { "steam-$it" }
+            ?: switchTitleId?.let { "switch-${it.lowercase()}" }
 }
 
 object GameCatalog {
@@ -90,9 +95,10 @@ object GameCatalog {
         val packageName = save.takeIf { it.kind == "android-app" }
             ?.let { rawName }
         val appId = extractAppId(save)
+        val titleId = save.titleId?.uppercase()
         val entry = packageName?.let { androidEntries[it] }
             ?: appId?.let { steamEntries[it] }
-            ?: save.titleId?.let { titleIdEntries[it.uppercase()] }
+            ?: titleId?.let { titleIdEntries[it] }
             ?: rawName?.let { nameEntries[normalized(it)] }
         val steamAppId = appId ?: entry?.steamAppId
 
@@ -100,10 +106,11 @@ object GameCatalog {
         return GamePresentation(
             localizedName = entry?.localizedName,
             originalName = originalName,
-            identity = save.titleId ?: steamAppId?.let { "Steam AppID $it" },
+            identity = titleId ?: steamAppId?.let { "Steam AppID $it" },
             iconKey = iconKey(save.kind),
             androidPackageName = packageName,
             steamAppId = steamAppId,
+            switchTitleId = titleId?.takeIf { switchTitleIdPattern.matches(it) },
         )
     }
 
@@ -135,6 +142,8 @@ object GameCatalog {
         "ppsspp" -> GameIconKey.PPSSPP
         "retroarch" -> GameIconKey.RETROARCH
         "dolphin" -> GameIconKey.DOLPHIN
+        "duckstation" -> GameIconKey.DUCKSTATION
+        "aethersx2" -> GameIconKey.AETHERSX2
         "emulator" -> GameIconKey.EMULATOR
         else -> GameIconKey.UNKNOWN
     }
@@ -164,4 +173,6 @@ object GameCatalog {
         "010093801237C000" to Entry("密特罗德 生存恐惧", "Metroid Dread"),
         "0100A6301214E000" to Entry("火焰之纹章 Engage", "Fire Emblem Engage"),
     )
+
+    private val switchTitleIdPattern = Regex("^01[0-9A-F]{14}$")
 }

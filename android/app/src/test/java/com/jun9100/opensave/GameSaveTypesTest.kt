@@ -13,6 +13,8 @@ class GameSaveTypesTest {
         assertEquals(GameSaveTypes.PPSSPP, GameSaveTypes.forSave(DetectedSave("ppsspp", "save", note = "psp")))
         assertEquals(GameSaveTypes.RETROARCH, GameSaveTypes.forSave(DetectedSave("retroarch", "save", note = "retro")))
         assertEquals(GameSaveTypes.DOLPHIN, GameSaveTypes.forSave(DetectedSave("dolphin", "save", note = "dolphin")))
+        assertEquals(GameSaveTypes.DUCKSTATION, GameSaveTypes.forSave(DetectedSave("duckstation", "save", note = "ps1")))
+        assertEquals(GameSaveTypes.AETHERSX2, GameSaveTypes.forSave(DetectedSave("aethersx2", "save", note = "ps2")))
         assertEquals(GameSaveTypes.GENERIC, GameSaveTypes.forSave(DetectedSave("emulator", "save", note = "generic")))
     }
 

@@ -217,11 +217,12 @@ object SaveSourceDetector {
             lowerPath.contains("dolphin") && last in setOf("wii", "gc", "statesaves", "state saves") ->
                 simpleDetection("dolphin", relative, "Dolphin 存档目录", "Dolphin", found)?.let { found += it }
 
-            lowerPath.contains("duckstation") || lowerPath.contains("aethersx2") || lowerPath.contains("nether sx2") -> {
-                if (last in setOf("memcards", "sstates", "savestates", "states", "memorycards")) {
-                    simpleDetection("emulator", relative, "模拟器存档目录", last, found)?.let { found += it }
-                }
-            }
+            lowerPath.contains("duckstation") && last in setOf("memcards", "sstates", "savestates", "states", "memorycards") ->
+                simpleDetection("duckstation", relative, "DuckStation 存档目录", "DuckStation", found)?.let { found += it }
+
+            (lowerPath.contains("aethersx2") || lowerPath.contains("nethersx2") || lowerPath.contains("nether sx2")) &&
+                last in setOf("memcards", "sstates", "savestates", "states", "memorycards") ->
+                simpleDetection("aethersx2", relative, "AetherSX2/NetherSX2 存档目录", "AetherSX2", found)?.let { found += it }
         }
     }
 

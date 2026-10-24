@@ -1145,6 +1145,8 @@ private fun GameIcon(iconKey: GameIconKey, modifier: Modifier) {
         GameIconKey.PPSSPP -> Icons.Outlined.SportsEsports to MaterialTheme.colorScheme.primary
         GameIconKey.RETROARCH -> Icons.Outlined.Storage to MaterialTheme.colorScheme.secondary
         GameIconKey.DOLPHIN -> Icons.Outlined.SportsEsports to MaterialTheme.colorScheme.tertiary
+        GameIconKey.DUCKSTATION -> Icons.Outlined.Memory to MaterialTheme.colorScheme.secondary
+        GameIconKey.AETHERSX2 -> Icons.Outlined.Memory to MaterialTheme.colorScheme.tertiary
         GameIconKey.EMULATOR -> Icons.Outlined.Memory to MaterialTheme.colorScheme.primary
         GameIconKey.UNKNOWN -> Icons.Outlined.Storage to MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -1166,6 +1168,8 @@ private fun kindLabel(kind: String): String = when (kind) {
     "ppsspp" -> "PPSSPP"
     "retroarch" -> "RetroArch"
     "dolphin" -> "Dolphin"
+    "duckstation" -> "DuckStation"
+    "aethersx2" -> "AetherSX2/NetherSX2"
     "emulator" -> "模拟器"
     "android-app" -> "Android 应用数据"
     "gamehub-pc" -> "GameHub 本地 PC"

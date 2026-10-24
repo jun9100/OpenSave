@@ -25,6 +25,10 @@ class RootSourcePresetsTest {
             "Sudachi",
             RootSourcePresets.find("/data/user/0/org.sudachi.sudachi_emu/files")?.label,
         )
+        assertEquals(
+            "AetherSX2 / NetherSX2",
+            RootSourcePresets.find("/storage/emulated/0/AetherSX2")?.label,
+        )
         assertNull(RootSourcePresets.find("/data/user/0/custom.emulator/files"))
     }
 
@@ -40,6 +44,10 @@ class RootSourcePresetsTest {
         assertEquals(
             GameSaveTypes.SWITCH,
             options.first { it.label == "Eden Switch" }.saveType,
+        )
+        assertEquals(
+            GameSaveTypes.AETHERSX2,
+            options.first { it.label == "AetherSX2 / NetherSX2" }.saveType,
         )
     }
 
