@@ -442,28 +442,35 @@ func (d *Daemon) CheckCloud() {
 	}
 	ownKey := cloud.DeviceKey(settings.NodeID)
 
-	snapFiles := map[string]string{}                  // game id/branch/snapshot id -> file
-	newest := map[string]map[string]cloud.CloudFile{} // game id -> device -> head
-	newestAt := map[string]int64{}                    // game id/device -> ms
-	ownHeads := map[string][]cloud.CloudFile{}        // game id -> this device's heads
+	// EDEN_SYNCD uses a separate remote namespace for each save type. Keep it
+	// in every lookup key so a PC archive cannot satisfy a Switch head with the
+	// same game id or snapshot id. Other providers remain flat as before.
+	scope := func(saveType, name string) string {
+		return cloud.ScopedName(cfg.Provider, saveType, name)
+	}
+	snapFiles := map[string]string{}                  // type/game id/branch/snapshot id -> file
+	newest := map[string]map[string]cloud.CloudFile{} // type/game id -> device -> head
+	newestAt := map[string]int64{}                    // type/game id/device -> ms
+	ownHeads := map[string][]cloud.CloudFile{}        // type/game id -> this device's heads
 	for _, f := range files {
 		if gameID, dev, at, ok := cloud.ParseHeadFileName(f.Name); ok {
+			gameKey := scope(f.ID, gameID)
 			if dev == ownKey {
-				ownHeads[gameID] = append(ownHeads[gameID], f)
+				ownHeads[gameKey] = append(ownHeads[gameKey], f)
 				continue
 			}
-			key := gameID + "/" + dev
+			key := gameKey + "/" + dev
 			if at > newestAt[key] {
 				newestAt[key] = at
-				if newest[gameID] == nil {
-					newest[gameID] = map[string]cloud.CloudFile{}
+				if newest[gameKey] == nil {
+					newest[gameKey] = map[string]cloud.CloudFile{}
 				}
-				newest[gameID][dev] = f
+				newest[gameKey][dev] = f
 			}
 			continue
 		}
 		if gameID, branch, snapID, ok := snapshot.ParseExportEntryName(f.Name); ok {
-			snapFiles[gameID+"/"+branch+"/"+snapID] = f.Name
+			snapFiles[scope(f.ID, gameID+"/"+branch+"/"+snapID)] = f.Name
 		}
 	}
 
@@ -473,7 +480,8 @@ func (d *Daemon) CheckCloud() {
 	}
 	var offers []CloudOffer
 	for _, game := range games {
-		d.pruneOwnHeads(ownHeads[game.ID])
+		gameKey := scope(game.SaveType, game.ID)
+		d.pruneOwnHeads(ownHeads[gameKey])
 		rec, err := d.cloudHeadFor(game)
 		if err != nil {
 			continue
@@ -488,7 +496,7 @@ func (d *Daemon) CheckCloud() {
 		// game the other one's archive to restore.
 		fileFor := func(snapID string) string {
 			for _, id := range ids {
-				if f := snapFiles[id+"/"+game.ActiveBranch+"/"+snapID]; f != "" {
+				if f := snapFiles[scope(game.SaveType, id+"/"+game.ActiveBranch+"/"+snapID)]; f != "" {
 					return f
 				}
 			}
@@ -498,13 +506,14 @@ func (d *Daemon) CheckCloud() {
 		// Announce this device's save if the cloud does not know it yet: a
 		// device upgraded from a version without heads, or an announcement
 		// that failed.
-		if rec.Snapshot != "" && rec.Published != rec.Snapshot && fileFor(rec.Snapshot) != "" {
+		if rec.Snapshot != "" && fileFor(rec.Snapshot) != "" &&
+			(rec.Published != rec.Snapshot || len(ownHeads[gameKey]) == 0) {
 			_ = d.publishHead(game.ID)
 		}
 		var heads []cloud.Head
 		for _, id := range ids {
-			for _, f := range newest[id] {
-				if h, err := d.readHead(f.Name); err == nil {
+			for _, f := range newest[scope(game.SaveType, id)] {
+				if h, err := d.readHead(f); err == nil {
 					heads = append(heads, h)
 				}
 			}
@@ -567,14 +576,18 @@ func (d *Daemon) CheckCloud() {
 }
 
 // readHead fetches a head, from the cache when it has been read before.
-func (d *Daemon) readHead(name string) (cloud.Head, error) {
+func (d *Daemon) readHead(file cloud.CloudFile) (cloud.Head, error) {
+	// Names are only unique inside EDEN_SYNCD's save-type namespace. Keeping
+	// the type in the cache key prevents a PC head being reused for a Switch
+	// head with the same game, device, and timestamp.
+	cacheKey := file.ID + "\x00" + file.Name
 	d.cloudRd.cacheMu.Lock()
-	h, ok := d.cloudRd.cache[name]
+	h, ok := d.cloudRd.cache[cacheKey]
 	d.cloudRd.cacheMu.Unlock()
 	if ok {
 		return h, nil
 	}
-	h, err := d.Cloud.FetchHead(name)
+	h, err := d.Cloud.FetchHeadFile(file)
 	if err != nil {
 		return cloud.Head{}, err
 	}
@@ -582,7 +595,7 @@ func (d *Daemon) readHead(name string) (cloud.Head, error) {
 	if d.cloudRd.cache == nil {
 		d.cloudRd.cache = map[string]cloud.Head{}
 	}
-	d.cloudRd.cache[name] = h
+	d.cloudRd.cache[cacheKey] = h
 	d.cloudRd.cacheMu.Unlock()
 	return h, nil
 }
@@ -621,7 +634,7 @@ func (d *Daemon) pullFromCloud(game store.Game, fileName, deviceName string) err
 		return err
 	}
 	destPath := filepath.Join(destDir, snapID+".zip")
-	if err := d.Cloud.Download(fileName, destPath); err != nil {
+	if err := d.Cloud.DownloadFile(cloud.CloudFile{ID: cloud.SaveTypeScope(game.SaveType), Name: fileName}, destPath); err != nil {
 		return err
 	}
 	info, err := os.Stat(destPath)

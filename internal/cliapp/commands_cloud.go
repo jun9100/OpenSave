@@ -381,14 +381,14 @@ func cloudBrowse(asJSON bool) int {
 	}
 
 	section(fmt.Sprintf("Cloud backup %s %s across %s", symDot(), plural(total, "file", "files"), plural(len(games), "game", "games")))
-	t := newTable("game", "branch", "size", "file")
+	t := newTable("game", "type", "branch", "size", "file")
 	for _, g := range games {
 		label := g.GameName
 		if label == "" {
 			label = g.GameID
 		}
 		for _, s := range g.Snapshots {
-			t.add(bold(label), faint(s.Branch), humanBytes(s.SizeBytes), faint(s.Name))
+			t.add(bold(label), faint(g.SaveType), faint(s.Branch), humanBytes(s.SizeBytes), faint(s.Name))
 		}
 	}
 	t.render()
@@ -404,15 +404,43 @@ func cloudBrowse(asJSON bool) int {
 type cloudBrowseGame struct {
 	GameID    string `json:"gameId"`
 	GameName  string `json:"gameName"`
+	SaveType  string `json:"saveType"`
 	Count     int    `json:"count"`
 	TotalSize int64  `json:"totalSize"`
 	Snapshots []struct {
+		ID          string `json:"id"`
 		Name        string `json:"name"`
 		SizeBytes   int64  `json:"sizeBytes"`
 		Branch      string `json:"branch"`
 		SnapshotID  string `json:"snapshotId"`
 		CreatedTime string `json:"createdTime"`
 	} `json:"snapshots"`
+}
+
+// cloudSnapshotRef is a snapshot selected from the daemon's type-filtered
+// per-game listing. The id is an opaque provider ID normally, but is the save
+// namespace for game-save, so restore and delete must pass it through.
+type cloudSnapshotRef struct {
+	ID       string `json:"id"`
+	FileName string `json:"name"`
+}
+
+func cloudSnapshotFor(gameID, fileName string) (cloudSnapshotRef, error) {
+	raw, err := daemonRequest("GET", "/api/cloud/snapshots/"+gameID, nil)
+	if err != nil {
+		return cloudSnapshotRef{}, err
+	}
+	var snaps []cloudSnapshotRef
+	if err := json.Unmarshal(raw, &snaps); err != nil {
+		return cloudSnapshotRef{}, fmt.Errorf("could not read the cloud listing for %s", gameID)
+	}
+	for _, snap := range snaps {
+		if snap.FileName == fileName {
+			return snap, nil
+		}
+	}
+	return cloudSnapshotRef{}, fmt.Errorf(
+		"%s is not a cloud snapshot of %s — run `opensave cloud list %s`", fileName, gameID, gameID)
 }
 
 func decodeCloudBrowse(raw []byte) ([]cloudBrowseGame, error) {
@@ -499,8 +527,12 @@ func cloudRestore(asJSON bool, args []string) int {
 				"  list the file names with `opensave cloud list <gameId>`")
 		return 1
 	}
+	snap, err := cloudSnapshotFor(args[0], args[1])
+	if err != nil {
+		return fail(asJSON, err)
+	}
 	raw, err := daemonRequest("POST", "/api/cloud/restore/"+args[0],
-		map[string]any{"fileName": args[1]})
+		map[string]any{"fileName": snap.FileName, "id": snap.ID})
 	if err != nil {
 		return fail(asJSON, err)
 	}
@@ -628,33 +660,13 @@ const cloudDeleteUsage = `usage:
 // it, so it is looked up rather than asked for — the user has a filename in
 // front of them, not an opaque id.
 func cloudDeleteOne(asJSON bool, gameID, fileName string) int {
-	raw, err := daemonRequest("GET", "/api/cloud/snapshots/"+gameID, nil)
+	snap, err := cloudSnapshotFor(gameID, fileName)
 	if err != nil {
 		return fail(asJSON, err)
 	}
-	var snaps []struct {
-		ID       string `json:"id"`
-		FileName string `json:"name"`
-	}
-	if json.Unmarshal(raw, &snaps) != nil {
-		return fail(asJSON, fmt.Errorf("could not read the cloud listing for %s", gameID))
-	}
-
-	var fileID string
-	var found bool
-	for _, s := range snaps {
-		if s.FileName == fileName {
-			fileID, found = s.ID, true
-			break
-		}
-	}
-	if !found {
-		return fail(asJSON, fmt.Errorf(
-			"%s is not a cloud snapshot of %s — run `opensave cloud list %s`", fileName, gameID, gameID))
-	}
 
 	if _, err := daemonRequest("POST", "/api/cloud/delete/"+gameID, map[string]any{
-		"fileName": fileName, "id": fileID,
+		"fileName": snap.FileName, "id": snap.ID,
 	}); err != nil {
 		return fail(asJSON, err)
 	}

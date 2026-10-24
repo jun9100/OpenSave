@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudTiles, connectedProviderOf, isEmail, providerStatus, providers } from './cloudproviders.js';
+import { cloudTileKey, cloudTiles, connectedProviderOf, isEmail, providerStatus, providers, saveTypeLabel } from './cloudproviders.js';
 
 describe('connectedProviderOf', () => {
   it('is the OAuth provider the tokens were issued for', () => {
@@ -78,5 +78,27 @@ describe('cloudTiles', () => {
     const cover = (g) => `art:${g.id ?? '-'}:${g.name}`;
     const tiles = cloudTiles([{ gameId: 'b', gameName: 'Beta' }, { gameId: 'z', gameName: 'Zed' }], local, cover);
     expect(tiles.map((t) => t.coverUrl)).toEqual(['art:b:Beta', 'art:-:Zed', 'art:a:Alpha']);
+  });
+  it('keeps same-id PC and Switch backups as separate tiles', () => {
+    const sameID = 'hollow-knight';
+    const tiles = cloudTiles(
+      [
+        { gameId: sameID, gameName: 'Hollow Knight', saveType: 'pc' },
+        { gameId: sameID, gameName: 'Hollow Knight', saveType: 'switch' }
+      ],
+      [{ id: sameID, name: 'Hollow Knight PC', saveType: 'pc' }]
+    );
+    expect(tiles.map((t) => [t.key, t.tracked, t.saveType])).toEqual([
+      [cloudTileKey(sameID, 'pc'), true, 'pc'],
+      [cloudTileKey(sameID, 'switch'), false, 'switch']
+    ]);
+  });
+});
+
+describe('saveTypeLabel', () => {
+  it('names built-in types and keeps future emulator ids readable', () => {
+    expect(saveTypeLabel('pc')).toBe('PC game');
+    expect(saveTypeLabel('switch')).toBe('Switch');
+    expect(saveTypeLabel('emulator-citron')).toBe('citron');
   });
 });

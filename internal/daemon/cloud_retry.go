@@ -16,12 +16,19 @@ const maxRetriesPerCheck = 10
 
 // noteUploadFailed keeps a snapshot whose cloud copy did not go up, to be sent
 // again by retryFailedUploads.
-func (d *Daemon) noteUploadFailed(zipPath, remoteName string) {
+func (d *Daemon) noteUploadFailed(zipPath, remoteName, retryKey string) {
 	gameID, _, _, ok := snapshot.ParseExportEntryName(remoteName)
 	if !ok {
 		return
 	}
-	if err := d.Store.NoteCloudUploadFailed(gameID, remoteName, zipPath, time.Now().UnixMilli()); err != nil {
+	if retryKey == "" {
+		saveType := "pc"
+		if game, err := d.Store.GetGame(gameID); err == nil {
+			saveType = game.SaveType
+		}
+		retryKey = cloud.RetryKey(saveType, remoteName)
+	}
+	if err := d.Store.NoteCloudUploadFailed(retryKey, gameID, remoteName, zipPath, time.Now().UnixMilli()); err != nil {
 		d.Log.Log("warn", err.Error())
 	}
 }
@@ -36,14 +43,32 @@ func (d *Daemon) retryFailedUploads(inCloud []cloud.CloudFile) {
 	if err != nil || len(pending) == 0 {
 		return
 	}
+	cfg, _ := d.Store.GetCloudConfig()
 	present := make(map[string]bool, len(inCloud))
 	for _, f := range inCloud {
-		present[f.Name] = true
+		gameID, _, _, ok := snapshot.ParseExportEntryName(f.Name)
+		if !ok {
+			continue
+		}
+		saveType := ""
+		if cloud.IsTypedStorageProvider(cfg.Provider) {
+			saveType = f.ID
+		}
+		if saveType == "" {
+			if game, err := d.Store.GetGame(gameID); err == nil {
+				saveType = game.SaveType
+			} else if canonicalID, linked := d.Store.ResolveGameAlias(gameID); linked {
+				if game, err := d.Store.GetGame(canonicalID); err == nil {
+					saveType = game.SaveType
+				}
+			}
+		}
+		present[cloud.RetryKey(saveType, f.Name)] = true
 	}
 	var send []store.CloudRetry
 	for _, p := range pending {
-		if present[p.RemoteName] || !snapshot.ArchiveExists(p.ZipPath) {
-			_ = d.Store.ForgetCloudRetry(p.RemoteName)
+		if present[p.RemoteKey] || !snapshot.ArchiveExists(p.ZipPath) {
+			_ = d.Store.ForgetCloudRetry(p.RemoteKey)
 			continue
 		}
 		send = append(send, p)
@@ -61,6 +86,6 @@ func (d *Daemon) retryFailedUploads(inCloud []cloud.CloudFile) {
 	d.Log.Log("info", "cloud: sending again "+what+" that did not go up earlier")
 	for _, p := range send {
 		d.uploads.Add()
-		d.runCloudUpload(p.ZipPath, p.RemoteName, d.Log)
+		d.runCloudUpload(p.ZipPath, p.RemoteName, p.RemoteKey, d.Log)
 	}
 }

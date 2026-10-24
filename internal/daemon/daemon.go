@@ -202,7 +202,7 @@ func New(opts Options) (*Daemon, error) {
 			return
 		}
 		d.uploads.Add()
-		go d.runCloudUpload(zipPath, remoteFileName, log)
+		go d.runCloudUpload(zipPath, remoteFileName, "", log)
 	}
 	d.P2P.Pause.OnResume(d.catchUpAfterPause)
 	// Which snapshot is each game's save, for reading the mirror back.
@@ -518,7 +518,7 @@ func SteamCoverURL(appID string) string {
 // runCloudUpload mirrors one snapshot to the configured cloud provider and
 // then trims that game's remote copies. Always started with d.uploads already
 // incremented by the caller, and it owns releasing that count.
-func (d *Daemon) runCloudUpload(zipPath, remoteFileName string, log *logging.Logger) {
+func (d *Daemon) runCloudUpload(zipPath, remoteFileName, retryKey string, log *logging.Logger) {
 	defer d.uploads.Done()
 
 	// Whole, even if it has been compacted since it was queued (a pause can
@@ -531,11 +531,22 @@ func (d *Daemon) runCloudUpload(zipPath, remoteFileName string, log *logging.Log
 	if err != nil {
 		if !cloud.IsNotConfigured(err) {
 			log.Log("error", fmt.Sprintf("cloud upload of %s failed: %v — it will be sent again once the cloud can be reached", remoteFileName, err))
-			d.noteUploadFailed(zipPath, remoteFileName)
+			d.noteUploadFailed(zipPath, remoteFileName, retryKey)
 		}
 		return
 	}
-	_ = d.Store.ForgetCloudRetry(remoteFileName)
+	if retryKey == "" {
+		if gameID, _, _, ok := snapshot.ParseExportEntryName(remoteFileName); ok {
+			saveType := "pc"
+			if game, err := d.Store.GetGame(gameID); err == nil {
+				saveType = game.SaveType
+			}
+			retryKey = cloud.RetryKey(saveType, remoteFileName)
+		}
+	}
+	if retryKey != "" {
+		_ = d.Store.ForgetCloudRetry(retryKey)
+	}
 	// Now that it is up there, say it is this device's save — if it is. A
 	// copy kept before a restore uploads the same way and is not.
 	if gameID, _, snapID, ok := snapshot.ParseExportEntryName(remoteFileName); ok {
@@ -556,6 +567,7 @@ func (d *Daemon) runCloudUpload(zipPath, remoteFileName string, log *logging.Log
 	if err != nil || game.MaxSnapshots <= 0 {
 		return
 	}
+	cfg, _ := d.Store.GetCloudConfig()
 	// Only automatic snapshots are candidates. Mirroring the local limit over
 	// every file would delete the user's deliberate snapshots from the cloud
 	// even though local retention now keeps them — leaving the backup thinner
@@ -566,11 +578,11 @@ func (d *Daemon) runCloudUpload(zipPath, remoteFileName string, log *logging.Log
 	// treating unknowns as protected would make cloud storage grow without
 	// bound.
 	prefix := fmt.Sprintf("%s__%s__", gameID, branch)
-	_, _ = d.Cloud.PruneGameBranch(func(name string) bool {
-		if !strings.HasPrefix(name, prefix) {
+	_, _ = d.Cloud.PruneGameBranch(func(file cloud.CloudFile) bool {
+		if !cloud.MatchesSaveType(cfg.Provider, file.ID, game.SaveType) || !strings.HasPrefix(file.Name, prefix) {
 			return false
 		}
-		_, _, snapID, parsed := snapshot.ParseExportEntryName(name)
+		_, _, snapID, parsed := snapshot.ParseExportEntryName(file.Name)
 		if !parsed {
 			return false
 		}

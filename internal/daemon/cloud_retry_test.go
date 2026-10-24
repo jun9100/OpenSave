@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/opensave/opensave/internal/cloud"
 )
 
 // A cloud copy that fails to go up — the network down, a name that will not
@@ -45,6 +48,26 @@ func TestAFailedCloudUploadIsSentAgainWhenTheCloudIsBack(t *testing.T) {
 	}
 	if pending, _ := dev.d.Store.CloudRetries(); len(pending) != 0 {
 		t.Errorf("still waiting to send what has been sent: %+v", pending)
+	}
+}
+
+// Drive-like providers put an opaque provider file id in CloudFile.ID. It is
+// not a save type, so an already-uploaded file must still settle the matching
+// retry rather than being uploaded on every cloud check.
+func TestAFlatProviderFileIDDoesNotDefeatRetryDeduplication(t *testing.T) {
+	dev := newCloudDevice(t, "Desktop", t.TempDir())
+	const name = "hollow-knight__main__snap_9.zip"
+	if err := dev.d.Store.NoteCloudUploadFailed(cloud.RetryKey("pc", name), cloudGame, name, "missing-is-fine-when-listed.zip", time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+
+	dev.d.retryFailedUploads([]cloud.CloudFile{{ID: "provider-file-id", Name: name}})
+	pending, err := dev.d.Store.CloudRetries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("listed flat-provider retry was not forgotten: %+v", pending)
 	}
 }
 

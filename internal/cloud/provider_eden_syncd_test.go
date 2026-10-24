@@ -102,11 +102,49 @@ func TestEdenSyncdProviderUsesNativeTypedAPI(t *testing.T) {
 	if err := svc.Upload(writeTempZip(t, "snapshot bytes"), name); err != nil {
 		t.Fatal(err)
 	}
+	headName := HeadFileName("hollow-knight", "switch-device", time.Now())
+	if err := svc.Upload(writeTempZip(t, "head bytes"), headName); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	_, snapshotInSwitch := files["switch/"+name]
+	_, headInSwitch := files["switch/"+headName]
+	_, headInPC := files["pc/"+headName]
+	mu.Unlock()
+	if !snapshotInSwitch || !headInSwitch || headInPC {
+		t.Fatalf("typed uploads = %+v, want snapshot and head only in switch", files)
+	}
+	if err := data.AddGameAlias("hollow-knight-other", "hollow-knight"); err != nil {
+		t.Fatal(err)
+	}
+	aliasName := "hollow-knight-other__main__snap_2.zip"
+	if err := svc.Upload(writeTempZip(t, "linked snapshot bytes"), aliasName); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	_, aliasInSwitch := files["switch/"+aliasName]
+	_, aliasInPC := files["pc/"+aliasName]
+	mu.Unlock()
+	if !aliasInSwitch || aliasInPC {
+		t.Fatalf("linked typed upload = %+v, want alias only in switch", files)
+	}
 	items, err := svc.List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Name != name || items[0].ID != "switch" {
+	if len(items) != 3 {
+		t.Fatalf("List = %+v", items)
+	}
+	var snapshotItem CloudFile
+	for _, item := range items {
+		if item.Name == name {
+			snapshotItem = item
+		}
+		if item.Name == headName && item.ID != "switch" {
+			t.Fatalf("head list entry = %+v, want switch namespace", item)
+		}
+	}
+	if snapshotItem.Name != name || snapshotItem.ID != "switch" {
 		t.Fatalf("List = %+v", items)
 	}
 	destination := path.Join(t.TempDir(), "download.zip")
@@ -116,7 +154,17 @@ func TestEdenSyncdProviderUsesNativeTypedAPI(t *testing.T) {
 	if got, _ := os.ReadFile(destination); string(got) != "snapshot bytes" {
 		t.Fatalf("download = %q", got)
 	}
-	if err := svc.Delete(items[0]); err != nil {
+	if err := svc.Delete(snapshotItem); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestScopedNameKeepsNativeSaveTypesSeparate(t *testing.T) {
+	const name = "hollow-knight__main__snap_1.zip"
+	if pc, switchSave := ScopedName("eden_syncd", "pc", name), ScopedName("eden_syncd", "switch", name); pc == switchSave {
+		t.Fatalf("typed cloud keys collide: %q", pc)
+	}
+	if got := ScopedName("webdav", "switch", name); got != name {
+		t.Fatalf("flat provider key = %q, want %q", got, name)
 	}
 }

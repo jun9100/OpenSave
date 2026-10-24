@@ -91,7 +91,7 @@ func (d *Daemon) catchUpAfterPause() {
 			continue
 		}
 		d.uploads.Add()
-		go d.runCloudUpload(h.zipPath, h.remoteName, d.Log)
+		go d.runCloudUpload(h.zipPath, h.remoteName, "", d.Log)
 		sent++
 	}
 	if sent > 0 {

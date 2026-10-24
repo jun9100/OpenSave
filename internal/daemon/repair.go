@@ -37,16 +37,18 @@ type RepairReport struct {
 	CloudError   string `json:"cloudError,omitempty"`
 }
 
-// damagedSnapshots is every snapshot last found damaged, with its game's name.
-func (d *Daemon) damagedSnapshots() ([]store.Snapshot, map[string]string, error) {
+// damagedSnapshots is every snapshot last found damaged, with its game's
+// metadata. Repair needs the save type as well as the display name to choose
+// the matching native cloud namespace.
+func (d *Daemon) damagedSnapshots() ([]store.Snapshot, map[string]store.Game, error) {
 	games, err := d.Store.ListGames()
 	if err != nil {
 		return nil, nil, err
 	}
-	names := map[string]string{}
+	byID := map[string]store.Game{}
 	var out []store.Snapshot
 	for _, g := range games {
-		names[g.ID] = g.Name
+		byID[g.ID] = g
 		branches, _ := d.Store.ListBranches(g.ID)
 		for _, b := range branches {
 			snaps, _ := d.Store.ListSnapshots(g.ID, b)
@@ -57,35 +59,37 @@ func (d *Daemon) damagedSnapshots() ([]store.Snapshot, map[string]string, error)
 			}
 		}
 	}
-	return out, names, nil
+	return out, byID, nil
 }
 
-func damagedEntry(s store.Snapshot, names map[string]string) DamagedSnapshot {
-	return DamagedSnapshot{GameID: s.GameID, GameName: names[s.GameID], SnapshotID: s.ID, Timestamp: s.Timestamp, Problem: s.Problem}
+func damagedEntry(s store.Snapshot, games map[string]store.Game) DamagedSnapshot {
+	return DamagedSnapshot{GameID: s.GameID, GameName: games[s.GameID].Name, SnapshotID: s.ID, Timestamp: s.Timestamp, Problem: s.Problem}
 }
 
 // RepairSnapshots puts back, from the cloud, every damaged snapshot that has
 // a whole copy there.
 func (d *Daemon) RepairSnapshots(ctx context.Context) (RepairReport, error) {
 	report := RepairReport{Repaired: []DamagedSnapshot{}, Remaining: []DamagedSnapshot{}}
-	damaged, names, err := d.damagedSnapshots()
+	damaged, games, err := d.damagedSnapshots()
 	if err != nil || len(damaged) == 0 {
 		return report, err
 	}
 
-	// Snapshot ids are unique, so a copy is found by its id whatever game or
-	// branch it was uploaded under — a snapshot moved by linking two games
-	// kept its id and may still carry its old names in the cloud.
-	inCloud := map[string]string{}
+	// A linked game can retain an older id in the cloud, but type and game id
+	// are both part of the lookup. A PC archive with the same snapshot id must
+	// never repair a Switch or emulator snapshot.
+	inCloud := map[string]cloud.CloudFile{}
+	provider := ""
 	if cfg, cErr := d.Store.GetCloudConfig(); cErr == nil && cloud.Ready(cfg) && cloudListable(cfg.Provider) {
+		provider = cfg.Provider
 		files, lErr := d.Cloud.List()
 		if lErr != nil {
 			report.CloudError = lErr.Error()
 		} else {
 			report.CloudChecked = true
 			for _, f := range files {
-				if _, _, id, ok := snapshot.ParseExportEntryName(f.Name); ok {
-					inCloud[id] = f.Name
+				if gameID, _, id, ok := snapshot.ParseExportEntryName(f.Name); ok {
+					inCloud[cloud.ScopedName(provider, f.ID, gameID+"\x00"+id)] = f
 				}
 			}
 		}
@@ -97,19 +101,35 @@ func (d *Daemon) RepairSnapshots(ctx context.Context) (RepairReport, error) {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
-		entry := damagedEntry(snap, names)
-		name, ok := inCloud[snap.ID]
+		entry := damagedEntry(snap, games)
+		game, known := games[snap.GameID]
+		if !known {
+			report.Remaining = append(report.Remaining, entry)
+			continue
+		}
+		ids, idErr := d.Store.LinkedGameIDs(game.ID)
+		if idErr != nil {
+			ids = []string{game.ID}
+		}
+		var file cloud.CloudFile
+		var ok bool
+		for _, id := range ids {
+			file, ok = inCloud[cloud.ScopedName(provider, game.SaveType, id+"\x00"+snap.ID)]
+			if ok {
+				break
+			}
+		}
 		if !ok {
 			report.Remaining = append(report.Remaining, entry)
 			continue
 		}
-		if err := d.fetchSnapshotCopy(snap, name); err != nil {
+		if err := d.fetchSnapshotCopy(snap, file); err != nil {
 			entry.Problem = fmt.Sprintf("%s — and its cloud copy could not be used: %v", snap.Problem, err)
 			report.Remaining = append(report.Remaining, entry)
 			continue
 		}
 		report.Repaired = append(report.Repaired, entry)
-		d.Log.Log("success", fmt.Sprintf("put back the snapshot of %q from %s from its cloud copy", names[snap.GameID], snap.Timestamp))
+		d.Log.Log("success", fmt.Sprintf("put back the snapshot of %q from %s from its cloud copy", game.Name, snap.Timestamp))
 	}
 	if len(report.Repaired) > 0 && d.OnGameChanged != nil {
 		d.OnGameChanged("")
@@ -119,7 +139,7 @@ func (d *Daemon) RepairSnapshots(ctx context.Context) (RepairReport, error) {
 
 // fetchSnapshotCopy downloads a snapshot's cloud copy, checks it reads back
 // whole, and puts it where the snapshot's archive belongs.
-func (d *Daemon) fetchSnapshotCopy(snap store.Snapshot, cloudName string) error {
+func (d *Daemon) fetchSnapshotCopy(snap store.Snapshot, file cloud.CloudFile) error {
 	tmp, err := os.CreateTemp("", "opensave-repair-*.zip")
 	if err != nil {
 		return err
@@ -127,7 +147,7 @@ func (d *Daemon) fetchSnapshotCopy(snap store.Snapshot, cloudName string) error 
 	tmpPath := tmp.Name()
 	tmp.Close()
 	defer os.Remove(tmpPath)
-	if err := d.Cloud.Download(cloudName, tmpPath); err != nil {
+	if err := d.Cloud.DownloadFile(file, tmpPath); err != nil {
 		return err
 	}
 	if err := snapshot.VerifyArchive(tmpPath); err != nil {
@@ -172,22 +192,22 @@ func copyFile(src, dst string) error {
 // be restored. Nothing restorable is touched: only records whose archive was
 // found damaged or missing.
 func (d *Daemon) ForgetDamagedSnapshots() (removed []DamagedSnapshot, err error) {
-	damaged, names, err := d.damagedSnapshots()
+	damaged, games, err := d.damagedSnapshots()
 	if err != nil {
 		return nil, err
 	}
 	removed = []DamagedSnapshot{}
 	for _, snap := range damaged {
 		if _, err := d.Snapshots.DeleteSnapshot(snap.GameID, snap.ID); err != nil {
-			d.Log.Log("warn", fmt.Sprintf("could not remove the damaged snapshot %s of %q: %v", snap.ID, names[snap.GameID], err))
+			d.Log.Log("warn", fmt.Sprintf("could not remove the damaged snapshot %s of %q: %v", snap.ID, games[snap.GameID].Name, err))
 			continue
 		}
-		removed = append(removed, damagedEntry(snap, names))
+		removed = append(removed, damagedEntry(snap, games))
 	}
 	if len(removed) > 0 {
 		games := map[string]bool{}
 		for _, r := range removed {
-			games[names[r.GameID]] = true
+			games[r.GameName] = true
 		}
 		list := make([]string, 0, len(games))
 		for n := range games {

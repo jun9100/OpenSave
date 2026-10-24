@@ -15,6 +15,30 @@ export const providerById = (id) => providers.find((p) => p.id === id);
 const oauthIds = new Set(providers.filter((p) => p.oauth).map((p) => p.id));
 export const isOAuth = (id) => oauthIds.has(id);
 
+// A cloud group is a game inside one save-type namespace. The native service
+// can legitimately hold identical game ids and filenames for PC and Switch,
+// so gameId alone is never a safe tile key there.
+export const cloudTileKey = (gameId, saveType = 'pc') => `${saveType || 'pc'}\u0000${gameId}`;
+
+export function saveTypeLabel(saveType) {
+  switch (saveType || 'pc') {
+    case 'pc':
+      return 'PC game';
+    case 'switch':
+      return 'Switch';
+    case 'emulator-eden':
+      return 'Eden';
+    case 'emulator-yuzu':
+      return 'Yuzu / Suyu';
+    case 'emulator-ryujinx':
+      return 'Ryujinx';
+    case 'emulator-generic':
+      return 'Other emulator';
+    default:
+      return saveType?.startsWith('emulator-') ? saveType.slice('emulator-'.length) : saveType;
+  }
+}
+
 // Some providers can't reveal the account email (privacy settings / missing
 // scope) — the daemon stores a placeholder then. Only display it if it
 // actually looks like an address.
@@ -53,14 +77,16 @@ export function providerStatus(id, connected, cfg) {
  *  which the app's webview cannot reliably reach — so the tiles came up as
  *  bare names while the library, asking the daemon, had every cover. */
 export function cloudTiles(cloudGames, localGames, cover = () => '') {
-  const inCloud = new Set((cloudGames ?? []).map((g) => g.gameId));
+  const inCloud = new Set((cloudGames ?? []).map((g) => cloudTileKey(g.gameId, g.saveType)));
   return [
     ...(cloudGames ?? []).map((g) => {
-      const local = localGames.find((x) => x.id === g.gameId);
-      return { id: g.gameId, name: g.gameName, coverUrl: cover(local ?? { name: g.gameName }), tracked: !!local, cloud: g };
+      const saveType = g.saveType || 'pc';
+      const key = cloudTileKey(g.gameId, saveType);
+      const local = localGames.find((x) => cloudTileKey(x.id, x.saveType) === key);
+      return { key, id: g.gameId, saveType, name: g.gameName, coverUrl: cover(local ?? { name: g.gameName }), tracked: !!local, cloud: g };
     }),
     ...localGames
-      .filter((lg) => !inCloud.has(lg.id))
-      .map((lg) => ({ id: lg.id, name: lg.name, coverUrl: cover(lg), tracked: true, cloud: null }))
+      .filter((lg) => !inCloud.has(cloudTileKey(lg.id, lg.saveType)))
+      .map((lg) => ({ key: cloudTileKey(lg.id, lg.saveType), id: lg.id, saveType: lg.saveType || 'pc', name: lg.name, coverUrl: cover(lg), tracked: true, cloud: null }))
   ];
 }

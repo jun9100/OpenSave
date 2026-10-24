@@ -62,9 +62,17 @@ func (p edenSyncd) token() string { return strings.TrimSpace(p.cfg.Password) }
 func (p edenSyncd) fileType(name string) string {
 	gameID, _, _, ok := snapshot.ParseExportEntryName(name)
 	if !ok {
+		gameID, _, _, ok = ParseHeadFileName(name)
+	}
+	if !ok {
 		return "pc"
 	}
 	game, err := p.s.Store.GetGame(gameID)
+	if err != nil {
+		if canonicalID, linked := p.s.Store.ResolveGameAlias(gameID); linked {
+			game, err = p.s.Store.GetGame(canonicalID)
+		}
+	}
 	if err != nil || game.SaveType == "" {
 		return "pc"
 	}
@@ -135,7 +143,15 @@ func (p edenSyncd) list() ([]CloudFile, error) {
 }
 
 func (p edenSyncd) download(fileName, localPath string) error {
-	req, err := http.NewRequest(http.MethodGet, p.endpoint(p.fileType(fileName), fileName), nil)
+	return p.downloadFile(CloudFile{Name: fileName}, localPath)
+}
+
+func (p edenSyncd) downloadFile(file CloudFile, localPath string) error {
+	kind := strings.TrimSpace(file.ID)
+	if kind == "" {
+		kind = p.fileType(file.Name)
+	}
+	req, err := http.NewRequest(http.MethodGet, p.endpoint(kind, file.Name), nil)
 	if err != nil {
 		return err
 	}
