@@ -114,6 +114,7 @@ class SnapshotEngine {
     private fun extractArchive(archive: File, target: File) {
         val root = target.canonicalFile
         val rootPrefix = root.path + File.separator
+        val directoryTimes = mutableListOf<Pair<File, Long>>()
         ZipInputStream(BufferedInputStream(FileInputStream(archive))).use { input ->
             while (true) {
                 val entry = input.nextEntry ?: break
@@ -127,6 +128,7 @@ class SnapshotEngine {
                     require(destination.mkdirs() || destination.isDirectory) {
                         "Could not create ${entry.name}"
                     }
+                    entry.time.takeIf { it > 0L }?.let { time -> directoryTimes += destination to time }
                 } else {
                     require(destination.parentFile?.let { it.isDirectory || it.mkdirs() } != false) {
                         "Could not create parent for ${entry.name}"
@@ -140,9 +142,18 @@ class SnapshotEngine {
                             output.write(buffer, 0, read)
                         }
                     }
+                    entry.time.takeIf { it > 0L }?.let { time ->
+                        require(destination.setLastModified(time)) { "Could not preserve ${entry.name} modification time" }
+                    }
                 }
                 input.closeEntry()
             }
+        }
+        // Child creation changes directory mtimes, so restore them only after
+        // every ZIP entry is in place. This keeps the next backup from
+        // mistaking a cross-device restore for newly created progress.
+        directoryTimes.asReversed().forEach { (directory, time) ->
+            require(directory.setLastModified(time)) { "Could not preserve ${directory.name} modification time" }
         }
     }
 

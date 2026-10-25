@@ -85,6 +85,8 @@ object GameCatalog {
         "org.yuzu.yuzu_emu" to Entry("Yuzu 模拟器", "Yuzu"),
         "org.yuzu.yuzu_emu.ea" to Entry("Yuzu EA 模拟器", "Yuzu EA"),
         "com.xiaoji.egggame" to Entry("GameHub", "GameHub"),
+        "com.poncle.vampiresurvivors" to Entry("吸血鬼幸存者", "Vampire Survivors"),
+        "com.ducvd89.bloodborne" to Entry("血源诅咒", "Bloodborne"),
         "org.ppsspp.ppsspp" to Entry("PPSSPP 模拟器", "PPSSPP"),
         "com.retroarch" to Entry("RetroArch 模拟器", "RetroArch"),
         "org.dolphinemu.dolphinemu" to Entry("Dolphin 模拟器", "Dolphin"),
@@ -92,8 +94,11 @@ object GameCatalog {
 
     fun present(save: DetectedSave): GamePresentation {
         val rawName = save.displayName?.trim()?.takeIf { it.isNotEmpty() }
-        val packageName = save.takeIf { it.kind == "android-app" }
-            ?.let { rawName }
+        val packageName = save.takeIf { it.kind == "android-app" || it.kind == "android-game" }
+            ?.gameKey
+            ?.removePrefix("android:")
+            ?.takeIf { it.contains('.') }
+            ?: rawName?.takeIf { it.contains('.') }
         val appId = extractAppId(save)
         val titleId = save.titleId?.uppercase()
         val entry = packageName?.let { androidEntries[it] }
@@ -127,7 +132,7 @@ object GameCatalog {
     }
 
     private fun humanReadableName(save: DetectedSave, rawName: String?): String? {
-        if (save.kind == "android-app") return rawName
+        if (save.kind == "android-app" || save.kind == "android-game") return rawName
         if (rawName.isNullOrBlank()) return null
         if (rawName.startsWith("Switch ", ignoreCase = true)) return null
         if (rawName.startsWith("Steam AppID ", ignoreCase = true)) return null
@@ -138,7 +143,7 @@ object GameCatalog {
     private fun iconKey(kind: String): GameIconKey = when (kind) {
         "yuzu-switch", "ryujinx-switch", "switch-title" -> GameIconKey.SWITCH
         "gamehub-pc" -> GameIconKey.PC
-        "android-app" -> GameIconKey.ANDROID
+        "android-app", "android-game" -> GameIconKey.ANDROID
         "ppsspp" -> GameIconKey.PPSSPP
         "retroarch" -> GameIconKey.RETROARCH
         "dolphin" -> GameIconKey.DOLPHIN

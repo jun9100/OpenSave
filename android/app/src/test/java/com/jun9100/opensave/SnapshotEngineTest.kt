@@ -36,6 +36,28 @@ class SnapshotEngineTest {
     }
 
     @Test
+    fun restorePreservesFileModificationTimesForLaterSyncChecks() {
+        val root = createTempDir(prefix = "opensave-snapshot-time-")
+        try {
+            val source = File(root, "source").apply { mkdirs() }
+            val originalTime = 1_730_000_020_000L
+            File(source, "save.dat").apply {
+                writeText("save-data")
+                assertTrue(setLastModified(originalTime))
+            }
+            val archive = File(root, "snapshot.zip")
+            val restored = File(root, "restored")
+
+            SnapshotEngine().createSnapshot(source, archive).getOrThrow()
+            SnapshotEngine().restoreSnapshot(archive, restored).getOrThrow()
+
+            assertEquals(originalTime, File(restored, "save.dat").lastModified())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun gameSnapshotRestoresOnlyManifestLocations() {
         val root = createTempDir(prefix = "opensave-game-snapshot-")
         try {

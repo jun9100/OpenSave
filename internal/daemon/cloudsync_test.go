@@ -176,8 +176,74 @@ func TestCloudTakesASaveThatContinuesFromThisOne(t *testing.T) {
 	// Taking it must not bounce back: the Desktop now sees the Deck on the
 	// Desktop's own save.
 	deck.d.uploads.Wait(0)
+	rec, ok, err := deck.d.Store.GetCloudHead(cloudGame)
+	if err != nil || !ok {
+		t.Fatalf("Deck cloud head = (%+v, %v, %v), want its restored current save", rec, ok, err)
+	}
+	if rec.Snapshot != a2.ID || rec.ContentAt <= 0 {
+		t.Fatalf("Deck cloud head = %+v, want restored %s with verified content time", rec, a2.ID)
+	}
 	if offers := desktop.check(); len(offers) != 0 {
 		t.Errorf("the Desktop was offered its own save back after the Deck took it: %+v", offers)
+	}
+}
+
+// A snapshot ID names when the archive was made, not necessarily when the
+// saved game inside it changed. A late copy of old data must not become a
+// cloud candidate merely because its archive has a newer snap_<ms> suffix.
+func TestCloudIgnoresLateSnapshotWithOlderContentTime(t *testing.T) {
+	local := store.CloudHead{Snapshot: "snap_2000", ContentAt: 2_000}
+	lateCopy := cloud.Head{
+		Version:           cloud.HeadVersion,
+		Branch:            "main",
+		Snapshot:          "snap_3000",
+		Chain:             []string{"snap_2000", "snap_3000"},
+		ContentModifiedAt: time.UnixMilli(1_000).UTC().Format(time.RFC3339Nano),
+	}
+
+	_, ok := chooseCloudCandidate(
+		local,
+		"main",
+		[]cloud.Head{lateCopy},
+		func(string) bool { return false },
+		func(string) string { return "hollow-knight__main__snap_3000.zip" },
+	)
+	if ok {
+		t.Fatal("late archive holding older content became a cloud candidate")
+	}
+}
+
+// Existing v1 head files do not contain contentModifiedAt. They remain
+// visible as an offer, but must not silently overwrite a save even if their
+// lineage appears continuous.
+func TestCloudAsksBeforeTakingLegacyHeadWithoutContentTime(t *testing.T) {
+	dir := t.TempDir()
+	deck := newCloudDevice(t, "Steam Deck", dir)
+	base := deck.play("deck start")
+	remoteID := "snap_1730000100000"
+	remoteName := cloudSnapshotName(cloudGame, "main", remoteID)
+	writeZip(t, filepath.Join(dir, remoteName), "user1.dat", "legacy remote save")
+	head := cloud.Head{
+		Version:    cloud.HeadVersion,
+		DeviceID:   "legacy-pc",
+		DeviceName: "Legacy PC",
+		GameID:     cloudGame,
+		Branch:     "main",
+		Snapshot:   remoteID,
+		File:       remoteName,
+		Chain:      []string{base.ID, remoteID},
+		SavedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := cloud.WriteHeadFile(head, filepath.Join(dir, cloud.HeadFileName(cloudGame, head.DeviceID, time.Now()))); err != nil {
+		t.Fatal(err)
+	}
+
+	offers := deck.check()
+	if got := deck.saveIs(); got != "deck start" {
+		t.Fatalf("legacy head replaced the local save with %q", got)
+	}
+	if len(offers) != 1 || offers[0].SnapshotID != remoteID || !offers[0].Diverged {
+		t.Fatalf("offers = %+v, want one confirmation-required legacy save", offers)
 	}
 }
 

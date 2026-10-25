@@ -1,6 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      Save discovery only needs launchable user apps plus the emulator/container
+      packages that have dedicated storage layouts. Do not request the broad
+      QUERY_ALL_PACKAGES permission: it is unnecessary for SAF or Root scans
+      and prevents ordinary distribution.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <package android:name="dev.eden.eden_emulator" />
+        <package android:name="com.xiaoji.egggame" />
+        <package android:name="com.winlator" />
+        <package android:name="com.ludashi.benchmark" />
+        <package android:name="com.droiddeck.launcher" />
+        <package android:name="org.yuzu.yuzu_emu" />
+        <package android:name="org.yuzu.yuzu_emu.ea" />
+        <package android:name="dev.suyu.suyu_emu" />
+        <package android:name="org.sudachi.sudachi_emu" />
+        <package android:name="org.citron.citron_emu" />
+    </queries>
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

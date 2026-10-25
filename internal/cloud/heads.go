@@ -48,8 +48,13 @@ type Head struct {
 	// oldest first and ending at Snapshot. Another device whose own save
 	// appears here knows that taking Snapshot continues from it.
 	Chain []string `json:"chain"`
-	// SavedAt is when Snapshot was taken.
+	// SavedAt remains a display-friendly timestamp for older clients. New
+	// writers set it to the newest modification time inside the saved archive.
 	SavedAt string `json:"savedAt"`
+	// ContentModifiedAt explicitly identifies SavedAt as a time carried by the
+	// save data, rather than the later moment an old copy happened to be backed
+	// up. Readers only auto-apply heads with this field.
+	ContentModifiedAt string `json:"contentModifiedAt,omitempty"`
 }
 
 // HeadVersion is written into every head; readers skip versions they do not

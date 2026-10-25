@@ -165,5 +165,20 @@
   "home.welcome.intro": "让你的游戏存档在所有设备间保持同步——无需账号，不被云端绑架。先找到你的存档：",
   "home.welcome.scanForSaves": "扫描存档",
   "home.welcome.title": "欢迎使用 OpenSave",
-  "home.welcome.trackManually": "手动跟踪文件夹"
+  "home.welcome.trackManually": "手动跟踪文件夹",
+  "cloudOffer.bring": "恢复到本机",
+  "cloudOffer.bringing": "正在恢复…",
+  "cloudOffer.broughtToast": "已使用 {device} 上“{game}”的存档；本机原存档已保留为安全快照。",
+  "cloudOffer.notNow": "暂不处理",
+  "cloudOffer.ownBackup": "你的云端备份",
+  "cloudOffer.reason.diverged": "本机存档含有 {device} 上没有的变更。恢复远端版本会替换这些变更，但本机存档会先保留为安全快照。",
+  "cloudOffer.reason.history-diverged": "两端存档历史已分叉。请比较两个版本后再选择；本机当前存档会先保留为安全快照。",
+  "cloudOffer.reason.legacy-content-time": "此更新来自旧版客户端，无法证明存档内容的最后修改时间，因此不会自动恢复。",
+  "cloudOffer.reason.local-baseline-unknown": "本机没有此存档的可验证同步基线，因此需要你确认。",
+  "cloudOffer.reason.local-changed": "本机存档在上次快照后发生了变更。恢复远端版本会替换这些进度，但会先创建安全快照。",
+  "cloudOffer.reason.local-content-time-unknown": "本机无法验证当前存档内容的时间，因此需要你确认。",
+  "cloudOffer.saved": "存档时间：{when} · 位于 {provider}",
+  "cloudOffer.savedTimeUnknown": "无法验证存档时间",
+  "cloudOffer.titleNewer": "{device} 上有“{game}”的更新存档",
+  "cloudOffer.titleReview": "来自 {device} 的“{game}”存档需要确认"
 }

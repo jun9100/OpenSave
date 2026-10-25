@@ -552,12 +552,13 @@ func cloudRestore(asJSON bool, args []string) int {
 
 // cloudOffer is the part of an offer the terminal shows.
 type cloudOffer struct {
-	GameID     string `json:"gameId"`
-	GameName   string `json:"gameName"`
-	SnapshotID string `json:"snapshotId"`
-	DeviceName string `json:"deviceName"`
-	SavedAt    string `json:"savedAt"`
-	Diverged   bool   `json:"diverged"`
+	GameID       string `json:"gameId"`
+	GameName     string `json:"gameName"`
+	SnapshotID   string `json:"snapshotId"`
+	DeviceName   string `json:"deviceName"`
+	SavedAt      string `json:"savedAt"`
+	ReviewReason string `json:"reviewReason"`
+	Diverged     bool   `json:"diverged"`
 }
 
 // cloudCheck looks for newer saves from this person's other devices. Ones that
@@ -587,16 +588,32 @@ func cloudCheck(asJSON bool) int {
 	t := newTable("game", "from", "saved", "")
 	now := time.Now()
 	for _, o := range offers {
-		warn := ""
-		if o.Diverged {
-			warn = "replaces progress made here"
-		}
+		warn := cloudOfferWarning(o)
 		t.add(accent(o.GameID), o.DeviceName, faint(timeAgo(o.SavedAt, now)), faint(warn))
 	}
 	t.render()
 	hint("opensave cloud take <gameId>", "opensave cloud skip <gameId>")
 	fmt.Println()
 	return 0
+}
+
+func cloudOfferWarning(o cloudOffer) string {
+	switch o.ReviewReason {
+	case "legacy-content-time":
+		return "older client: content time cannot be verified"
+	case "local-content-time-unknown":
+		return "this device cannot verify its saved content time"
+	case "local-changed":
+		return "replaces progress made here"
+	case "local-baseline-unknown":
+		return "this device has no verified sync baseline"
+	case "history-diverged":
+		return "save histories diverged"
+	}
+	if o.Diverged {
+		return "replaces progress made here"
+	}
+	return ""
 }
 
 // cloudAnswer takes or skips the save waiting for one game.

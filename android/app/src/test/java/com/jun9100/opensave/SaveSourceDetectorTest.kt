@@ -2,6 +2,7 @@ package com.jun9100.opensave
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -50,6 +51,99 @@ class SaveSourceDetectorTest {
     }
 
     @Test
+    fun detectsNativeAndroidGamePersistentDirectoriesWithoutTreatingCachesAsSaves() {
+        val root = "/data/user/0/com.poncle.vampiresurvivors"
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = root,
+            directoryPaths = listOf(
+                root,
+                "$root/files",
+                "$root/shared_prefs",
+                "$root/cache",
+                "$root/code_cache",
+            ),
+            androidGames = mapOf(
+                "com.poncle.vampiresurvivors" to AndroidGameMetadata(
+                    "com.poncle.vampiresurvivors",
+                    "Vampire Survivors",
+                ),
+            ),
+        )
+
+        assertEquals(1, report.gameCount)
+        assertEquals(2, report.detected.size)
+        assertTrue(report.detected.all { it.kind == "android-game" && it.gameKey == "android:com.poncle.vampiresurvivors" })
+        assertFalse(report.detected.any { it.candidate })
+        assertTrue(report.detected.none { it.relativePath == "cache" || it.relativePath == "code_cache" })
+    }
+
+    @Test
+    fun detectsFlutterPersistentDirectoryButExcludesWebViewData() {
+        val root = "/data/user/0/example.flutter.game"
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = root,
+            directoryPaths = listOf(
+                root,
+                "$root/app_flutter",
+                "$root/app_webview",
+                "$root/cache",
+            ),
+            androidGames = mapOf(
+                "example.flutter.game" to AndroidGameMetadata(
+                    "example.flutter.game",
+                    "Example Flutter Game",
+                ),
+            ),
+        )
+
+        assertEquals(listOf("app_flutter"), report.detected.map(DetectedSave::relativePath))
+        assertTrue(report.detected.all { it.kind == "android-game" && !it.candidate })
+    }
+
+    @Test
+    fun exposesCustomAndroidGameDataAsAnExplicitCandidate() {
+        val root = "/data/user/0/example.native.game"
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = root,
+            directoryPaths = listOf(
+                root,
+                "$root/game_data",
+                "$root/app_webview",
+                "$root/cache",
+            ),
+            androidGames = mapOf(
+                "example.native.game" to AndroidGameMetadata(
+                    "example.native.game",
+                    "Example Native Game",
+                ),
+            ),
+        )
+
+        assertEquals(listOf("game_data"), report.detected.map(DetectedSave::relativePath))
+        assertTrue(report.detected.single().candidate)
+        assertEquals("android-game", report.detected.single().kind)
+    }
+
+    @Test
+    fun candidateAppDoesNotExposeItsScanRootAsABackupLocation() {
+        val root = "/data/user/0/example.unknown.game"
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = root,
+            directoryPaths = listOf(root, "$root/files"),
+            androidGames = mapOf(
+                "example.unknown.game" to AndroidGameMetadata(
+                    "example.unknown.game",
+                    "Example Unknown Game",
+                    AndroidGameRecognition.CANDIDATE,
+                ),
+            ),
+        )
+
+        assertEquals(listOf("files"), report.detected.map(DetectedSave::relativePath))
+        assertTrue(report.detected.single().candidate)
+    }
+
+    @Test
     fun detectsEdenTitleIdsAndGameHubPcSaveLocations() {
         val root = "/data/user/0/com.xiaoji.egggame/files"
         val directories = listOf(
@@ -72,8 +166,26 @@ class SaveSourceDetectorTest {
     }
 
     @Test
+    fun treatsSteamAppIdContainersAsDefaultPcSaveLocations() {
+        val root = "/data/user/0/com.xiaoji.egggame/files"
+        val report = SaveSourceDetector.scanDirectories(
+            root,
+            listOf(
+                root,
+                "$root/usr/home/virtual_containers/157182/drive_c/Program Files (x86)/Steam/userdata/171375353/1794680",
+            ),
+        )
+
+        val save = report.detected.single()
+        assertEquals("Steam AppID 1794680", save.displayName)
+        assertEquals("steam:1794680", save.gameKey)
+        assertFalse(save.candidate)
+        assertEquals(1, report.gameCount)
+    }
+
+    @Test
     fun separatesDuckStationAndAetherSx2SaveRoots() {
-        val root = "/storage/emulated/0"
+        val root = "/storage/emulated/0/custom-saves"
         val report = SaveSourceDetector.scanDirectories(
             root,
             listOf(
@@ -152,7 +264,7 @@ class SaveSourceDetectorTest {
     }
 
     @Test
-    fun marksAnonymousSteamUserSavedGamesAndSteamAppIdsAsCandidates() {
+    fun treatsSteamRemoteAndSavedGamesFoldersAsAutomaticBackupLocations() {
         val root = "/data/user/0/com.xiaoji.egggame/files"
         val directories = listOf(
             root,
@@ -165,10 +277,105 @@ class SaveSourceDetectorTest {
 
         val report = SaveSourceDetector.scanDirectories(root, directories)
 
-        assertEquals(4, report.candidateCount)
-        assertEquals(0, report.gameCount)
+        assertEquals(0, report.candidateCount)
+        assertEquals(4, report.gameCount)
         assertEquals(4, report.gameHubPcCount)
-        assertEquals(3, report.detected.count { it.displayName == "未命名 PC 存档" })
-        assertTrue(report.detected.any { it.displayName == "Steam AppID 1245620" && it.candidate })
+        assertEquals(3, report.detected.count { it.displayName == "PC Saved Games 容器" })
+        assertTrue(report.detected.any { it.displayName == "Steam AppID 1245620" && !it.candidate })
+    }
+
+    @Test
+    fun ignoresSteamBootstrapRemoteAndRecognizesSharedPcSaveRoot() {
+        val root = "/storage/emulated/0/pc-game"
+        val report = SaveSourceDetector.scanDirectories(
+            root,
+            listOf(
+                root,
+                "$root/saves",
+                "$root/Steam/userdata/171375353/7/remote",
+            ),
+        )
+
+        assertEquals(1, report.gameHubPcCount)
+        assertEquals(1, report.gameCount)
+        assertEquals("PC 共享存档", report.detected.single().displayName)
+        assertEquals("saves", report.detected.single().relativePath)
+        assertTrue(report.detected.none { it.relativePath.endsWith("/7/remote") })
+    }
+
+    @Test
+    fun detectsDroidDeckSteamCompatibilityAndNativeSteamSaves() {
+        val root = "/data/user/0/com.droiddeck.launcher/files"
+        val steam = "$root/linuxfs/root/.local/share/Steam"
+        val report = SaveSourceDetector.scanDirectories(
+            root,
+            listOf(
+                root,
+                "$steam/steamapps/compatdata/1245620/pfx/drive_c/users/steamuser/AppData/Roaming/EldenRing/76561198131641081",
+                "$steam/steamapps/compatdata/1876890/pfx/drive_c/users/steamuser/Local Settings/Application Data/Wandering_Sword/Saved/76561198131641081/SaveGames",
+                "$steam/steamapps/common/Portal/portal/save",
+                "$steam/steamapps/common/Proton Experimental (ARM64)/files/share/default_pfx_arm64/drive_c/users/steamuser/Saved Games",
+                "$steam/steamapps/compatdata/0/pfx/drive_c/users/steamuser/Saved Games",
+            ),
+        )
+
+        assertEquals(3, report.gameHubPcCount)
+        assertEquals(3, report.gameCount)
+        assertTrue(report.detected.any { it.displayName == "Elden Ring" && it.gameKey == "steam:1245620" })
+        assertTrue(report.detected.any { it.displayName == "Wandering_Sword" })
+        assertTrue(report.detected.any { it.displayName == "Portal" })
+        assertTrue(report.detected.none { it.relativePath.contains("Proton Experimental") || it.relativePath.contains("compatdata/0") })
+    }
+
+    @Test
+    fun detectsDedicatedBloodborneSaveWithoutIncludingGameFilesDirectory() {
+        val root = "/data/user/0/com.ducvd89.bloodborne"
+        val report = SaveSourceDetector.scanDirectories(
+            root,
+            listOf(
+                root,
+                "$root/files",
+                "$root/shared_prefs",
+                "$root/files/bbport/user/savedata",
+            ),
+            androidGames = mapOf(
+                "com.ducvd89.bloodborne" to AndroidGameMetadata(
+                    "com.ducvd89.bloodborne",
+                    "Bloodborne",
+                ),
+            ),
+        )
+
+        assertEquals(1, report.gameCount)
+        assertEquals(1, report.detected.size)
+        assertEquals("files/bbport/user/savedata", report.detected.single().relativePath)
+        assertFalse(report.detected.single().candidate)
+    }
+
+    @Test
+    fun broadSharedStorageSkipsDedicatedAndroidSourcesAndKeepsUnknownEmulators() {
+        val root = "/storage/emulated/0"
+        val report = SaveSourceDetector.scanDirectories(
+            root,
+            listOf(
+                root,
+                "$root/eden/nand/user/save/0000000000000000/account/0100000000010000",
+                "$root/Download/Eden-migration-final-20261019/nand/user/save/0000000000000000/account/0100000000010000",
+                "$root/OpenSaveIntegrationTest/nand/user/save/0000000000000000/account/0100000000010000",
+                "$root/Citra/saves",
+                "$root/Android/data/com.poncle.vampiresurvivors/files",
+            ),
+            androidGames = mapOf(
+                "com.poncle.vampiresurvivors" to AndroidGameMetadata(
+                    "com.poncle.vampiresurvivors",
+                    "Vampire Survivors",
+                ),
+            ),
+        )
+
+        assertTrue(report.detected.any { it.kind == "citra" && it.relativePath == "Citra/saves" })
+        assertTrue(report.detected.none { it.gameKey == "android:com.poncle.vampiresurvivors" })
+        assertTrue(report.detected.none { it.titleId == "0100000000010000" })
+        assertTrue(report.detected.none { it.relativePath.contains("Eden-migration-final") || it.relativePath.contains("OpenSaveIntegrationTest") })
     }
 }
