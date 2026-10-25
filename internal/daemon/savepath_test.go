@@ -34,6 +34,39 @@ func newTestDaemon(t *testing.T) *Daemon {
 	return d
 }
 
+func TestNewMigratesLegacyGameSaveServiceURL(t *testing.T) {
+	home := t.TempDir()
+	first, err := New(Options{HomeOverride: home, DisableDiscovery: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := first.Store.GetCloudConfig()
+	if err != nil {
+		first.Stop()
+		t.Fatal(err)
+	}
+	cfg.Provider = "eden_syncd"
+	cfg.URL = "https://nas.example/opensave/"
+	if err := first.Store.UpdateCloudConfig(cfg); err != nil {
+		first.Stop()
+		t.Fatal(err)
+	}
+	first.Stop()
+
+	upgraded, err := New(Options{HomeOverride: home, DisableDiscovery: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(upgraded.Stop)
+	got, err := upgraded.Store.GetCloudConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.URL != "https://nas.example" {
+		t.Errorf("migrated game-save URL = %q, want service root", got.URL)
+	}
+}
+
 func TestValidateSavePathRefusesNonFolders(t *testing.T) {
 	d := newTestDaemon(t)
 

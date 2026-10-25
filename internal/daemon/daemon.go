@@ -142,6 +142,12 @@ func New(opts Options) (*Daemon, error) {
 		s.Close()
 		return fail(fmt.Errorf("initialize settings: %w", err))
 	}
+	if err := normalizeGameSaveCloudURL(s); err != nil {
+		// A saved cloud target must never stop the desktop app from opening.
+		// The provider still validates it on use, while a later settings save
+		// can repair any malformed value.
+		log.Log("warn", "could not migrate game-save service address: "+err.Error())
+	}
 
 	snaps := snapshot.New(s)
 	snaps.Log = log.Log
@@ -251,6 +257,25 @@ func New(opts Options) (*Daemon, error) {
 	})
 
 	return d, nil
+}
+
+// normalizeGameSaveCloudURL migrates the old WebDAV collection address that
+// early game-save builds stored. Native endpoints live below /v1/opensave, so
+// retaining a trailing /opensave would make upgraded clients request it twice.
+func normalizeGameSaveCloudURL(s *store.Store) error {
+	cfg, err := s.GetCloudConfig()
+	if err != nil || cfg.Provider != "eden_syncd" || strings.TrimSpace(cfg.URL) == "" {
+		return err
+	}
+	normalized, err := cloud.NormalizeEdenSyncdURL(cfg.URL)
+	if err != nil {
+		return nil // Preserve malformed user input for the settings page to show.
+	}
+	if normalized == cfg.URL {
+		return nil
+	}
+	cfg.URL = normalized
+	return s.UpdateCloudConfig(cfg)
 }
 
 // Start begins watching every tracked game with auto-sync enabled.
