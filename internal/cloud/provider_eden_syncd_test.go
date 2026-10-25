@@ -23,6 +23,8 @@ func TestNormalizeEdenSyncdURL(t *testing.T) {
 		{"https://nas.example:8788", "https://nas.example:8788", false},
 		{"https://nas.example:8788/", "https://nas.example:8788", false},
 		{"http://nas.example/opensave/", "http://nas.example", false},
+		{"https://nas.example/v1/opensave/", "https://nas.example", false},
+		{"https://nas.example/game-save/v1/opensave", "https://nas.example/game-save", false},
 		{"https://nas.example/eden", "https://nas.example/eden", false},
 		{"", "", false},
 		{"nas.example", "", true},
