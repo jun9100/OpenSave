@@ -44,7 +44,13 @@ func NormalizeEdenSyncdURL(value string) (string, error) {
 			return "", fmt.Errorf("game-save service address cannot contain relative path segments")
 		}
 	}
-	if strings.EqualFold(path.Base(basePath), "opensave") {
+	// Accept both the service root and a copied native endpoint. Older builds
+	// used a WebDAV collection ending in /opensave, while current API examples
+	// often include /v1/opensave. Both must resolve to the service root before
+	// this provider appends its native endpoint.
+	if strings.HasSuffix(strings.ToLower(basePath), "/v1/opensave") {
+		basePath = basePath[:len(basePath)-len("/v1/opensave")]
+	} else if strings.EqualFold(path.Base(basePath), "opensave") {
 		basePath = path.Dir(basePath)
 	}
 	parsed.Path = strings.TrimRight(basePath, "/")
