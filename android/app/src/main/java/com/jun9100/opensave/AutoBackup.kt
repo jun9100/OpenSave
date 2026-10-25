@@ -178,8 +178,14 @@ class AutoBackupWorker(
             val matching = repository.list().filter {
                 it.sourceId == sourceId && it.gameKey == game.gameKey && it.manifestHash == fingerprint.manifestHash
             }
-            if (matching.any { it.uploaded }) return GameBackupOutcome.Skipped
-            val pending = matching.firstOrNull { repository.fileFor(it).isFile }
+            // A snapshot can finish uploading while its current-save head fails
+            // to publish. Reuse that archive on the next worker run so the
+            // desktop client eventually receives the automatic-sync signal.
+            val existing = matching.firstOrNull { repository.fileFor(it).isFile }
+            if (existing?.uploaded == true) {
+                return publishCurrentHead(config, cloudIdentity, existing)
+            }
+            val pending = existing
             val record = pending ?: createSnapshot(
                 sourceId = sourceId,
                 game = game,
@@ -193,7 +199,7 @@ class AutoBackupWorker(
             return GameSaveClient(config).upload(repository.fileFor(record), cloudIdentity.saveType, record.remoteName).fold(
                 onSuccess = {
                     repository.markUploaded(record.id)
-                    GameBackupOutcome.Uploaded
+                    publishCurrentHead(config, cloudIdentity, record)
                 },
                 onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
             )
@@ -239,6 +245,18 @@ class AutoBackupWorker(
         )
         repository.add(record)
         return record
+    }
+
+    private fun publishCurrentHead(
+        config: GameSaveConfig,
+        cloudIdentity: GameCloudIdentity,
+        record: SnapshotRecord,
+    ): GameBackupOutcome {
+        if (!cloudIdentity.desktopCompatible) return GameBackupOutcome.Skipped
+        return GameSaveHeadPublisher(applicationContext, config).publishSnapshot(cloudIdentity, record).fold(
+            onSuccess = { GameBackupOutcome.Uploaded },
+            onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
+        )
     }
 
     private fun asGameSaveError(error: Throwable): GameSaveException = when (error) {

@@ -22,7 +22,7 @@ func (a *App) wantsPreReleases() bool {
 
 // updateRepo is the GitHub "owner/repo" whose releases are checked for a
 // newer version. Change this one line if the project moves.
-const updateRepo = "Liquid-co/OpenSave"
+const updateRepo = "jun9100/OpenSave"
 
 // CheckForUpdate best-effort asks GitHub for the latest published release
 // and reports whether it is newer than the running build. Any failure

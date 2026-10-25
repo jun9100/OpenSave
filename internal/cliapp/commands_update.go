@@ -21,7 +21,7 @@ import (
 
 // updateRepo is the GitHub "owner/repo" releases are read from. Kept in step
 // with the desktop app's constant of the same name.
-const updateRepo = "Liquid-co/OpenSave"
+const updateRepo = "jun9100/OpenSave"
 
 type releaseInfo struct {
 	TagName    string `json:"tag_name"`

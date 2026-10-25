@@ -34,7 +34,7 @@
     {#if config.provider === 'eden_syncd'}
       <div class="field two-wide">
         <label for="cb-pass">Sync key</label>
-        <input id="cb-pass" type="password" bind:value={config.password} autocomplete="off" />
+        <input id="cb-pass" bind:value={config.password} autocomplete="off" />
         <span class="hint">The game-save sync key. It is used directly for authenticated save synchronization.</span>
       </div>
     {:else}
@@ -44,7 +44,7 @@
     </div>
     <div class="field">
       <label for="cb-pass">Password</label>
-      <input id="cb-pass" type="password" bind:value={config.password} />
+      <input id="cb-pass" bind:value={config.password} />
     </div>
     {/if}
   </div>

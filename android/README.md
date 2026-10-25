@@ -9,6 +9,7 @@
 - 识别 Eden/Yuzu 系 NAND 与 Ryujinx/Ryubing BIS 中的 Switch TitleID；常见 Switch 游戏显示中文名并缓存 TitleID 封面，Steam AppID 游戏可解析中文名并缓存封面。没有可用封面时显示对应平台图标。
 - 创建流式 ZIP 快照、本地历史、SHA-256、稳定 manifest hash、恢复前安全副本，以及恢复时的路径/ZIP-slip 防护。
 - 通过 `game-save` 原生 API 上传、列举、下载和删除云端快照。同步密钥使用 Android Keystore 的 AES-GCM 密文保存，应用数据不会参与 Android 云备份或设备迁移。
+- 单一 Switch TitleID 快照上传成功后会发布与 Windows OpenSave 兼容的当前存档公告；已知连续版本可由 Windows 自动拉取，首次分叉的版本仍须在 Windows 端确认。
 - Wi-Fi 条件下，WorkManager 每 15 分钟检查所有当前可访问的预设来源和用户授权来源；未变化的游戏跳过，临时网络失败会重试。
 
 扫描只访问预设路径和已经授权的目录，不会遍历整个设备，也不会备份 ROM、密钥、固件、着色器缓存、日志或游戏安装文件。GameHub 云游戏、串流游戏的存档若实际在远端电脑或服务器，必须由对应电脑上的 OpenSave 备份。
@@ -36,7 +37,7 @@ DELETE /v1/opensave/files/{type}/{name}
 - `switch`：Switch 游戏。
 - `emulator-*`：可扩展的模拟器类别，例如 `emulator-ppsspp`、`emulator-retroarch` 和 `emulator-dolphin`。
 
-单一、已识别的 Switch TitleID 使用桌面兼容名称 `switch-<titleid>__main__snap_<timestamp>.zip`，因此同一 TitleID 可以在 Windows 与 Android 间浏览和恢复。PC 与多位置模拟器快照保留 Android 的位置清单，避免把不同设备的目录布局静默覆盖。
+单一、已识别的 Switch TitleID 使用桌面兼容名称 `switch-<titleid>__main__snap_<timestamp>.zip`，并在上传后写入同类型的当前存档公告，因此同一 TitleID 可以在 Windows 与 Android 间浏览和恢复。PC 与多位置模拟器快照保留 Android 的位置清单，避免把不同设备的目录布局静默覆盖。
 
 在“备份与设置”保存服务根地址和同步密钥后，可测试连接、列举云端快照。游戏卡片会显示该游戏的本地和已列举云端历史；恢复仍需要用户确认，并且只替换对应游戏的已验证存档位置。
 
@@ -66,7 +67,7 @@ Debug APK：`app/build/outputs/apk/debug/app-debug.apk`
 - ZIP 快照往返、空目录、Unicode 文件名和 zip-slip 防护。
 - 快照索引重载、中文/特殊字符、存档类型和云端游戏 ID 持久化。
 - 原生 `game-save` 的 Bearer 认证、按类型上传、列举、下载和删除。
-- Switch TitleID、PC 和各模拟器类别的分类及跨桌面兼容命名。
+- Switch TitleID、PC 和各模拟器类别的分类、跨桌面兼容命名和当前存档公告 ZIP 兼容性。
 
 ## Odin2 验收
 

@@ -519,6 +519,12 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 val upload = GameSaveClient(config).upload(archive, cloudIdentity.saveType, remoteName)
                 if (upload.isSuccess) {
                     snapshotRepository.markUploaded(record.id)
+                    if (cloudIdentity.desktopCompatible) {
+                        GameSaveHeadPublisher(app, config).publishSnapshot(cloudIdentity, record)
+                            .onFailure { error ->
+                                uploadError = "云端同步公告失败：${error.message ?: "未知错误"}"
+                            }
+                    }
                 } else {
                     uploadError = "云端上传失败：${upload.exceptionOrNull()?.message ?: "未知错误"}"
                 }
@@ -737,6 +743,13 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 is SourceSelection.Saf -> storage.restoreGameLocations(source.uri, manifest.locations, extractedRoot, safetyRoot)
                 is SourceSelection.Root -> rootStorage.restoreGameLocations(source.path, manifest.locations, extractedRoot)
             }.getOrThrow()
+            request.remote?.takeIf { GameCloudNaming.identity(sourceId, requestedGame).desktopCompatible }?.let { remote ->
+                GameSaveHeadPublisher(app, gameSaveStore.load()).markRemoteRestore(
+                    identity = GameCloudNaming.identity(sourceId, requestedGame),
+                    remote = remote,
+                    manifestHash = if (manifestFile.isFile) Hashing.sha256(manifestFile) else Hashing.sha256(archive),
+                )
+            }
         } finally {
             workingRoot.deleteRecursively()
         }

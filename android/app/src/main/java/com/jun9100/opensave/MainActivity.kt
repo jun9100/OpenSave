@@ -79,7 +79,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -270,178 +269,182 @@ private fun GameLibraryPage(
     val gameHubLocations = state.sourceScans.sumOf { it.scan?.gameHubPcCount ?: 0 }
     val candidateLocations = state.sourceScans.sumOf { it.scan?.candidateCount ?: 0 }
 
-    Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    if (state.sourceScans.isEmpty()) "游戏存档" else "${visibleGames.size} / ${games.size} 个存档条目 · ${batchEligibleKeys.size} 款默认勾选",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "$availableSources 个来源已扫描 · 跳过 ${skippedSources.size} 个",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    IconButton(
-                        onClick = { sourceDetailsExpanded = !sourceDetailsExpanded },
-                        enabled = state.sourceScans.isNotEmpty(),
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Icon(
-                            if (sourceDetailsExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                            contentDescription = if (sourceDetailsExpanded) "收起来源扫描结果" else "展开来源扫描结果",
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 280.dp),
+        modifier = modifier,
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 0.dp, top = 4.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            if (state.sourceScans.isEmpty()) "游戏存档" else "${visibleGames.size} / ${games.size} 个存档条目 · ${batchEligibleKeys.size} 款默认勾选",
+                            style = MaterialTheme.typography.titleMedium,
                         )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "$availableSources 个来源已扫描 · 跳过 ${skippedSources.size} 个",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            IconButton(
+                                onClick = { sourceDetailsExpanded = !sourceDetailsExpanded },
+                                enabled = state.sourceScans.isNotEmpty(),
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    if (sourceDetailsExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                                    contentDescription = if (sourceDetailsExpanded) "收起来源扫描结果" else "展开来源扫描结果",
+                                )
+                            }
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = viewModel::scanSource,
+                        enabled = !state.busy,
+                    ) {
+                        Icon(Icons.Outlined.Search, contentDescription = "扫描存档")
+                        Text("扫描", modifier = Modifier.padding(start = 6.dp))
                     }
                 }
-            }
-            OutlinedButton(
-                onClick = viewModel::scanSource,
-                enabled = !state.busy,
-            ) {
-                Icon(Icons.Outlined.Search, contentDescription = "扫描存档")
-                Text("扫描", modifier = Modifier.padding(start = 6.dp))
-            }
-        }
-        if (sourceDetailsExpanded) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                state.sourceScans.forEach { source ->
-                    val detail = source.scan?.let { scan ->
-                        "${scan.gameCount} 款已识别 · ${scan.detected.size} 个位置"
-                    } ?: "跳过 · ${source.skippedReason}"
+                if (sourceDetailsExpanded) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        state.sourceScans.forEach { source ->
+                            val detail = source.scan?.let { scan ->
+                                "${scan.gameCount} 款已识别 · ${scan.detected.size} 个位置"
+                            } ?: "跳过 · ${source.skippedReason}"
+                            Text(
+                                "${source.label} · $detail",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (source.scan == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        state.sourceScans
+                            .filter { it.scan?.let { scan -> scan.truncated || scan.unreadableDirectoryCount > 0 } == true }
+                            .take(4)
+                            .forEach { source ->
+                                Text(
+                                    "${source.label}：扫描结果可能不完整，请检查权限和范围。",
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        skippedSources.take(4).forEach { source ->
+                            Text(
+                                "${source.label}：${source.skippedReason}",
+                                modifier = Modifier.padding(vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                if (gameHubLocations > 0 || candidateLocations > 0) {
                     Text(
-                        "${source.label} · $detail",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (source.scan == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-        if (gameHubLocations > 0 || candidateLocations > 0) {
-            Text(
-                buildString {
-                    if (gameHubLocations > 0) append("GameHub PC $gameHubLocations 个位置")
-                    if (candidateLocations > 0) {
-                        if (isNotEmpty()) append(" · ")
-                        append("候选 $candidateLocations 个")
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        state.sourceScans.filter { it.scan?.let { scan -> scan.truncated || scan.unreadableDirectoryCount > 0 } == true }
-            .take(4)
-            .forEach { source ->
-            Text(
-                "${source.label}：扫描结果可能不完整，请检查权限和范围。",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        skippedSources.take(4).forEach { source ->
-            Text(
-                "${source.label}：${source.skippedReason}",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (state.busy) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                Text(state.action.orEmpty(), modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        state.error?.let {
-            Text(it, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error)
-        }
-
-        if (games.isNotEmpty()) {
-            SaveTypeFilterBar(
-                options = typeOptions,
-                selectedTypeId = selectedTypeId,
-                enabled = !state.busy,
-                onSelected = { selectedTypeId = it },
-            )
-        }
-
-        if (visibleEligibleKeys.isNotEmpty()) {
-            BatchSelectionToolbar(
-                selectedCount = visibleSelectedKeys.size,
-                eligibleKeys = visibleEligibleKeys,
-                enabled = !state.busy,
-                onToggleAll = {
-                    val allSelected = visibleEligibleKeys.isNotEmpty() &&
-                        selectedGameKeys.containsAll(visibleEligibleKeys)
-                    selectedGameKeys = if (allSelected) {
-                        selectedGameKeys - visibleEligibleKeys.toSet()
-                    } else {
-                        selectedGameKeys + visibleEligibleKeys
-                    }
-                },
-                onBackup = { viewModel.requestBatchGameBackup(visibleSelectedKeys) },
-            )
-        }
-
-        when {
-            state.sourceScans.isEmpty() -> EmptyGameLibrary(
-                message = "正在扫描已知的游戏与模拟器存档来源。",
-                modifier = Modifier.weight(1f),
-                onOpenManagement = onOpenManagement,
-            )
-            games.isEmpty() -> EmptyGameLibrary(
-                message = "已扫描所有可用来源，但没有发现明确的游戏存档位置。候选目录不会默认纳入备份。",
-                modifier = Modifier.weight(1f),
-                onOpenManagement = onOpenManagement,
-            )
-            else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 280.dp),
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(visibleGames, key = { it.libraryKey }) { entry ->
-                    GameLibraryCard(
-                        entry = entry,
-                        state = state,
-                        viewModel = viewModel,
-                        coverRepository = coverRepository,
-                        metadataRepository = metadataRepository,
-                        selected = entry.libraryKey in selectedGameKeys,
-                        onSelectedChange = { selected ->
-                            selectedGameKeys = if (selected) {
-                                selectedGameKeys + entry.libraryKey
-                            } else {
-                                selectedGameKeys - entry.libraryKey
+                        buildString {
+                            if (gameHubLocations > 0) append("GameHub PC $gameHubLocations 个位置")
+                            if (candidateLocations > 0) {
+                                if (isNotEmpty()) append(" · ")
+                                append("候选 $candidateLocations 个")
                             }
                         },
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
                     )
+                }
+                if (state.busy) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(state.action.orEmpty(), modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                state.error?.let {
+                    Text(it, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error)
+                }
+                if (games.isNotEmpty()) {
+                    SaveTypeFilterBar(
+                        options = typeOptions,
+                        selectedTypeId = selectedTypeId,
+                        enabled = !state.busy,
+                        onSelected = { selectedTypeId = it },
+                    )
+                }
+                if (visibleEligibleKeys.isNotEmpty()) {
+                    BatchSelectionToolbar(
+                        selectedCount = visibleSelectedKeys.size,
+                        eligibleKeys = visibleEligibleKeys,
+                        enabled = !state.busy,
+                        onToggleAll = {
+                            val allSelected = visibleEligibleKeys.isNotEmpty() &&
+                                selectedGameKeys.containsAll(visibleEligibleKeys)
+                            selectedGameKeys = if (allSelected) {
+                                selectedGameKeys - visibleEligibleKeys.toSet()
+                            } else {
+                                selectedGameKeys + visibleEligibleKeys
+                            }
+                        },
+                        onBackup = { viewModel.requestBatchGameBackup(visibleSelectedKeys) },
+                    )
+                }
+                state.action?.takeIf { !state.busy && !it.startsWith("扫描完成：") }?.let {
+                    Text(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
-        state.action?.takeIf { !state.busy && !it.startsWith("扫描完成：") }?.let {
-            Text(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
+        when {
+            state.sourceScans.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                EmptyGameLibrary(
+                    message = "正在扫描已知的游戏与模拟器存档来源。",
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
+                    onOpenManagement = onOpenManagement,
+                )
+            }
+            games.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                EmptyGameLibrary(
+                    message = "已扫描所有可用来源，但没有发现明确的游戏存档位置。候选目录不会默认纳入备份。",
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
+                    onOpenManagement = onOpenManagement,
+                )
+            }
+            else -> items(visibleGames, key = { it.libraryKey }) { entry ->
+                GameLibraryCard(
+                    entry = entry,
+                    state = state,
+                    viewModel = viewModel,
+                    coverRepository = coverRepository,
+                    metadataRepository = metadataRepository,
+                    selected = entry.libraryKey in selectedGameKeys,
+                    onSelectedChange = { selected ->
+                        selectedGameKeys = if (selected) {
+                            selectedGameKeys + entry.libraryKey
+                        } else {
+                            selectedGameKeys - entry.libraryKey
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -480,29 +483,23 @@ private fun BatchSelectionToolbar(
     onBackup: () -> Unit,
 ) {
     val allSelected = eligibleKeys.isNotEmpty() && selectedCount == eligibleKeys.size
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("已选 $selectedCount / ${eligibleKeys.size} 款", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-            TextButton(onClick = onToggleAll, enabled = enabled && eligibleKeys.isNotEmpty()) {
-                Text(if (allSelected) "取消全选" else "全选可备份游戏")
-            }
+        Text("已选 $selectedCount / ${eligibleKeys.size} 款", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+        TextButton(onClick = onToggleAll, enabled = enabled && eligibleKeys.isNotEmpty()) {
+            Text(if (allSelected) "取消全选" else "全选")
         }
         Button(
             onClick = onBackup,
             enabled = enabled && selectedCount > 0,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.height(44.dp),
         ) {
             Icon(Icons.Outlined.Save, contentDescription = null)
             Text("批量备份", modifier = Modifier.padding(start = 8.dp))
         }
-        Text(
-            "批量操作只包含已识别位置；候选位置默认排除。",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -513,7 +510,7 @@ private fun EmptyGameLibrary(
     onOpenManagement: () -> Unit,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().padding(28.dp),
+        modifier = modifier.fillMaxWidth().padding(28.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -539,7 +536,7 @@ private fun SourceManagementPage(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        DeviceBaselineCard()
+        GameSaveCard(state, viewModel)
         SourceSelectionCard(state, viewModel, onPickFolder)
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp)) {
@@ -581,7 +578,6 @@ private fun SourceManagementPage(
                 }
             }
         }
-        GameSaveCard(state, viewModel)
         LocalSnapshotCard(state, viewModel)
         RemoteSnapshotCard(state, viewModel)
         state.action?.takeIf { !state.busy }?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
@@ -734,7 +730,6 @@ private fun GameSaveCard(state: SourceUiState, viewModel: SourceViewModel) {
                 value = state.gameSaveSyncKey,
                 onValueChange = viewModel::updateGameSaveSyncKey,
                 label = { Text("同步密钥") },
-                visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -839,18 +834,6 @@ private fun RemoteSnapshotCard(state: SourceUiState, viewModel: SourceViewModel)
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun DeviceBaselineCard() {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Text("测试基线", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(6.dp))
-            Text("目标设备：Odin2 / Android 13", style = MaterialTheme.typography.bodyLarge)
-            Text("目标 SDK：35，最低支持 Android 8.0", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

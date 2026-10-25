@@ -15,6 +15,7 @@ OpenSave Android 作为 `game-save` 的原生客户端，与 Windows OpenSave �
 - 游戏库：中文界面、按来源展示、`PC` / `Switch` / 各模拟器类别筛选、当前分类全选/取消全选、批量备份、候选位置显式确认。
 - 游戏呈现：常用 Switch TitleID 中文名、Steam AppID 中文名解析与封面缓存、平台后备图标。
 - 原生 `game-save` 客户端：Bearer 同步密钥、连接测试、按类型列举、上传、下载和删除；同步密钥经 Android Keystore AES-GCM 加密后保存。
+- 单目录 Switch TitleID 快照上传后发布与 Windows OpenSave 兼容的当前存档公告；连续版本可由 Windows 自动拉取，首次分叉仍要求确认。
 - 自动备份：Wi-Fi WorkManager 周期扫描所有可访问预设及授权来源，按 manifest hash 跳过未变化的游戏并重试临时故障。
 - 本地验证：`testDebugUnitTest`、`lintDebug` 和 `assembleDebug` 已通过。
 

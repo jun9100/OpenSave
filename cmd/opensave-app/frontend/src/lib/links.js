@@ -7,4 +7,4 @@
 
 export const DISCORD_URL = 'https://discord.gg/hvBv92DZvn';
 export const DONATE_URL = 'https://opensave.gumroad.com/l/usygu';
-export const GITHUB_URL = 'https://github.com/Liquid-co/OpenSave';
+export const GITHUB_URL = 'https://github.com/jun9100/OpenSave';
