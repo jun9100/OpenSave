@@ -186,5 +186,20 @@
   "home.welcome.intro": "Keep your game saves in sync across every device — no accounts, no cloud lock-in. Start by finding your saves:",
   "home.welcome.scanForSaves": "Scan for saves",
   "home.welcome.title": "Welcome to OpenSave",
-  "home.welcome.trackManually": "Track a folder manually"
+  "home.welcome.trackManually": "Track a folder manually",
+  "cloudOffer.bring": "Bring it here",
+  "cloudOffer.bringing": "Bringing…",
+  "cloudOffer.broughtToast": "Now using {device}'s save for \"{game}\". This device's previous save was kept as a snapshot.",
+  "cloudOffer.notNow": "Not now",
+  "cloudOffer.ownBackup": "your cloud backup",
+  "cloudOffer.reason.diverged": "This device's save has changes of its own that are not in {device}'s. Bringing theirs replaces them, while keeping this device's save as a snapshot.",
+  "cloudOffer.reason.history-diverged": "The two save histories diverged. Review both versions before choosing one; this device's current save will be kept as a snapshot.",
+  "cloudOffer.reason.legacy-content-time": "This update came from an older client that cannot prove when its save content last changed. It will not be applied automatically.",
+  "cloudOffer.reason.local-baseline-unknown": "This device has no verified sync baseline for this save, so the update requires confirmation.",
+  "cloudOffer.reason.local-changed": "This device's save changed since its last snapshot. Bringing the remote version would replace that progress, while keeping a safety snapshot.",
+  "cloudOffer.reason.local-content-time-unknown": "This device cannot verify the current save's content time, so the update requires confirmation.",
+  "cloudOffer.saved": "Saved {when} · in {provider}",
+  "cloudOffer.savedTimeUnknown": "Save time could not be verified",
+  "cloudOffer.titleNewer": "{device} has a newer save for {game}",
+  "cloudOffer.titleReview": "A save from {device} for {game} needs confirmation"
 }

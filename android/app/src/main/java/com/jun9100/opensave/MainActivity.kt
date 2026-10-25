@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -360,7 +361,7 @@ private fun GameLibraryPage(
                 if (gameHubLocations > 0 || candidateLocations > 0) {
                     Text(
                         buildString {
-                            if (gameHubLocations > 0) append("GameHub PC $gameHubLocations 个位置")
+                            if (gameHubLocations > 0) append("PC 容器 $gameHubLocations 个位置")
                             if (candidateLocations > 0) {
                                 if (isNotEmpty()) append(" · ")
                                 append("候选 $candidateLocations 个")
@@ -537,6 +538,7 @@ private fun SourceManagementPage(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         GameSaveCard(state, viewModel)
+        CloudUpdateCard(state, viewModel)
         SourceSelectionCard(state, viewModel, onPickFolder)
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(18.dp)) {
@@ -634,24 +636,53 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                     color = if (state.rootAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Text(
-                    state.selectedUri?.toString() ?: "尚未授权目录",
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (state.authorizedTrees.isEmpty()) {
+                    Text(
+                        "尚未添加系统授权目录",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    state.authorizedTrees.forEach { tree ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(tree.label, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    when {
+                                        tree.readable && tree.writable -> "已授权读写 · 自动扫描"
+                                        tree.readable -> "已授权只读 · 可备份，不能恢复"
+                                        else -> "目录授权已失效"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (tree.readable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.forgetAuthorizedTree(tree.uri) },
+                                enabled = !state.busy,
+                            ) {
+                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "移除授权目录")
+                            }
+                        }
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = onPickFolder, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.FolderOpen, contentDescription = "选择目录")
-                    Text("选择并授权目录", modifier = Modifier.padding(start = 8.dp))
+                    Text("添加并授权目录", modifier = Modifier.padding(start = 8.dp))
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (state.hasPersistedPermission) "目录权限已保存，应用启动时会自动扫描。"
-                    else "系统授权模式只访问你选择的目录；不会读取其他应用私有目录。",
+                    if (state.authorizedTrees.isNotEmpty()) {
+                        "可重复添加多个目录；应用启动和 Wi-Fi 自动备份都会扫描所有仍有读取权限的目录。"
+                    } else {
+                        "系统授权模式只访问你选择的目录。Android 不允许非 Root 应用读取其他应用的私有数据目录。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (state.hasPersistedPermission) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (state.authorizedTrees.any(AuthorizedSafTree::readable)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (state.sourceOptions.isNotEmpty()) {
@@ -693,12 +724,25 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                         Column(modifier = Modifier.weight(1f)) {
                             Text(option.label, style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                "${option.saveType.label} · ${if (option.source is SourceSelection.Root) "Root" else "系统授权"}",
+                                buildString {
+                                    append(if (option.enabledByDefault) option.saveType.label else "未归类应用候选")
+                                    append(" · ")
+                                    append(if (option.source is SourceSelection.Root) "Root（需 Root 权限）" else "系统授权")
+                                    if (!option.enabledByDefault) append(" · 默认关闭，避免扫描非游戏数据")
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
+                }
+                if (!state.rootAvailable) {
+                    Text(
+                        "未 Root 的设备会自动跳过 Root 来源；请为可访问的模拟器或游戏目录添加系统授权。",
+                        modifier = Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -755,13 +799,96 @@ private fun GameSaveCard(state: SourceUiState, viewModel: SourceViewModel) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = viewModel::listCloud,
-                enabled = !state.busy,
+            Column(
                 modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(Icons.Outlined.Refresh, contentDescription = "列举云端")
-                Text("列举云端快照", modifier = Modifier.padding(start = 8.dp))
+                OutlinedButton(
+                    onClick = viewModel::listCloud,
+                    enabled = !state.busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = "列举云端")
+                    Text("列举云端快照", modifier = Modifier.padding(start = 6.dp))
+                }
+                OutlinedButton(
+                    onClick = viewModel::checkCloudUpdates,
+                    enabled = !state.busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.CloudDownload, contentDescription = "检查跨设备更新")
+                    Text("检查跨设备更新", modifier = Modifier.padding(start = 6.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloudUpdateCard(state: SourceUiState, viewModel: SourceViewModel) {
+    if (state.cloudUpdates.isEmpty()) return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text("跨设备更新", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            state.cloudUpdates.take(16).forEach { update ->
+                val candidate = update.decision.candidate
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            update.entry.game.presentation.primaryName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            buildString {
+                                append(update.entry.sourceLabel)
+                                append(" · ")
+                                append(
+                                    when (update.decision.action) {
+                                        GameSaveRemoteAction.AUTO_RESTORE -> "可安全恢复"
+                                        GameSaveRemoteAction.REVIEW_REQUIRED -> "需要确认"
+                                        GameSaveRemoteAction.WAIT_FOR_REMOTE -> "远端尚未就绪"
+                                        GameSaveRemoteAction.UP_TO_DATE -> "已同步"
+                                    },
+                                )
+                                candidate?.head?.deviceName?.takeIf(String::isNotBlank)?.let {
+                                    append(" · ")
+                                    append(it)
+                                }
+                                candidate?.savedAtMillis?.takeIf { it > 0L }?.let {
+                                    append(" · ")
+                                    append(formatTime(it))
+                                }
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        update.decision.message.takeIf(String::isNotBlank)?.let { message ->
+                            Text(
+                                message,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    if (update.remote != null) {
+                        IconButton(
+                            onClick = { viewModel.requestCloudUpdateRestore(update) },
+                            enabled = !state.busy,
+                        ) {
+                            Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "确认恢复此跨设备更新")
+                        }
+                    }
+                }
             }
         }
     }
@@ -900,7 +1027,7 @@ private fun GameLibraryCard(
     onSelectedChange: (Boolean) -> Unit,
 ) {
     val game = entry.game
-    val cloudIdentity = GameCloudNaming.identity(entry.sourceId, game)
+    val cloudIdentity = GameCloudNaming.identity(entry.source, entry.sourceId, game)
     var expanded by remember(entry.libraryKey) { mutableStateOf(false) }
     var presentation by remember(entry.libraryKey) { mutableStateOf(game.presentation) }
     LaunchedEffect(entry.libraryKey) {
@@ -1155,6 +1282,7 @@ private fun kindLabel(kind: String): String = when (kind) {
     "aethersx2" -> "AetherSX2/NetherSX2"
     "emulator" -> "模拟器"
     "android-app" -> "Android 应用数据"
+    "android-game" -> "Android 游戏"
     "gamehub-pc" -> "GameHub 本地 PC"
     else -> kind
 }

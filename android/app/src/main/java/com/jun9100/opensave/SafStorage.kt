@@ -17,6 +17,14 @@ data class FileRecord(
     val sha256: String,
 )
 
+/** A durable system-granted tree that can participate in the game library. */
+data class AuthorizedSafTree(
+    val uri: Uri,
+    val label: String,
+    val readable: Boolean,
+    val writable: Boolean,
+)
+
 data class CopyReport(
     val fileCount: Int,
     val byteCount: Long,
@@ -29,28 +37,83 @@ class SafStorage(private val context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     fun persistedTreeUri(): Uri? {
-        return preferences.getString(TREE_URI_KEY, null)?.let(Uri::parse)
+        val active = preferences.getString(TREE_URI_KEY, null)
+            ?.let { value -> runCatching { Uri.parse(value) }.getOrNull() }
+        return active?.takeIf { uri -> persistedTreeUris().any { it == uri } }
+            ?: persistedTreeUris().firstOrNull()
     }
+
+    fun persistedTreeUris(): List<Uri> {
+        val current = preferences.getStringSet(TREE_URIS_KEY, null).orEmpty()
+        val legacy = preferences.getString(TREE_URI_KEY, null)
+        return (current + listOfNotNull(legacy))
+            .asSequence()
+            .mapNotNull { value -> runCatching { Uri.parse(value) }.getOrNull() }
+            .distinct()
+            .toList()
+    }
+
+    fun persistedTrees(): List<AuthorizedSafTree> = persistedTreeUris()
+        .map { uri ->
+            AuthorizedSafTree(
+                uri = uri,
+                label = treeLabel(uri),
+                readable = hasReadPermission(uri),
+                writable = hasWritePermission(uri),
+            )
+        }
+        .sortedBy { it.label.lowercase() }
 
     fun persistTreePermission(uri: Uri): Result<Unit> {
         return runCatching {
-            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            context.contentResolver.takePersistableUriPermission(uri, flags)
-            preferences.edit().putString(TREE_URI_KEY, uri.toString()).apply()
+            val readWriteFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, readWriteFlags)
+            }.getOrElse {
+                // Read-only providers can still supply an offline backup source.
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val savedUris = persistedTreeUris().mapTo(linkedSetOf()) { it.toString() }
+            savedUris += uri.toString()
+            preferences.edit()
+                .putStringSet(TREE_URIS_KEY, savedUris)
+                // Whole-source backup keeps targeting the last directory selected.
+                .putString(TREE_URI_KEY, uri.toString())
+                .apply()
         }
     }
 
-    fun hasReadWritePermission(uri: Uri): Boolean {
-        return context.contentResolver.persistedUriPermissions.any {
-            it.uri == uri &&
-                it.isReadPermission &&
-                it.isWritePermission
+    fun forgetTree(uri: Uri): Result<Unit> = runCatching {
+        val active = persistedTreeUri()
+        val remaining = persistedTreeUris().filterNot { it == uri }
+        val editor = preferences.edit()
+        if (remaining.isEmpty()) {
+            editor.remove(TREE_URIS_KEY)
+        } else {
+            editor.putStringSet(TREE_URIS_KEY, remaining.mapTo(linkedSetOf()) { it.toString() })
         }
+        if (active == uri) {
+            remaining.firstOrNull()?.let { editor.putString(TREE_URI_KEY, it.toString()) }
+                ?: editor.remove(TREE_URI_KEY)
+        }
+        editor.apply()
+
+        val flags = buildPermissionFlags(uri)
+        if (flags != 0) context.contentResolver.releasePersistableUriPermission(uri, flags)
     }
+
+    fun hasReadPermission(uri: Uri): Boolean = persistedPermission(uri)?.isReadPermission == true
+
+    fun hasWritePermission(uri: Uri): Boolean = persistedPermission(uri)?.isWritePermission == true
+
+    fun hasReadWritePermission(uri: Uri): Boolean = hasReadPermission(uri) && hasWritePermission(uri)
 
     fun workspaceDirectory(): File = File(context.filesDir, WORKSPACE_DIRECTORY)
 
-    suspend fun scanTree(uri: Uri): Result<SaveScanReport> = withContext(Dispatchers.IO) {
+    suspend fun scanTree(
+        uri: Uri,
+        androidGames: Map<String, AndroidGameMetadata> = emptyMap(),
+    ): Result<SaveScanReport> = withContext(Dispatchers.IO) {
         runCatching {
             val root = DocumentFile.fromTreeUri(context, uri)
                 ?: error("The selected storage provider is unavailable")
@@ -67,6 +130,7 @@ class SafStorage(private val context: Context) {
                 selectedRootName = rootName,
                 unreadableDirectoryCount = unreadable[0],
                 truncated = truncated,
+                androidGames = androidGames,
             )
         }
     }
@@ -378,9 +442,27 @@ class SafStorage(private val context: Context) {
 
     private fun MessageDigest.hex(): String = digest().joinToString("") { "%02x".format(it) }
 
+    private fun persistedPermission(uri: Uri) = context.contentResolver.persistedUriPermissions
+        .firstOrNull { permission -> permission.uri == uri }
+
+    private fun buildPermissionFlags(uri: Uri): Int {
+        val permission = persistedPermission(uri) ?: return 0
+        return (if (permission.isReadPermission) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
+            (if (permission.isWritePermission) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+    }
+
+    private fun treeLabel(uri: Uri): String {
+        if (uri.authority == "dev.eden.eden_emulator.user") return "Eden 用户数据（系统授权）"
+        val name = runCatching { DocumentFile.fromTreeUri(context, uri)?.name?.trim() }.getOrNull()
+        return name?.takeIf { it.isNotBlank() && !it.equals("root", ignoreCase = true) }
+            ?.let { "系统授权：$it" }
+            ?: "系统授权目录"
+    }
+
     private companion object {
         const val PREFERENCES = "opensave_mobile"
         const val TREE_URI_KEY = "tracked_tree_uri"
+        const val TREE_URIS_KEY = "tracked_tree_uris"
         const val WORKSPACE_DIRECTORY = "source-workspace"
         const val BUFFER_SIZE = 1024 * 1024
         const val MAX_SCAN_DIRECTORIES = 50_000

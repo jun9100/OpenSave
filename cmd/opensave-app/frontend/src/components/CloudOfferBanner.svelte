@@ -15,6 +15,7 @@
   import { cloudOffers, toast } from '../lib/stores.js';
   import { api } from '../lib/api.js';
   import { timeAgo } from '../lib/timeago.js';
+  import { t } from '../lib/i18n.js';
   import CloudDownload from 'lucide-svelte/icons/cloud-download';
 
   let busy = '';
@@ -35,7 +36,7 @@
     busy = key(offer);
     try {
       await api.post('/api/cloud/offers/accept', { gameId: offer.gameId, snapshotId: offer.snapshotId });
-      toast(`Now using ${offer.deviceName}'s save for “${offer.gameName}” — this device's is kept as a snapshot`, 'success');
+      toast($t('cloudOffer.broughtToast', { device: offer.deviceName, game: offer.gameName }), 'success');
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -63,26 +64,34 @@
         <div class="offer-icon"><CloudDownload size={19} /></div>
         <div class="offer-body">
           <div class="offer-title">
-            <strong>{offer.deviceName}</strong> has a newer save for <strong>{offer.gameName}</strong>
+            {#if offer.reviewReason}
+              {$t('cloudOffer.titleReview', { device: offer.deviceName, game: offer.gameName })}
+            {:else}
+              {$t('cloudOffer.titleNewer', { device: offer.deviceName, game: offer.gameName })}
+            {/if}
           </div>
           <div class="offer-sub">
-            Saved {timeAgo(offer.savedAt)} · in {where[offer.provider] ?? 'your cloud backup'}
+            {#if offer.savedAt}
+              {$t('cloudOffer.saved', { when: timeAgo(offer.savedAt), provider: where[offer.provider] ?? $t('cloudOffer.ownBackup') })}
+            {:else}
+              {$t('cloudOffer.savedTimeUnknown')}
+            {/if}
           </div>
-          {#if offer.diverged}
+          {#if offer.reviewReason}
+            <div class="offer-warn">{$t(`cloudOffer.reason.${offer.reviewReason}`)}</div>
+          {:else if offer.diverged}
             <!-- Not "since the two last matched": two devices meeting through
                  the cloud for the first time never matched at all, and that
                  is the commonest way to see this card. -->
             <div class="offer-warn">
-              This device's save has changes of its own that aren't in {offer.deviceName}'s.
-              Bringing theirs replaces them — this device's save is kept as a snapshot you can go
-              back to.
+              {$t('cloudOffer.reason.diverged', { device: offer.deviceName })}
             </div>
           {/if}
         </div>
         <div class="offer-actions">
-          <button class="btn small" disabled={!!busy} on:click={() => later(offer)}>Not now</button>
+          <button class="btn small" disabled={!!busy} on:click={() => later(offer)}>{$t('cloudOffer.notNow')}</button>
           <button class="btn small primary" disabled={!!busy} on:click={() => bring(offer)}>
-            {busy === key(offer) ? 'Bringing…' : 'Bring it here'}
+            {busy === key(offer) ? $t('cloudOffer.bringing') : $t('cloudOffer.bring')}
           </button>
         </div>
       </div>

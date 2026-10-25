@@ -15,6 +15,9 @@ class GameSaveTypesTest {
         assertEquals(GameSaveTypes.DOLPHIN, GameSaveTypes.forSave(DetectedSave("dolphin", "save", note = "dolphin")))
         assertEquals(GameSaveTypes.DUCKSTATION, GameSaveTypes.forSave(DetectedSave("duckstation", "save", note = "ps1")))
         assertEquals(GameSaveTypes.AETHERSX2, GameSaveTypes.forSave(DetectedSave("aethersx2", "save", note = "ps2")))
+        assertEquals(GameSaveTypes.CITRA, GameSaveTypes.forSave(DetectedSave("citra", "save", note = "3ds")))
+        assertEquals(GameSaveTypes.MELONDS, GameSaveTypes.forSave(DetectedSave("melonds", "save", note = "ds")))
+        assertEquals(GameSaveTypes.VITA3K, GameSaveTypes.forSave(DetectedSave("vita3k", "save", note = "vita")))
         assertEquals(GameSaveTypes.GENERIC, GameSaveTypes.forSave(DetectedSave("emulator", "save", note = "generic")))
     }
 
@@ -51,7 +54,11 @@ class GameSaveTypesTest {
             ),
         )
 
-        val identity = GameCloudNaming.identity(sourceId, game)
+        val identity = GameCloudNaming.identity(
+            SourceSelection.Root("/data/user/0/dev.eden.eden_emulator/files"),
+            sourceId,
+            game,
+        )
 
         assertTrue(identity.desktopCompatible)
         assertEquals(GameSaveTypes.SWITCH, identity.saveType)

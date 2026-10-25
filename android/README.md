@@ -4,15 +4,15 @@
 
 ## 已实现
 
-- 自动扫描已授权 SAF 目录，以及 Root 可访问的 GameHub PC、Eden/Yuzu/Suyu/Sudachi/Citron、PPSSPP、RetroArch、Dolphin 和 Android 应用数据预设来源；首次默认全部启用，可在“备份与设置”逐项取消，手动扫描和 Wi-Fi 自动备份会共用该选择。
-- 把已识别的游戏存档按 `PC 游戏`、`Switch 游戏`、PPSSPP、RetroArch、Dolphin、DuckStation、AetherSX2/NetherSX2、Android 游戏和其他模拟器分类；筛选、全选和批量备份只作用于当前分类。
+- 自动扫描每一个已授权 SAF 目录，以及 Root 可访问的 GameHub PC、Eden/Yuzu/Suyu/Sudachi/Citron、Winlator、DroidDeck、共享 PC 目录、已安装 Android 应用的持久数据目录和共享存储；共享存储会补充发现未预设的模拟器目录。首次默认全部启用，可在“备份与设置”逐项取消，手动扫描和 Wi-Fi 自动备份会共用该选择。
+- 把已识别的游戏存档按 `PC 游戏`、`Switch 游戏`、PPSSPP、RetroArch、Dolphin、DuckStation、AetherSX2/NetherSX2、Citra/Lime3DS、melonDS、Vita3K、Mupen64Plus、DraStic、Lemuroid、Android 游戏和其他模拟器分类；筛选、全选和批量备份只作用于当前分类。
 - 识别 Eden/Yuzu 系 NAND 与 Ryujinx/Ryubing BIS 中的 Switch TitleID；常见 Switch 游戏显示中文名并缓存 TitleID 封面，Steam AppID 游戏可解析中文名并缓存封面。没有可用封面时显示对应平台图标。
 - 创建流式 ZIP 快照、本地历史、SHA-256、稳定 manifest hash、恢复前安全副本，以及恢复时的路径/ZIP-slip 防护。
 - 通过 `game-save` 原生 API 上传、列举、下载和删除云端快照。同步密钥使用 Android Keystore 的 AES-GCM 密文保存，应用数据不会参与 Android 云备份或设备迁移。
-- 单一 Switch TitleID 快照上传成功后会发布与 Windows OpenSave 兼容的当前存档公告；已知连续版本可由 Windows 自动拉取，首次分叉的版本仍须在 Windows 端确认。
+- 单一 Switch TitleID 快照上传成功后会发布与 Windows OpenSave 兼容的当前存档公告。只有远端公告明确携带 ZIP 内实际存档文件的最新修改时间、其同步链延续本机已知快照且本机内容未变化时，才允许 Windows 自动拉取，或由 Android Root 自动备份任务安全恢复。旧客户端公告、分叉、未知基线、本机已变化和未完成上传一律列为待确认，绝不静默覆盖。
 - Wi-Fi 条件下，WorkManager 每 15 分钟检查所有当前可访问的预设来源和用户授权来源；未变化的游戏跳过，临时网络失败会重试。
 
-扫描只访问预设路径和已经授权的目录，不会遍历整个设备，也不会备份 ROM、密钥、固件、着色器缓存、日志或游戏安装文件。GameHub 云游戏、串流游戏的存档若实际在远端电脑或服务器，必须由对应电脑上的 OpenSave 备份。
+扫描只访问预设路径和已经授权的目录；Root 下的共享存储扫描会自动排除 OpenSave 测试目录、Eden 迁移归档、ROM、密钥、固件、着色器缓存、日志和游戏安装文件。Root 下会检查已识别 Android 游戏的内部持久数据，并从共享存储发现外部数据；非 Root 下只能扫描用户逐个授予的目录。GameHub 云游戏、串流游戏的存档若实际在远端电脑或服务器，必须由对应电脑上的 OpenSave 备份。
 
 ## game-save 云端
 
@@ -37,7 +37,7 @@ DELETE /v1/opensave/files/{type}/{name}
 - `switch`：Switch 游戏。
 - `emulator-*`：可扩展的模拟器类别，例如 `emulator-ppsspp`、`emulator-retroarch` 和 `emulator-dolphin`。
 
-单一、已识别的 Switch TitleID 使用桌面兼容名称 `switch-<titleid>__main__snap_<timestamp>.zip`，并在上传后写入同类型的当前存档公告，因此同一 TitleID 可以在 Windows 与 Android 间浏览和恢复。PC 与多位置模拟器快照保留 Android 的位置清单，避免把不同设备的目录布局静默覆盖。
+单一、已识别的 Root Switch TitleID 使用桌面兼容名称 `switch-<titleid>__main__snap_<timestamp>.zip`，并在上传后写入同类型的当前存档公告，因此同一 TitleID 可以在 Windows 与 Android 间浏览和恢复。公告同时记录 ZIP 内实际存档文件的最新修改时间和有限的同步链；较旧的镜像或迁移副本即使晚上传也不会替换当前进度。缺少该内容时间的旧公告仍可查看和手动恢复，但不会触发自动恢复。PC、多位置模拟器和 SAF 快照保留 Android 的位置清单，避免把不同设备的目录布局静默覆盖。
 
 在“备份与设置”保存服务根地址和同步密钥后，可测试连接、列举云端快照。游戏卡片会显示该游戏的本地和已列举云端历史；恢复仍需要用户确认，并且只替换对应游戏的已验证存档位置。
 
@@ -49,6 +49,13 @@ DELETE /v1/opensave/files/{type}/{name}
 4. 恢复前应用创建私有安全快照，随后通过临时目录替换目标存档内容，并尽量保留 Root 目标目录的 UID/GID 与顶层权限。
 
 Root 模式拒绝 `/`、`/data`、`/storage/emulated/0`、系统分区等过宽路径。恢复只应指向专用存档目录；工作区不会接受符号链接或特殊文件。
+
+## 非 Root 模式
+
+1. 在“备份与设置”的“系统授权”中点“添加并授权目录”，可重复添加多个模拟器或游戏目录。
+2. OpenSave 保存每个目录的持久权限，并在手动扫描和 Wi-Fi 自动备份时一起使用。
+3. 只读授权可用于备份；恢复需要该目录具有读写授权。
+4. Android 13 通常禁止普通应用访问其他应用的 `/data/user/0/<包名>`。若系统文件选择器不让选择某个 `Android/data` 目录，只有该应用自身提供文档树、导出功能或 Root 才能读取它。
 
 ## 本地构建
 

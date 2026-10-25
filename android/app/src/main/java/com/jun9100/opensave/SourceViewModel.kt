@@ -21,14 +21,25 @@ enum class OpenSavePage {
 data class RestoreRequest(
     val local: SnapshotRecord? = null,
     val remote: RemoteSnapshot? = null,
+    val remoteHead: GameSaveRemoteHead? = null,
     val game: DetectedGame? = null,
     val source: SourceSelection? = null,
 )
+
+/** A remote head that is deliberately waiting for a user-confirmed restore. */
+data class GameSaveCloudUpdate(
+    val entry: SourceGameEntry,
+    val decision: GameSaveHeadDecision,
+) {
+    val remote: RemoteSnapshot?
+        get() = decision.candidate?.archive
+}
 
 data class SourceUiState(
     val storageMode: StorageMode = StorageMode.SAF,
     val selectedUri: Uri? = null,
     val hasPersistedPermission: Boolean = false,
+    val authorizedTrees: List<AuthorizedSafTree> = emptyList(),
     val rootPath: String = "",
     val rootAvailable: Boolean = false,
     val rootChecked: Boolean = false,
@@ -42,6 +53,7 @@ data class SourceUiState(
     val scanRevision: Long = 0L,
     val snapshots: List<SnapshotRecord> = emptyList(),
     val remoteSnapshots: List<RemoteSnapshot> = emptyList(),
+    val cloudUpdates: List<GameSaveCloudUpdate> = emptyList(),
     val activeSourceId: String? = null,
     val page: OpenSavePage = OpenSavePage.LIBRARY,
     val gameSaveEnabled: Boolean = false,
@@ -58,6 +70,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     private val storage = SafStorage(application)
     private val rootStorage = RootStorage(application)
     private val selectionStore = SourceSelectionStore(application)
+    private val installedGameCatalog = InstalledGameCatalog(application)
     private val snapshotEngine = SnapshotEngine()
     private val snapshotRepository = SnapshotRepository(File(application.filesDir, SNAPSHOT_DIRECTORY))
     private val gameSaveStore = GameSaveConfigStore(application)
@@ -73,16 +86,19 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun onTreeSelected(uri: Uri) {
         storage.persistTreePermission(uri)
             .onSuccess {
+                selectionStore.setSourcesEnabled(listOf(SourceSelection.Saf(uri).idSeed), enabled = true)
+                val trees = storage.persistedTrees()
                 selectionStore.saveMode(StorageMode.SAF)
                 state.value = state.value.copy(
                     storageMode = StorageMode.SAF,
                     selectedUri = uri,
-                    hasPersistedPermission = storage.hasReadWritePermission(uri),
-                    action = "已保存目录权限",
+                    hasPersistedPermission = storage.hasReadPermission(uri),
+                    authorizedTrees = trees,
+                    action = "已添加系统授权目录",
                     error = null,
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(uri.toString()),
-                    sourceOptions = buildSourceOptions(uri, state.value.rootPath),
+                    sourceOptions = buildSourceOptions(trees, state.value.rootPath),
                 )
                 scanSource()
             }
@@ -95,13 +111,47 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             }
     }
 
+    fun forgetAuthorizedTree(uri: Uri) {
+        if (state.value.busy) return
+        storage.forgetTree(uri)
+            .onSuccess {
+                val trees = storage.persistedTrees()
+                val selectedUri = state.value.selectedUri.takeIf { it != uri } ?: trees.firstOrNull()?.uri
+                val activeSourceId = if (state.value.storageMode == StorageMode.SAF) {
+                    selectedUri?.let { SnapshotNaming.sourceId(it.toString()) }
+                } else {
+                    state.value.activeSourceId
+                }
+                state.value = state.value.copy(
+                    selectedUri = selectedUri,
+                    hasPersistedPermission = selectedUri != null && storage.hasReadPermission(selectedUri),
+                    authorizedTrees = trees,
+                    activeSourceId = activeSourceId,
+                    sourceOptions = buildSourceOptions(trees, state.value.rootPath),
+                    action = "已移除系统授权目录",
+                    error = null,
+                )
+                scanSource()
+            }
+            .onFailure { error ->
+                updateState { copy(error = "移除系统授权目录失败：${error.message}") }
+            }
+    }
+
     fun refreshPersistedSource() {
+        val trees = storage.persistedTrees()
         val uri = storage.persistedTreeUri()
         val mode = selectionStore.mode()
         val rootPath = rootStorage.persistedRootPath().orEmpty()
+        val initialOptions = buildSourceOptions(trees, rootPath)
+        val fullDiscoveryEnabled = selectionStore.enableFullDeviceDiscoveryOnce(initialOptions.map(SaveSourceOption::id))
+        val sourceOptions = if (fullDiscoveryEnabled) buildSourceOptions(trees, rootPath) else initialOptions
         val config = runCatching { gameSaveStore.load() }.getOrDefault(GameSaveConfig())
         val previous = state.value
-        val sameSource = previous.storageMode == mode && previous.selectedUri == uri && previous.rootPath == rootPath
+        val sameSource = previous.storageMode == mode &&
+            previous.selectedUri == uri &&
+            previous.authorizedTrees == trees &&
+            previous.rootPath == rootPath
         val persistedScan = previous.scan.takeIf { sameSource }
         val source = when (mode) {
             StorageMode.SAF -> uri?.let { SourceSelection.Saf(it) }
@@ -110,7 +160,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         state.value = state.value.copy(
             storageMode = mode,
             selectedUri = uri,
-            hasPersistedPermission = uri != null && storage.hasReadWritePermission(uri),
+            hasPersistedPermission = uri != null && storage.hasReadPermission(uri),
+            authorizedTrees = trees,
             rootPath = rootPath,
             rootChecked = false,
             snapshots = currentSnapshots(),
@@ -121,8 +172,9 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             gameSaveSaved = config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank(),
             autoBackupEnabled = autoBackupScheduler.isEnabled(),
             scan = persistedScan,
-            sourceOptions = buildSourceOptions(uri, rootPath),
+            sourceOptions = sourceOptions,
             error = null,
+            action = if (fullDiscoveryEnabled) "已启用全设备自动存档来源" else previous.action,
         )
         viewModelScope.launch {
             val rootAvailable = withContext(Dispatchers.IO) { rootStorage.checkRootAccess().isSuccess }
@@ -171,7 +223,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     error = null,
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(SourceSelection.Root(canonical).idSeed),
-                    sourceOptions = buildSourceOptions(state.value.selectedUri, canonical),
+                    sourceOptions = buildSourceOptions(state.value.authorizedTrees, canonical),
                 )
                 refreshRootAccess()
             }
@@ -256,15 +308,16 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             val (rootAvailable, options, scans) = withContext(Dispatchers.IO) {
                 val rootAvailable = rootStorage.checkRootAccess().isSuccess
                 val current = state.value
-                val options = buildSourceOptions(current.selectedUri, current.rootPath)
+                val androidGames = installedGameCatalog.allApps()
+                val options = buildSourceOptions(current.authorizedTrees, current.rootPath)
                 val results = options.filter { it.selected }.map { option ->
                     val source = option.source
                     val label = option.label
                     when (source) {
-                        is SourceSelection.Saf -> if (!current.hasPersistedPermission) {
+                        is SourceSelection.Saf -> if (!storage.hasReadPermission(source.uri)) {
                             SourceScanResult(source, label, skippedReason = "目录授权已失效")
                         } else {
-                            storage.scanTree(source.uri).fold(
+                            storage.scanTree(source.uri, androidGames).fold(
                                 onSuccess = { SourceScanResult(source, label, scan = it) },
                                 onFailure = { SourceScanResult(source, label, skippedReason = it.message ?: "读取失败") },
                             )
@@ -281,7 +334,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                                         skippedReason = exists.exceptionOrNull()?.message ?: "无法检查目录",
                                     )
                                     !exists.getOrThrow() -> SourceScanResult(source, label, skippedReason = "目录不存在")
-                                    else -> rootStorage.scanPath(source.path).fold(
+                                    else -> rootStorage.scanPath(source.path, androidGames).fold(
                                         onSuccess = { SourceScanResult(source, label, scan = it) },
                                         onFailure = { SourceScanResult(source, label, skippedReason = it.message ?: "扫描失败") },
                                     )
@@ -315,7 +368,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         selectionStore.setSourcesEnabled(listOf(sourceId), enabled)
         val current = state.value
         state.value = current.copy(
-            sourceOptions = buildSourceOptions(current.selectedUri, current.rootPath),
+            sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
             action = if (enabled) "已启用存档来源" else "已停用存档来源",
             error = null,
         )
@@ -325,10 +378,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun setAllSourcesEnabled(enabled: Boolean) {
         if (state.value.busy) return
         val current = state.value
-        val sourceIds = buildSourceOptions(current.selectedUri, current.rootPath).map(SaveSourceOption::id)
+        val sourceIds = buildSourceOptions(current.authorizedTrees, current.rootPath).map(SaveSourceOption::id)
         selectionStore.setSourcesEnabled(sourceIds, enabled)
         state.value = current.copy(
-            sourceOptions = buildSourceOptions(current.selectedUri, current.rootPath),
+            sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
             action = if (enabled) "已启用全部存档来源" else "已停用全部存档来源",
             error = null,
         )
@@ -337,6 +390,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun restoreSource() {
         val source = requiredSource() ?: return
+        if (!canWriteTo(source)) {
+            updateState { copy(error = "当前系统授权目录为只读，不能恢复；请重新授予读写权限") }
+            return
+        }
         runSourceOperation("正在把工作区写回授权目录") {
             restoreSelection(source)
         }
@@ -396,6 +453,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             var completed = 0
             val failures = mutableListOf<String>()
             val uploadFailures = mutableListOf<String>()
+            val syncNotices = mutableListOf<String>()
+            val cloudUpdates = mutableListOf<GameSaveCloudUpdate>()
             selectedEntries.forEachIndexed { index, entry ->
                 val game = entry.game
                 state.value = state.value.copy(
@@ -420,6 +479,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 result.onSuccess { captured ->
                     completed++
                     captured.uploadError?.let { uploadFailures += "${game.presentation.primaryName}：$it" }
+                    captured.syncNotice?.let { syncNotices += "${game.presentation.primaryName}：$it" }
+                    captured.cloudUpdate?.let(cloudUpdates::add)
                 }.onFailure { error ->
                     failures += "${game.presentation.primaryName}：${error.message ?: "备份失败"}"
                 }
@@ -427,9 +488,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
             state.value = state.value.copy(
                 busy = false,
-                action = "批量备份完成：本地快照 $completed 款，失败 ${failures.size} 款，云端上传失败 ${uploadFailures.size} 款",
+                action = "批量备份完成：本地快照 $completed 款，失败 ${failures.size} 款，云端上传失败 ${uploadFailures.size} 款，跨设备待处理 ${cloudUpdates.size} 款",
                 snapshots = currentSnapshots(),
-                error = (failures + uploadFailures).take(6).takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                cloudUpdates = mergeCloudUpdates(state.value.cloudUpdates, cloudUpdates),
+                error = (failures + uploadFailures + syncNotices).take(6).takeIf { it.isNotEmpty() }?.joinToString("\n"),
             )
         }
     }
@@ -455,11 +517,13 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             result.onSuccess { captured ->
-                val uploadSuffix = captured.uploadError?.let { "；$it" }.orEmpty()
+                val notice = listOfNotNull(captured.uploadError, captured.syncNotice).joinToString("；")
+                val uploadSuffix = notice.takeIf { it.isNotBlank() }?.let { "；$it" }.orEmpty()
                 state.value = state.value.copy(
                     busy = false,
                     action = "已备份 ${manifest.gameName}：${captured.record.remoteName}$uploadSuffix",
                     snapshots = currentSnapshots(),
+                    cloudUpdates = mergeCloudUpdates(state.value.cloudUpdates, listOfNotNull(captured.cloudUpdate)),
                     error = captured.uploadError,
                 )
             }.onFailure { error ->
@@ -476,11 +540,13 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         val selectedGame = entry.game.copy(
             saves = entry.game.saves.filter { save -> manifest.locations.any { it.relativePath == save.relativePath } },
         )
-        val cloudIdentity = GameCloudNaming.identity(entry.sourceId, selectedGame)
+        val cloudIdentity = GameCloudNaming.identity(source, entry.sourceId, selectedGame)
         val workspace = File(app.filesDir, GAME_WORKSPACE_DIRECTORY)
         try {
             copyGameLocations(source, manifest.locations, workspace).getOrThrow()
             val manifestFile = File(workspace, GameSnapshotManifest.FILE_NAME)
+            manifest.write(manifestFile)
+            val contentFingerprint = AutoBackupPolicy.fingerprint(workspace)
 
             val sourceId = entry.sourceId
             val timestamp = maxOf(
@@ -494,7 +560,6 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 require(saveRoot.isDirectory) { "Switch 存档暂存目录不完整" }
                 snapshotEngine.createSnapshot(saveRoot, archive).getOrThrow()
             } else {
-                manifest.write(manifestFile)
                 snapshotEngine.createSnapshot(workspace, archive).getOrThrow()
             }
             val record = SnapshotRecord(
@@ -505,7 +570,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 createdAtMillis = timestamp,
                 sizeBytes = build.archive.length(),
                 sha256 = build.archiveSha256,
-                manifestHash = if (cloudIdentity.desktopCompatible) build.archiveSha256 else Hashing.sha256(manifestFile),
+                manifestHash = contentFingerprint.manifestHash,
                 gameKey = manifest.gameKey,
                 gameName = manifest.gameName,
                 saveType = cloudIdentity.saveType.id,
@@ -515,21 +580,51 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
             val config = gameSaveStore.load()
             var uploadError: String? = null
+            var syncNotice: String? = null
+            var cloudUpdate: GameSaveCloudUpdate? = null
             if (config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) {
-                val upload = GameSaveClient(config).upload(archive, cloudIdentity.saveType, remoteName)
+                val client = GameSaveClient(config)
+                val upload = client.upload(archive, cloudIdentity.saveType, remoteName)
                 if (upload.isSuccess) {
                     snapshotRepository.markUploaded(record.id)
                     if (cloudIdentity.desktopCompatible) {
-                        GameSaveHeadPublisher(app, config).publishSnapshot(cloudIdentity, record)
-                            .onFailure { error ->
-                                uploadError = "云端同步公告失败：${error.message ?: "未知错误"}"
+                        val decision = runCatching {
+                            GameSaveHeadReader(app, config, client).check(
+                                identity = cloudIdentity,
+                                currentManifestHash = contentFingerprint.manifestHash,
+                                remoteSnapshots = client.list().getOrThrow(),
+                            )
+                        }.getOrElse { error ->
+                            syncNotice = "无法检查跨设备更新，未推进当前存档：${error.message ?: "未知错误"}"
+                            null
+                        }
+                        when (decision?.action) {
+                            null -> Unit
+                            GameSaveRemoteAction.UP_TO_DATE -> {
+                                GameSaveHeadPublisher(app, config).publishSnapshot(cloudIdentity, record, archive)
+                                    .onFailure { error ->
+                                        uploadError = "云端同步公告失败：${error.message ?: "未知错误"}"
+                                    }
                             }
+
+                            else -> {
+                                cloudUpdate = GameSaveCloudUpdate(entry, decision)
+                                val device = decision.candidate?.head?.deviceName?.let { "$it 的" }.orEmpty()
+                                syncNotice = "检测到${device}跨设备版本，当前快照已上传但未更新云端当前存档"
+                            }
+                        }
                     }
                 } else {
                     uploadError = "云端上传失败：${upload.exceptionOrNull()?.message ?: "未知错误"}"
                 }
             }
-            return GameCaptureOutcome(snapshotRepository.list().first { it.id == record.id }, build.fileCount, uploadError)
+            return GameCaptureOutcome(
+                record = snapshotRepository.list().first { it.id == record.id },
+                fileCount = build.fileCount,
+                uploadError = uploadError,
+                syncNotice = syncNotice,
+                cloudUpdate = cloudUpdate,
+            )
         } finally {
             workspace.deleteRecursively()
         }
@@ -542,6 +637,30 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     ): Result<Unit> = when (source) {
         is SourceSelection.Saf -> storage.copyGameLocations(source.uri, locations, destination)
         is SourceSelection.Root -> rootStorage.copyGameLocations(source.path, locations, destination)
+    }
+
+    private suspend fun inspectCloudUpdateLocked(
+        entry: SourceGameEntry,
+        reader: GameSaveHeadReader,
+        remoteSnapshots: List<RemoteSnapshot>,
+    ): GameSaveCloudUpdate? {
+        val saves = GameLibrary.batchBackupLocations(entry.game)
+        val manifest = GameSnapshotManifest.from(entry.game, saves)
+        val selectedGame = entry.game.copy(saves = saves)
+        val identity = GameCloudNaming.identity(entry.source, entry.sourceId, selectedGame)
+        if (!identity.desktopCompatible) return null
+
+        val workspace = File(app.filesDir, ".cloud-check-${UUID.randomUUID()}")
+        try {
+            copyGameLocations(entry.source, manifest.locations, workspace).getOrThrow()
+            manifest.write(File(workspace, GameSnapshotManifest.FILE_NAME))
+            val fingerprint = AutoBackupPolicy.fingerprint(workspace)
+            val decision = reader.check(identity, fingerprint.manifestHash, remoteSnapshots)
+            return decision.takeUnless { it.action == GameSaveRemoteAction.UP_TO_DATE }
+                ?.let { GameSaveCloudUpdate(entry, it) }
+        } finally {
+            workspace.deleteRecursively()
+        }
     }
 
     fun listCloud() {
@@ -560,6 +679,82 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             }.onFailure { error ->
                 state.value = state.value.copy(busy = false, action = null, error = "列举云端快照失败：${error.message}")
             }
+        }
+    }
+
+    /**
+     * Reads every compatible Switch save and compares it with remote heads.
+     * This inspection only creates private workspaces; it never writes a game
+     * directory. Restores remain behind the normal confirmation dialog.
+     */
+    fun checkCloudUpdates() {
+        if (state.value.busy) return
+        val config = gameSaveConfigFromState()
+        if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
+            updateState { copy(error = "请先填写 game-save 服务地址和同步密钥") }
+            return
+        }
+        val entries = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(state.value.sourceScans))
+            .filter { entry -> GameCloudNaming.identity(entry.source, entry.sourceId, entry.game).desktopCompatible }
+        if (entries.isEmpty()) {
+            updateState { copy(error = "请先扫描含有已识别 Switch TitleID 存档的来源") }
+            return
+        }
+
+        viewModelScope.launch {
+            state.value = state.value.copy(busy = true, action = "正在检查跨设备存档更新", error = null)
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    StorageOperationLock.withLock {
+                        val client = GameSaveClient(config)
+                        val remoteSnapshots = client.list().getOrThrow()
+                        val reader = GameSaveHeadReader(app, config, client)
+                        val updates = mutableListOf<GameSaveCloudUpdate>()
+                        val failures = mutableListOf<String>()
+                        entries.forEach { entry ->
+                            runCatching { inspectCloudUpdateLocked(entry, reader, remoteSnapshots) }
+                                .onSuccess { update -> update?.let(updates::add) }
+                                .onFailure { error ->
+                                    failures += "${entry.game.presentation.primaryName}：${error.message ?: "无法检查"}"
+                                }
+                        }
+                        CloudCheckResult(remoteSnapshots, updates, failures)
+                    }
+                }
+            }
+            result.onSuccess { checked ->
+                state.value = state.value.copy(
+                    busy = false,
+                    action = "跨设备检查完成：${checked.updates.size} 项待处理",
+                    remoteSnapshots = checked.remoteSnapshots,
+                    cloudUpdates = checked.updates,
+                    error = checked.failures.take(5).takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                )
+            }.onFailure { error ->
+                state.value = state.value.copy(
+                    busy = false,
+                    action = null,
+                    error = "检查跨设备更新失败：${error.message ?: "未知错误"}",
+                )
+            }
+        }
+    }
+
+    fun requestCloudUpdateRestore(update: GameSaveCloudUpdate) {
+        val remote = update.remote ?: run {
+            updateState { copy(error = update.decision.message.ifBlank { "远端快照尚未就绪" }) }
+            return
+        }
+        updateState {
+            copy(
+                pendingRestore = RestoreRequest(
+                    remote = remote,
+                    remoteHead = update.decision.candidate,
+                    game = update.entry.game,
+                    source = update.entry.source,
+                ),
+                error = null,
+            )
         }
     }
 
@@ -588,7 +783,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun requestRemoteGameRestore(entry: SourceGameEntry, remote: RemoteSnapshot) {
         val game = entry.game
-        val identity = GameCloudNaming.identity(entry.sourceId, game)
+        val identity = GameCloudNaming.identity(entry.source, entry.sourceId, game)
         if (remote.type != identity.saveType.id || !remote.name.startsWith(GameCloudNaming.remotePrefix(identity))) {
             updateState { copy(error = "云端快照不属于当前游戏或存档来源") }
             return
@@ -603,6 +798,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun confirmRestore() {
         val request = state.value.pendingRestore ?: return
         val source = request.source ?: requiredSource() ?: return
+        if (!canWriteTo(source)) {
+            updateState { copy(pendingRestore = null, error = "当前系统授权目录为只读，不能恢复；请重新授予读写权限") }
+            return
+        }
         viewModelScope.launch {
             state.value = state.value.copy(busy = true, pendingRestore = null, action = "正在下载并安全恢复快照", error = null)
             val result = withContext(Dispatchers.IO) {
@@ -621,6 +820,11 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     action = outcome.message,
                     report = outcome.report ?: state.value.report,
                     snapshots = currentSnapshots(),
+                    cloudUpdates = state.value.cloudUpdates.filterNot { update ->
+                        update.entry.source.idSeed == source.idSeed &&
+                            update.entry.game.gameKey == request.game?.gameKey &&
+                            update.remote?.name == request.remote?.name
+                    },
                 )
             }.onFailure { error ->
                 state.value = state.value.copy(busy = false, action = null, error = "恢复快照失败：${error.message}")
@@ -649,7 +853,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 snapshotRepository.fileFor(request.local)
             }
             request.remote != null -> {
-                val identity = GameCloudNaming.identity(sourceId, requestedGame)
+                val identity = GameCloudNaming.identity(source, sourceId, requestedGame)
                 require(request.remote.type == identity.saveType.id && request.remote.name.startsWith(GameCloudNaming.remotePrefix(identity))) {
                     "云端快照不属于当前游戏或存档来源"
                 }
@@ -685,7 +889,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 // A single TitleID directory uses the desktop ZIP layout so it can
                 // be shared with the Windows client. Stage it behind our normal
                 // location manifest before the same guarded restore path runs.
-                val identity = GameCloudNaming.identity(sourceId, requestedGame)
+                val identity = GameCloudNaming.identity(source, sourceId, requestedGame)
                 require(identity.desktopCompatible) { "此云端快照不是可跨端恢复的 Switch 单存档快照" }
                 val save = GameLibrary.batchBackupLocations(requestedGame).singleOrNull()
                     ?: error("当前 Switch 游戏没有唯一的已识别存档位置")
@@ -709,15 +913,18 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             }
             require(manifest.matches(currentGame)) { "游戏快照路径与当前扫描清单不匹配；请重新扫描并检查游戏身份" }
             require(manifest.gameKey == requestedGame.gameKey) { "游戏快照身份与所选游戏不匹配" }
+            manifest.write(manifestFile)
+            val restoredManifestHash = AutoBackupPolicy.fingerprint(extractedRoot).manifestHash
 
             copyGameLocations(source, manifest.locations, safetyRoot).getOrThrow()
             val safetyManifest = File(safetyRoot, GameSnapshotManifest.FILE_NAME)
             manifest.write(safetyManifest)
+            val safetyFingerprint = AutoBackupPolicy.fingerprint(safetyRoot)
             val timestamp = maxOf(
                 System.currentTimeMillis(),
                 (snapshotRepository.list().maxOfOrNull { it.createdAtMillis } ?: 0L) + 1L,
             )
-            val safetyIdentity = GameCloudNaming.identity(sourceId, requestedGame)
+            val safetyIdentity = GameCloudNaming.identity(source, sourceId, requestedGame)
             val safetyName = GameCloudNaming.remoteName(safetyIdentity, timestamp)
             val safetyArchive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$safetyName")
             val safetyBuild = snapshotEngine.createSnapshot(safetyRoot, safetyArchive).getOrThrow()
@@ -730,7 +937,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     createdAtMillis = timestamp,
                     sizeBytes = safetyArchive.length(),
                     sha256 = safetyBuild.archiveSha256,
-                    manifestHash = Hashing.sha256(safetyManifest),
+                    manifestHash = safetyFingerprint.manifestHash,
                     comment = "恢复前安全副本",
                     gameKey = manifest.gameKey,
                     gameName = manifest.gameName,
@@ -743,11 +950,13 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 is SourceSelection.Saf -> storage.restoreGameLocations(source.uri, manifest.locations, extractedRoot, safetyRoot)
                 is SourceSelection.Root -> rootStorage.restoreGameLocations(source.path, manifest.locations, extractedRoot)
             }.getOrThrow()
-            request.remote?.takeIf { GameCloudNaming.identity(sourceId, requestedGame).desktopCompatible }?.let { remote ->
+            request.remote?.takeIf { GameCloudNaming.identity(source, sourceId, requestedGame).desktopCompatible }?.let { remote ->
                 GameSaveHeadPublisher(app, gameSaveStore.load()).markRemoteRestore(
-                    identity = GameCloudNaming.identity(sourceId, requestedGame),
+                    identity = GameCloudNaming.identity(source, sourceId, requestedGame),
                     remote = remote,
-                    manifestHash = if (manifestFile.isFile) Hashing.sha256(manifestFile) else Hashing.sha256(archive),
+                    manifestHash = restoredManifestHash,
+                    archiveFile = archive,
+                    remoteHead = request.remoteHead,
                 )
             }
         } finally {
@@ -892,8 +1101,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         return when (state.value.storageMode) {
             StorageMode.SAF -> {
                 val uri = state.value.selectedUri
-                if (uri == null || !state.value.hasPersistedPermission) {
-                    updateState { copy(error = "请先选择并授权一个可读写目录") }
+                if (uri == null || !storage.hasReadPermission(uri)) {
+                    updateState { copy(error = "请先添加并授权一个可读取目录") }
                     null
                 } else {
                     SourceSelection.Saf(uri)
@@ -913,6 +1122,11 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun canWriteTo(source: SourceSelection): Boolean = when (source) {
+        is SourceSelection.Saf -> storage.hasWritePermission(source.uri)
+        is SourceSelection.Root -> true
+    }
+
     private fun gameSaveConfigFromState() = GameSaveConfig(
         enabled = state.value.gameSaveEnabled,
         serviceUrl = state.value.gameSaveUrl,
@@ -929,8 +1143,31 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             .filter { record -> runCatching { snapshotRepository.fileFor(record).isFile }.getOrDefault(false) }
             .take(MAX_HISTORY)
 
-    private fun buildSourceOptions(selectedUri: Uri?, rootPath: String): List<SaveSourceOption> =
-        SaveSourceOptions.build(selectedUri, rootPath, selectionStore.disabledSourceIds())
+    private fun mergeCloudUpdates(
+        existing: List<GameSaveCloudUpdate>,
+        incoming: List<GameSaveCloudUpdate>,
+    ): List<GameSaveCloudUpdate> = (existing + incoming)
+        .associateBy { update ->
+            "${update.entry.libraryKey}\u0000${update.remote?.name.orEmpty()}\u0000${update.decision.action}"
+        }
+        .values
+        .sortedWith(
+            compareBy<GameSaveCloudUpdate> { it.entry.game.presentation.primaryName }
+                .thenBy { it.entry.sourceLabel },
+        )
+
+    private fun buildSourceOptions(
+        authorizedTrees: List<AuthorizedSafTree>,
+        rootPath: String,
+    ): List<SaveSourceOption> = SaveSourceOptions.build(
+        authorizedTrees = authorizedTrees,
+        rootPath = rootPath,
+        disabledSourceIds = selectionStore.disabledSourceIds(),
+        explicitlyEnabledSourceIds = selectionStore.explicitlyEnabledSourceIds(),
+        rootPresets = RootSourcePresets.all +
+            installedGameCatalog.rootPresets() +
+            installedGameCatalog.candidateRootPresets(),
+    )
 
     private fun updateState(update: SourceUiState.() -> SourceUiState) {
         state.value = state.value.update()
@@ -946,6 +1183,14 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         val record: SnapshotRecord,
         val fileCount: Int,
         val uploadError: String?,
+        val syncNotice: String? = null,
+        val cloudUpdate: GameSaveCloudUpdate? = null,
+    )
+
+    private data class CloudCheckResult(
+        val remoteSnapshots: List<RemoteSnapshot>,
+        val updates: List<GameSaveCloudUpdate>,
+        val failures: List<String>,
     )
 
     private data class RestoreOutcome(

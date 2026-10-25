@@ -79,7 +79,10 @@ class RootStorage(private val context: Context) {
         }
     }
 
-    suspend fun scanPath(rawPath: String): Result<SaveScanReport> = withContext(Dispatchers.IO) {
+    suspend fun scanPath(
+        rawPath: String,
+        androidGames: Map<String, AndroidGameMetadata> = emptyMap(),
+    ): Result<SaveScanReport> = withContext(Dispatchers.IO) {
         runCatching {
             val path = RootPathPolicy.canonicalizeForScan(rawPath)
             checkRootAccess().getOrThrow()
@@ -109,6 +112,7 @@ class RootStorage(private val context: Context) {
                 selectedRootName = File(path).name.ifBlank { path },
                 unreadableDirectoryCount = if (findStatus == 0) 0 else 1,
                 truncated = truncated,
+                androidGames = androidGames,
             )
         }
     }

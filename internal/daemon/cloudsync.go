@@ -1,9 +1,9 @@
 package daemon
 
 import (
+	"archive/zip"
 	"errors"
 	"fmt"
-	"github.com/opensave/opensave/internal/ignore"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/opensave/opensave/internal/cloud"
 	"github.com/opensave/opensave/internal/delta"
+	"github.com/opensave/opensave/internal/ignore"
 	"github.com/opensave/opensave/internal/snapshot"
 	"github.com/opensave/opensave/internal/store"
 	"github.com/opensave/opensave/internal/watcher"
@@ -44,6 +45,10 @@ type CloudOffer struct {
 	DeviceName string `json:"deviceName"`
 	SavedAt    string `json:"savedAt"`
 	Provider   string `json:"provider"`
+	// ReviewReason lets a client explain why this head was not applied
+	// automatically. It is a stable code rather than English copy so desktop
+	// and Android UIs can localize it.
+	ReviewReason string `json:"reviewReason,omitempty"`
 	// Diverged is true when this device's save holds progress the other one
 	// does not carry — the two moved apart, or never shared a save at all —
 	// so taking the other one replaces progress made here.
@@ -121,6 +126,68 @@ func stampMillis(stamp string) int64 {
 
 func nowStamp() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 
+// snapshotContentModifiedAt reads the newest modification time preserved in a
+// snapshot archive. Snapshot IDs describe when a backup was made, which is
+// not necessarily when its game save last changed: an old save can be copied
+// or uploaded much later. A zero result is deliberately treated as unknown by
+// cloud sync, never as evidence that the archive is newer.
+func snapshotContentModifiedAt(zipPath string) (int64, error) {
+	archive, done, err := snapshot.OpenArchive(zipPath)
+	if err != nil {
+		return 0, err
+	}
+	defer done()
+
+	zr, err := zip.OpenReader(archive)
+	if err != nil {
+		return 0, err
+	}
+	defer zr.Close()
+
+	var newest int64
+	for _, file := range zr.File {
+		if file.FileInfo().IsDir() || file.Modified.IsZero() {
+			continue
+		}
+		if at := file.Modified.UnixMilli(); at > newest {
+			newest = at
+		}
+	}
+	if newest == 0 {
+		return 0, errors.New("snapshot has no timestamped save files")
+	}
+	return newest, nil
+}
+
+func (d *Daemon) contentAtForSnapshot(snap store.Snapshot) int64 {
+	at, err := snapshotContentModifiedAt(snap.ZipPath)
+	if err != nil {
+		if d.Log != nil {
+			d.Log.Log("warn", fmt.Sprintf("cloud: could not read content time for %s: %v", snap.ID, err))
+		}
+		return 0
+	}
+	return at
+}
+
+func headContentAt(head cloud.Head) (int64, bool) {
+	if head.ContentModifiedAt == "" {
+		return 0, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, head.ContentModifiedAt)
+	if err != nil || at.UnixMilli() <= 0 {
+		return 0, false
+	}
+	return at.UnixMilli(), true
+}
+
+func contentAtStamp(at int64) string {
+	if at <= 0 {
+		return ""
+	}
+	return time.UnixMilli(at).UTC().Format(time.RFC3339Nano)
+}
+
 // appendChain adds a save to the end of a chain, keeping the newest
 // cloud.MaxHeadChain.
 func appendChain(chain []string, snapID string) []string {
@@ -156,6 +223,7 @@ func (d *Daemon) noteSnapshotForCloud(snap store.Snapshot, current bool) {
 	rec.Since = snap.Timestamp
 	rec.File = cloudSnapshotName(game.ID, snap.BranchName, snap.ID)
 	rec.Chain = appendChain(rec.Chain, snap.ID)
+	rec.ContentAt = d.contentAtForSnapshot(snap)
 	if err := d.Store.SetCloudHead(rec); err != nil {
 		d.Log.Log("warn", fmt.Sprintf("cloud: could not record %s as %q's save: %v", snap.ID, game.Name, err))
 	}
@@ -179,6 +247,8 @@ func (d *Daemon) noteRestoreForCloud(snap store.Snapshot) {
 		rec.Since = nowStamp()
 		rec.File = cloudSnapshotName(game.ID, snap.BranchName, snap.ID)
 		rec.Chain = []string{snap.ID}
+		rec.ContentAt = d.contentAtForSnapshot(snap)
+		rec.Published = ""
 		err = d.Store.SetCloudHead(rec)
 	}
 	d.cloudRd.heads.Unlock()
@@ -199,24 +269,26 @@ func (d *Daemon) publishHead(gameID string) error {
 	if err != nil || !cloud.Ready(cfg) || !cloudListable(cfg.Provider) {
 		return nil
 	}
-	d.cloudRd.heads.Lock()
-	rec, ok, err := d.Store.GetCloudHead(gameID)
-	d.cloudRd.heads.Unlock()
-	if err != nil || !ok || rec.Snapshot == "" {
-		return err
-	}
 	game, err := d.Store.GetGame(gameID)
 	if err != nil {
 		return err
+	}
+	rec, err := d.cloudHeadFor(game)
+	ok := rec.Snapshot != ""
+	if err != nil || !ok || rec.Snapshot == "" {
+		return err
+	}
+	if rec.ContentAt <= 0 {
+		if d.Log != nil {
+			d.Log.Log("warn", fmt.Sprintf("cloud: did not announce %q because its save content time cannot be verified", game.Name))
+		}
+		return nil
 	}
 	settings, err := d.Store.GetSettings()
 	if err != nil {
 		return err
 	}
-	savedAt := ""
-	if ms := snapMillis(rec.Snapshot); ms > 0 {
-		savedAt = time.UnixMilli(ms).UTC().Format(time.RFC3339)
-	}
+	contentAt := contentAtStamp(rec.ContentAt)
 	head := cloud.Head{
 		Version:    cloud.HeadVersion,
 		DeviceID:   settings.NodeID,
@@ -226,7 +298,11 @@ func (d *Daemon) publishHead(gameID string) error {
 		Snapshot:   rec.Snapshot,
 		File:       rec.File,
 		Chain:      rec.Chain,
-		SavedAt:    savedAt,
+		// SavedAt carries the same value for older clients that display or rank
+		// it; ContentModifiedAt marks it as a trustworthy content timestamp for
+		// current clients.
+		SavedAt:           contentAt,
+		ContentModifiedAt: contentAt,
 	}
 	if _, err := d.Cloud.PublishHead(head, time.Now()); err != nil {
 		if !cloud.IsNotConfigured(err) {
@@ -236,7 +312,7 @@ func (d *Daemon) publishHead(gameID string) error {
 	}
 	d.cloudRd.heads.Lock()
 	defer d.cloudRd.heads.Unlock()
-	if rec, _, err := d.Store.GetCloudHead(gameID); err == nil {
+	if rec, _, err := d.Store.GetCloudHead(gameID); err == nil && rec.Snapshot == head.Snapshot {
 		rec.Published = head.Snapshot
 		_ = d.Store.SetCloudHead(rec)
 	}
@@ -250,7 +326,20 @@ func (d *Daemon) cloudHeadFor(game store.Game) (store.CloudHead, error) {
 	d.cloudRd.heads.Lock()
 	defer d.cloudRd.heads.Unlock()
 	rec, ok, err := d.Store.GetCloudHead(game.ID)
-	if err != nil || ok {
+	if err != nil {
+		return rec, err
+	}
+	if ok {
+		if rec.ContentAt == 0 && rec.Snapshot != "" {
+			if snap, getErr := d.Store.GetSnapshot(rec.Snapshot); getErr == nil {
+				rec.ContentAt = d.contentAtForSnapshot(snap)
+				if rec.ContentAt > 0 {
+					if setErr := d.Store.SetCloudHead(rec); setErr != nil {
+						return rec, setErr
+					}
+				}
+			}
+		}
 		return rec, err
 	}
 	snaps, err := d.Store.ListSnapshots(game.ID, game.ActiveBranch)
@@ -262,6 +351,7 @@ func (d *Daemon) cloudHeadFor(game store.Game) (store.CloudHead, error) {
 	rec.Since = latest.Timestamp
 	rec.File = cloudSnapshotName(game.ID, latest.BranchName, latest.ID)
 	rec.Chain = []string{latest.ID}
+	rec.ContentAt = d.contentAtForSnapshot(latest)
 	return rec, d.Store.SetCloudHead(rec)
 }
 
@@ -272,6 +362,11 @@ type cloudCandidate struct {
 	// follows is true when the other save carries on from this device's —
 	// this device's save is in its chain — so taking it replaces nothing.
 	follows bool
+	// contentAt comes from an explicit contentModifiedAt field. Legacy heads
+	// lack it and may be shown for confirmation, but never applied on their
+	// own. While unresolved, they also keep the local head from being advanced.
+	contentAt      int64
+	trustedContent bool
 }
 
 // chooseCloudCandidate picks, from other devices' heads, the one save this
@@ -285,7 +380,6 @@ func chooseCloudCandidate(rec store.CloudHead, activeBranch string, heads []clou
 
 	var best cloudCandidate
 	found := false
-	since := stampMillis(rec.Since)
 	for _, h := range heads {
 		if h.Version != cloud.HeadVersion || h.Snapshot == "" || h.Branch != activeBranch {
 			continue
@@ -297,8 +391,8 @@ func chooseCloudCandidate(rec store.CloudHead, activeBranch string, heads []clou
 		if file == "" {
 			continue // announced, but its archive has not arrived (yet)
 		}
-		at := snapMillis(h.Snapshot)
-		if at <= since {
+		contentAt, trustedContent := headContentAt(h)
+		if trustedContent && rec.ContentAt > 0 && contentAt < rec.ContentAt {
 			continue
 		}
 		follows := false
@@ -310,12 +404,29 @@ func chooseCloudCandidate(rec store.CloudHead, activeBranch string, heads []clou
 				}
 			}
 		}
-		if !found || at > snapMillis(best.head.Snapshot) {
-			best = cloudCandidate{head: h, file: file, follows: follows}
+		candidate := cloudCandidate{
+			head:           h,
+			file:           file,
+			follows:        follows,
+			contentAt:      contentAt,
+			trustedContent: trustedContent,
+		}
+		if !found || cloudCandidateNewer(candidate, best) {
+			best = candidate
 			found = true
 		}
 	}
 	return best, found
+}
+
+func cloudCandidateNewer(next, current cloudCandidate) bool {
+	if next.trustedContent != current.trustedContent {
+		return next.trustedContent
+	}
+	if next.trustedContent && next.contentAt != current.contentAt {
+		return next.contentAt > current.contentAt
+	}
+	return snapMillis(next.head.Snapshot) > snapMillis(current.head.Snapshot)
 }
 
 // saveState is how a game's save stands against its last snapshot.
@@ -503,13 +614,6 @@ func (d *Daemon) CheckCloud() {
 			return ""
 		}
 
-		// Announce this device's save if the cloud does not know it yet: a
-		// device upgraded from a version without heads, or an announcement
-		// that failed.
-		if rec.Snapshot != "" && fileFor(rec.Snapshot) != "" &&
-			(rec.Published != rec.Snapshot || len(ownHeads[gameKey]) == 0) {
-			_ = d.publishHead(game.ID)
-		}
 		var heads []cloud.Head
 		for _, id := range ids {
 			for _, f := range newest[scope(game.SaveType, id)] {
@@ -526,6 +630,13 @@ func (d *Daemon) CheckCloud() {
 		}
 		cand, ok := chooseCloudCandidate(rec, game.ActiveBranch, heads, have, fileFor)
 		if !ok {
+			// Only announce the local save after every remote head has been
+			// checked. Publishing first lets an old machine make a stale copy
+			// look current while a newer remote save is waiting to be handled.
+			if rec.Snapshot != "" && fileFor(rec.Snapshot) != "" &&
+				(rec.Published != rec.Snapshot || len(ownHeads[gameKey]) == 0) {
+				_ = d.publishHead(game.ID)
+			}
 			continue
 		}
 
@@ -540,10 +651,13 @@ func (d *Daemon) CheckCloud() {
 			continue // the game is running; not now, and not a question either
 		}
 		follows := cand.follows
+		emptyNewDevice := false
 		if !follows && d.neverHeldFiles(game) {
-			follows, state = true, saveUnchanged
+			follows, state, emptyNewDevice = true, saveUnchanged, true
 		}
-		if follows && state == saveUnchanged && settings.CloudAutoPull && game.AutoSync {
+		safeContinuation := cand.trustedContent && (emptyNewDevice ||
+			(follows && rec.ContentAt > 0 && cand.contentAt >= rec.ContentAt))
+		if safeContinuation && state == saveUnchanged && settings.CloudAutoPull && game.AutoSync {
 			err := d.pullFromCloud(game, cand.file, cand.head.DeviceName)
 			if err == nil {
 				if d.OnCloudPulled != nil {
@@ -555,24 +669,46 @@ func (d *Daemon) CheckCloud() {
 			d.Log.Log("warn", fmt.Sprintf("cloud: could not bring %s's save for %q here: %v",
 				cand.head.DeviceName, game.Name, err))
 		}
-		// Asked. Marked as replacing progress only when it would: the other
+		// Asked. Marked as replacing progress when it would, and whenever a
+		// legacy or damaged announcement does not prove the content timestamp.
+		// That latter case could otherwise be an old save backed up late.
+		//
+		// Marked as replacing progress only when it would: the other
 		// save does not carry on from this one, or this one has changed since.
 		// Not when this device's state is merely unknown — a game tracked and
 		// never changed has no recorded baseline, and telling that person
 		// their device "has progress of its own" would be untrue.
-		diverged := !follows || state == saveChanged
+		diverged := !follows || state == saveChanged || !cand.trustedContent || rec.ContentAt == 0
 		offers = append(offers, CloudOffer{
-			GameID:     game.ID,
-			GameName:   game.Name,
-			SnapshotID: cand.head.Snapshot,
-			FileName:   cand.file,
-			DeviceName: cand.head.DeviceName,
-			SavedAt:    cand.head.SavedAt,
-			Provider:   cfg.Provider,
-			Diverged:   diverged,
+			GameID:       game.ID,
+			GameName:     game.Name,
+			SnapshotID:   cand.head.Snapshot,
+			FileName:     cand.file,
+			DeviceName:   cand.head.DeviceName,
+			SavedAt:      cand.head.SavedAt,
+			Provider:     cfg.Provider,
+			ReviewReason: cloudReviewReason(cand, follows, state, rec),
+			Diverged:     diverged,
 		})
 	}
 	d.setCloudOffers(offers)
+}
+
+func cloudReviewReason(cand cloudCandidate, follows bool, state saveState, rec store.CloudHead) string {
+	switch {
+	case !cand.trustedContent:
+		return "legacy-content-time"
+	case rec.ContentAt == 0:
+		return "local-content-time-unknown"
+	case state == saveChanged:
+		return "local-changed"
+	case state == saveUnknown:
+		return "local-baseline-unknown"
+	case !follows:
+		return "history-diverged"
+	default:
+		return ""
+	}
 }
 
 // readHead fetches a head, from the cache when it has been read before.
@@ -655,11 +791,53 @@ func (d *Daemon) pullFromCloud(game store.Game, fileName, deviceName string) err
 	if hash, err := d.currentContentHash(game); err == nil {
 		_ = d.Store.SetLastManifestHash(game.ID, hash)
 	}
+	if err := d.noteCloudPullForCloud(game, snapID, fileName, destPath); err != nil {
+		return err
+	}
 	d.Log.Log("success", fmt.Sprintf("cloud: brought %s's save for %q here", deviceName, game.Name))
 	d.P2P.Sync.RecordActivity(store.ActivityEvent{GameID: game.ID, Kind: store.ActivityCloudPulled, Device: deviceName})
 	if d.OnGameChanged != nil {
 		d.OnGameChanged(game.ID)
 	}
+	return nil
+}
+
+// noteCloudPullForCloud makes a remotely restored snapshot the local head.
+// RestoreKeeping intentionally does not trigger Snapshot.Manager's restore
+// hook, so without this update a machine would keep publishing the snapshot it
+// had before the pull. That stale announcement was able to later overwrite a
+// newer save on another device.
+func (d *Daemon) noteCloudPullForCloud(game store.Game, snapshotID, fileName, zipPath string) error {
+	contentAt, err := snapshotContentModifiedAt(zipPath)
+	if err != nil {
+		contentAt = 0
+		if d.Log != nil {
+			d.Log.Log("warn", fmt.Sprintf("cloud: restored %q but could not verify its content time: %v", game.Name, err))
+		}
+	}
+
+	d.cloudRd.heads.Lock()
+	rec, _, err := d.Store.GetCloudHead(game.ID)
+	if err == nil {
+		rec.Snapshot = snapshotID
+		rec.Since = nowStamp()
+		rec.File = fileName
+		rec.Chain = []string{snapshotID}
+		rec.ContentAt = contentAt
+		rec.Published = ""
+		rec.Dismissed = ""
+		err = d.Store.SetCloudHead(rec)
+	}
+	d.cloudRd.heads.Unlock()
+	if err != nil {
+		return fmt.Errorf("record restored cloud save: %w", err)
+	}
+
+	d.uploads.Add()
+	go func() {
+		defer d.uploads.Done()
+		_ = d.publishHead(game.ID)
+	}()
 	return nil
 }
 
