@@ -92,7 +92,10 @@ jobs:
       - name: Prepare Windows assets
         run: |
           find windows -type f -name '*.exe' -exec mv -t windows {} +
-          sha256sum windows/*.exe > SHA256SUMS
+          (
+            cd windows
+            sha256sum *.exe
+          ) > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           name: OpenSave ${{ github.ref_name }}
