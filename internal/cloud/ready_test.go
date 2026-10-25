@@ -62,3 +62,10 @@ func TestReady(t *testing.T) {
 		}
 	}
 }
+
+func TestGameSaveUsesProductNameInNotReadyError(t *testing.T) {
+	err := notReady(store.CloudConfig{Enabled: true, Provider: GameSaveProvider})
+	if err == nil || err.Error() != "no game-save destination configured" {
+		t.Fatalf("notReady(game-save) = %v", err)
+	}
+}

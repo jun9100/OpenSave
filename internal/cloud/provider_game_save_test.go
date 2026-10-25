@@ -15,7 +15,7 @@ import (
 	"github.com/opensave/opensave/internal/store"
 )
 
-func TestNormalizeEdenSyncdURL(t *testing.T) {
+func TestNormalizeGameSaveURL(t *testing.T) {
 	for _, tc := range []struct {
 		in, want string
 		bad      bool
@@ -30,17 +30,17 @@ func TestNormalizeEdenSyncdURL(t *testing.T) {
 		{"nas.example", "", true},
 		{"https://u:p@nas.example", "", true},
 	} {
-		got, err := NormalizeEdenSyncdURL(tc.in)
+		got, err := NormalizeGameSaveURL(tc.in)
 		if tc.bad && err == nil {
-			t.Errorf("NormalizeEdenSyncdURL(%q) accepted invalid URL", tc.in)
+			t.Errorf("NormalizeGameSaveURL(%q) accepted invalid URL", tc.in)
 		}
 		if !tc.bad && (err != nil || got != tc.want) {
-			t.Errorf("NormalizeEdenSyncdURL(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+			t.Errorf("NormalizeGameSaveURL(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
 		}
 	}
 }
 
-func TestEdenSyncdProviderUsesNativeTypedAPI(t *testing.T) {
+func TestGameSaveProviderUsesNativeTypedAPI(t *testing.T) {
 	const token = "sync-key"
 	var mu sync.Mutex
 	files := map[string][]byte{}
@@ -94,15 +94,20 @@ func TestEdenSyncdProviderUsesNativeTypedAPI(t *testing.T) {
 	defer server.Close()
 
 	svc, data := newTestService(t)
+	var logs []string
+	svc.Log = func(_ string, message string) { logs = append(logs, message) }
 	if err := data.CreateGame(store.Game{ID: "hollow-knight", Name: "Hollow Knight", SavePath: t.TempDir(), SaveType: "switch"}); err != nil {
 		t.Fatal(err)
 	}
 	setCloudConfig(t, data, func(c *store.CloudConfig) {
-		c.Enabled, c.Provider, c.URL, c.Password = true, "eden_syncd", server.URL, token
+		c.Enabled, c.Provider, c.URL, c.Password = true, GameSaveProvider, server.URL, token
 	})
 	const name = "hollow-knight__main__snap_1.zip"
 	if err := svc.Upload(writeTempZip(t, "snapshot bytes"), name); err != nil {
 		t.Fatal(err)
+	}
+	if joined := strings.Join(logs, "\n"); !strings.Contains(joined, "via game-save") || !strings.Contains(joined, "to game-save") || strings.Contains(joined, "eden_syncd") {
+		t.Fatalf("game-save activity log = %q", joined)
 	}
 	headName := HeadFileName("hollow-knight", "switch-device", time.Now())
 	if err := svc.Upload(writeTempZip(t, "head bytes"), headName); err != nil {
@@ -163,7 +168,7 @@ func TestEdenSyncdProviderUsesNativeTypedAPI(t *testing.T) {
 
 func TestScopedNameKeepsNativeSaveTypesSeparate(t *testing.T) {
 	const name = "hollow-knight__main__snap_1.zip"
-	if pc, switchSave := ScopedName("eden_syncd", "pc", name), ScopedName("eden_syncd", "switch", name); pc == switchSave {
+	if pc, switchSave := ScopedName(GameSaveProvider, "pc", name), ScopedName(GameSaveProvider, "switch", name); pc == switchSave {
 		t.Fatalf("typed cloud keys collide: %q", pc)
 	}
 	if got := ScopedName("webdav", "switch", name); got != name {

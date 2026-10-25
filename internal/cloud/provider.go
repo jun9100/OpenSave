@@ -31,13 +31,13 @@ func (s *Service) providerFor(cfg store.CloudConfig) (provider, bool) {
 		return localFolder{cfg: cfg}, true
 	case "webdav":
 		return webDAV{s: s, cfg: cfg}, true
-	case "eden_syncd":
-		normalized, err := NormalizeEdenSyncdURL(cfg.URL)
+	case GameSaveProvider:
+		normalized, err := NormalizeGameSaveURL(cfg.URL)
 		if err != nil {
 			return failedProvider{err: err}, true
 		}
 		cfg.URL = normalized
-		return edenSyncd{s: s, cfg: cfg}, true
+		return gameSave{s: s, cfg: cfg}, true
 	case "webhook":
 		return webhook{s: s, cfg: cfg}, true
 	case "google_drive":
@@ -52,7 +52,7 @@ func (s *Service) providerFor(cfg store.CloudConfig) (provider, bool) {
 
 // failedProvider keeps a malformed built-in provider distinct from an
 // unsupported provider. Callers can surface its concrete setup error instead
-// of quietly treating EDEN_SYNCD as a provider this build does not know.
+// of quietly treating a malformed built-in provider as unsupported.
 type failedProvider struct {
 	err error
 }

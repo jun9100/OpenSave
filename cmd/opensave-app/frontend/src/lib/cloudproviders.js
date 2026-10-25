@@ -1,12 +1,16 @@
 // The cloud backup providers and the rules for what each card says.
 
+// This is a persisted compatibility identifier. It is intentionally kept out
+// of all labels so users only encounter the product name, game-save.
+export const GAME_SAVE_PROVIDER = 'eden_syncd';
+
 export const providers = [
   { id: 'google_drive', label: 'Google Drive', oauth: true, img: 'cloud/googledrive.png' },
   { id: 'onedrive', label: 'OneDrive', oauth: true, img: 'cloud/onedrive.png' },
   { id: 'dropbox', label: 'Dropbox', oauth: true, img: 'cloud/dropbox.png' },
   { id: 'local', label: 'Local Folder', oauth: false, icon: 'folder' },
   { id: 'webdav', label: 'WebDAV Server', oauth: false, icon: 'cloud' },
-  { id: 'eden_syncd', label: 'game-save', oauth: false, icon: 'server' },
+  { id: GAME_SAVE_PROVIDER, label: 'game-save', oauth: false, icon: 'server' },
   { id: 'webhook', label: 'HTTP Webhook', oauth: false, icon: 'webhook' }
 ];
 

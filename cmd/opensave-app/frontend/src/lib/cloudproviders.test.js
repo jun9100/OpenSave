@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudTileKey, cloudTiles, connectedProviderOf, isEmail, providerStatus, providers, saveTypeLabel } from './cloudproviders.js';
+import { cloudTileKey, cloudTiles, connectedProviderOf, GAME_SAVE_PROVIDER, isEmail, providerStatus, providers, saveTypeLabel } from './cloudproviders.js';
 
 describe('connectedProviderOf', () => {
   it('is the OAuth provider the tokens were issued for', () => {
@@ -33,8 +33,8 @@ describe('providerStatus', () => {
     expect(providerStatus('local', null, { provider: 'local', url: '' })).toBe('Not configured');
   });
   it('treats game-save as a configured non-OAuth provider', () => {
-    const eden = { provider: 'eden_syncd', url: 'https://nas.example/opensave' };
-    expect(providerStatus('eden_syncd', null, eden)).toBe('Configured');
+    const gameSave = { provider: GAME_SAVE_PROVIDER, url: 'https://nas.example/opensave' };
+    expect(providerStatus(GAME_SAVE_PROVIDER, null, gameSave)).toBe('Configured');
   });
   it('says nothing before the settings load', () => {
     expect(providerStatus('local', null, null)).toBe('');
@@ -43,7 +43,7 @@ describe('providerStatus', () => {
 
 describe('providers', () => {
   it('offers game-save as a first-class cloud destination', () => {
-    expect(providers.find((provider) => provider.id === 'eden_syncd')).toMatchObject({
+    expect(providers.find((provider) => provider.id === GAME_SAVE_PROVIDER)).toMatchObject({
       label: 'game-save',
       oauth: false
     });
