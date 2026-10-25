@@ -47,6 +47,20 @@ func twoLocationPair(t *testing.T, name string, configFiles map[string]string) (
 		if !ok {
 			t.Fatalf("the second location never reached the peer during setup")
 		}
+		shared, err := delta.BuildManifest(aConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sharedHash := shared.RootHash(delta.PrimaryRoot)
+		if !testutil.WaitFor(45*time.Second, func() bool {
+			return a.Daemon.Store.GetAgreedHashForRoot(gameID, b.NodeID(), "config") == sharedHash &&
+				b.Daemon.Store.GetAgreedHashForRoot(gameID, a.NodeID(), "config") == sharedHash
+		}) {
+			t.Fatalf("the second location arrived but never reached a shared baseline: A=%q B=%q",
+				a.Daemon.Store.GetAgreedHashForRoot(gameID, b.NodeID(), "config"),
+				b.Daemon.Store.GetAgreedHashForRoot(gameID, a.NodeID(), "config"))
+		}
+		testutil.SettleSync(t, gameID, a, b)
 	}
 	return a, b, gameID, aConfig, bConfig
 }
