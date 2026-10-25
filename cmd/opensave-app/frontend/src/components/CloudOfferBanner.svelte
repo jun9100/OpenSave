@@ -14,6 +14,7 @@
   const fly = gated(flyIn);
   import { cloudOffers, toast } from '../lib/stores.js';
   import { api } from '../lib/api.js';
+  import { GAME_SAVE_PROVIDER } from '../lib/cloudproviders.js';
   import { timeAgo } from '../lib/timeago.js';
   import { t } from '../lib/i18n.js';
   import CloudDownload from 'lucide-svelte/icons/cloud-download';
@@ -25,7 +26,7 @@
     onedrive: 'OneDrive',
     dropbox: 'Dropbox',
     webdav: 'your WebDAV server',
-    eden_syncd: 'game-save',
+    [GAME_SAVE_PROVIDER]: 'game-save',
     local: 'your backup folder'
   };
 

@@ -97,7 +97,7 @@ func providerID(name string) string {
 	case "webdav":
 		return "webdav"
 	case "game-save", "game_save", "gamesave", "eden-syncd", "eden_syncd", "edensyncd":
-		return "eden_syncd"
+		return cloud.GameSaveProvider
 	case "webhook":
 		return "webhook"
 	case "local", "folder", "nas":
@@ -227,7 +227,7 @@ func cloudSetup(asJSON bool, args []string) int {
 		}
 		patch["url"] = abs
 
-	case "webdav", "eden_syncd":
+	case "webdav", cloud.GameSaveProvider:
 		u := flagValue(rest, "--url")
 		if u == "" {
 			return fail(asJSON, fmt.Errorf("%s needs --url <https://...>", provider))

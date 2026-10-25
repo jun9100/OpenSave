@@ -289,8 +289,8 @@ func (s *Server) applyCloudPatch(patch *cloudSyncPatch) error {
 			cfg.CustomClientSecrets[k] = v
 		}
 	}
-	if cfg.Provider == "eden_syncd" && strings.TrimSpace(cfg.URL) != "" {
-		normalized, err := cloud.NormalizeEdenSyncdURL(cfg.URL)
+	if cfg.Provider == cloud.GameSaveProvider && strings.TrimSpace(cfg.URL) != "" {
+		normalized, err := cloud.NormalizeGameSaveURL(cfg.URL)
 		if err != nil {
 			return err
 		}

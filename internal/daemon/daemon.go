@@ -264,10 +264,10 @@ func New(opts Options) (*Daemon, error) {
 // retaining a trailing /opensave would make upgraded clients request it twice.
 func normalizeGameSaveCloudURL(s *store.Store) error {
 	cfg, err := s.GetCloudConfig()
-	if err != nil || cfg.Provider != "eden_syncd" || strings.TrimSpace(cfg.URL) == "" {
+	if err != nil || cfg.Provider != cloud.GameSaveProvider || strings.TrimSpace(cfg.URL) == "" {
 		return err
 	}
-	normalized, err := cloud.NormalizeEdenSyncdURL(cfg.URL)
+	normalized, err := cloud.NormalizeGameSaveURL(cfg.URL)
 	if err != nil {
 		return nil // Preserve malformed user input for the settings page to show.
 	}

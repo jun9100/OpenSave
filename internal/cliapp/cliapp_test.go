@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opensave/opensave/internal/cloud"
 	"github.com/opensave/opensave/internal/presets"
 )
 
@@ -439,10 +440,10 @@ func TestProviderIDAcceptsWhatPeopleType(t *testing.T) {
 		"onedrive":     "onedrive",
 		"one-drive":    "onedrive",
 		"webdav":       "webdav",
-		"game-save":    "eden_syncd",
-		"game_save":    "eden_syncd",
-		"gamesave":     "eden_syncd",
-		"eden-syncd":   "eden_syncd",
+		"game-save":    cloud.GameSaveProvider,
+		"game_save":    cloud.GameSaveProvider,
+		"gamesave":     cloud.GameSaveProvider,
+		"eden-syncd":   cloud.GameSaveProvider,
 		"webhook":      "webhook",
 		"local":        "local",
 		"nas":          "local",

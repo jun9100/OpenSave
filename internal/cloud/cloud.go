@@ -1,5 +1,5 @@
 // Package cloud implements snapshot backup to Google Drive, Dropbox, OneDrive,
-// WebDAV, EDEN_SYNCD, webhook, and a local folder — porting
+// WebDAV, game-save, webhook, and a local folder — porting
 // src/daemon/cloud.js. API base URLs are injectable so tests can stand in
 // httptest servers for every provider.
 package cloud
@@ -23,6 +23,11 @@ import (
 	"github.com/opensave/opensave/internal/store"
 )
 
+// GameSaveProvider is the persisted identifier used by the first native
+// integration. Keep it stable so existing desktop and Android configurations
+// continue to work; user-facing text calls the service game-save.
+const GameSaveProvider = "eden_syncd"
+
 // CloudFile is one remote snapshot entry.
 type CloudFile struct {
 	ID          string `json:"id,omitempty"`
@@ -32,10 +37,10 @@ type CloudFile struct {
 }
 
 // IsTypedStorageProvider reports whether a provider separates snapshots by
-// their save type. The ID of an eden_syncd CloudFile is its server namespace;
+// their save type. The ID of a game-save CloudFile is its server namespace;
 // IDs from other providers are provider-specific opaque identifiers instead.
 func IsTypedStorageProvider(provider string) bool {
-	return provider == "eden_syncd"
+	return provider == GameSaveProvider
 }
 
 // SaveTypeScope returns the namespace used for a save category. Databases
@@ -57,7 +62,7 @@ func MatchesSaveType(provider, itemType, saveType string) bool {
 }
 
 // ScopedName is a map key for a cloud item. Other providers have one flat
-// namespace, while eden_syncd keeps pc, switch, and emulator saves separate.
+// namespace, while game-save keeps pc, switch, and emulator saves separate.
 func ScopedName(provider, saveType, name string) string {
 	if !IsTypedStorageProvider(provider) {
 		return name
@@ -150,8 +155,8 @@ func Ready(cfg store.CloudConfig) bool {
 	switch cfg.Provider {
 	case "local", "webdav", "webhook":
 		return strings.TrimSpace(cfg.URL) != ""
-	case "eden_syncd":
-		_, err := NormalizeEdenSyncdURL(cfg.URL)
+	case GameSaveProvider:
+		_, err := NormalizeGameSaveURL(cfg.URL)
 		return err == nil && strings.TrimSpace(cfg.URL) != "" && strings.TrimSpace(cfg.Password) != ""
 	case "google_drive", "dropbox", "onedrive":
 		return cfg.AccessToken != "" || cfg.RefreshToken != ""
@@ -166,7 +171,7 @@ func notReady(cfg store.CloudConfig) error {
 	case "google_drive", "dropbox", "onedrive":
 		return fmt.Errorf("cloud sync not authenticated")
 	}
-	return fmt.Errorf("no %s destination configured", cfg.Provider)
+	return fmt.Errorf("no %s destination configured", ProviderLabel(cfg.Provider))
 }
 
 func (s *Service) config() (store.CloudConfig, error) {
@@ -343,7 +348,7 @@ func (s *Service) upload(filePath, fileName string, logged bool) error {
 	}
 	size := info.Size()
 	if logged {
-		s.Log("info", fmt.Sprintf("cloud: uploading %s (%.1f MB) via %s", fileName, float64(size)/(1<<20), strings.ToUpper(cfg.Provider)))
+		s.Log("info", fmt.Sprintf("cloud: uploading %s (%.1f MB) via %s", fileName, float64(size)/(1<<20), ProviderLabel(cfg.Provider)))
 	}
 
 	p, ok := s.providerFor(cfg)
@@ -359,7 +364,7 @@ func (s *Service) upload(filePath, fileName string, logged bool) error {
 	f.Close()
 
 	if logged {
-		s.Log("success", fmt.Sprintf("cloud: uploaded %q to %s", fileName, cfg.Provider))
+		s.Log("success", fmt.Sprintf("cloud: uploaded %q to %s", fileName, ProviderLabel(cfg.Provider)))
 	}
 	return nil
 }
@@ -404,7 +409,7 @@ func (s *Service) DownloadFile(file CloudFile, localPath string) error {
 	}
 	p, ok := s.providerFor(cfg)
 	if !ok {
-		return fmt.Errorf("downloading is not supported for provider: %s", cfg.Provider)
+		return fmt.Errorf("downloading is not supported for provider: %s", ProviderLabel(cfg.Provider))
 	}
 	if typed, ok := p.(interface {
 		downloadFile(CloudFile, string) error
@@ -423,7 +428,7 @@ func (s *Service) Delete(f CloudFile) error {
 	}
 	p, ok := s.providerFor(cfg)
 	if !ok {
-		return fmt.Errorf("deletion is not supported for provider: %s", cfg.Provider)
+		return fmt.Errorf("deletion is not supported for provider: %s", ProviderLabel(cfg.Provider))
 	}
 	return p.remove(f)
 }

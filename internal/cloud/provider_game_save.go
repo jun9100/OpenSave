@@ -14,9 +14,9 @@ import (
 	"github.com/opensave/opensave/internal/store"
 )
 
-// NormalizeEdenSyncdURL validates a game-save service address. Native
+// NormalizeGameSaveURL validates a game-save service address. Native
 // OpenSave endpoints live below /v1/opensave and are appended by the client.
-func NormalizeEdenSyncdURL(value string) (string, error) {
+func NormalizeGameSaveURL(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", nil
@@ -58,14 +58,14 @@ func NormalizeEdenSyncdURL(value string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
-type edenSyncd struct {
+type gameSave struct {
 	s   *Service
 	cfg store.CloudConfig
 }
 
-func (p edenSyncd) token() string { return strings.TrimSpace(p.cfg.Password) }
+func (p gameSave) token() string { return strings.TrimSpace(p.cfg.Password) }
 
-func (p edenSyncd) fileType(name string) string {
+func (p gameSave) fileType(name string) string {
 	gameID, _, _, ok := snapshot.ParseExportEntryName(name)
 	if !ok {
 		gameID, _, _, ok = ParseHeadFileName(name)
@@ -85,16 +85,16 @@ func (p edenSyncd) fileType(name string) string {
 	return game.SaveType
 }
 
-func (p edenSyncd) endpoint(kind, name string) string {
+func (p gameSave) endpoint(kind, name string) string {
 	return strings.TrimRight(p.cfg.URL, "/") + "/v1/opensave/files/" + url.PathEscape(kind) + "/" + url.PathEscape(name)
 }
 
-func (p edenSyncd) authorize(req *http.Request) {
+func (p gameSave) authorize(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+p.token())
 	req.Header.Set("X-Eden-Platform", "opensave")
 }
 
-func (p edenSyncd) upload(f *os.File, size int64, fileName string) error {
+func (p gameSave) upload(f *os.File, size int64, fileName string) error {
 	if p.token() == "" {
 		return fmt.Errorf("game-save sync key is required")
 	}
@@ -113,7 +113,7 @@ func (p edenSyncd) upload(f *os.File, size int64, fileName string) error {
 	return transferOK(resp)
 }
 
-func (p edenSyncd) list() ([]CloudFile, error) {
+func (p gameSave) list() ([]CloudFile, error) {
 	if p.token() == "" {
 		return nil, fmt.Errorf("game-save sync key is required")
 	}
@@ -148,11 +148,11 @@ func (p edenSyncd) list() ([]CloudFile, error) {
 	return files, nil
 }
 
-func (p edenSyncd) download(fileName, localPath string) error {
+func (p gameSave) download(fileName, localPath string) error {
 	return p.downloadFile(CloudFile{Name: fileName}, localPath)
 }
 
-func (p edenSyncd) downloadFile(file CloudFile, localPath string) error {
+func (p gameSave) downloadFile(file CloudFile, localPath string) error {
 	kind := strings.TrimSpace(file.ID)
 	if kind == "" {
 		kind = p.fileType(file.Name)
@@ -165,7 +165,7 @@ func (p edenSyncd) downloadFile(file CloudFile, localPath string) error {
 	return p.s.fetchToFile(req, localPath)
 }
 
-func (p edenSyncd) remove(f CloudFile) error {
+func (p gameSave) remove(f CloudFile) error {
 	kind := f.ID
 	if kind == "" {
 		kind = p.fileType(f.Name)

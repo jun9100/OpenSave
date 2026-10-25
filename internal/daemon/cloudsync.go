@@ -553,7 +553,7 @@ func (d *Daemon) CheckCloud() {
 	}
 	ownKey := cloud.DeviceKey(settings.NodeID)
 
-	// EDEN_SYNCD uses a separate remote namespace for each save type. Keep it
+	// game-save uses a separate remote namespace for each save type. Keep it
 	// in every lookup key so a PC archive cannot satisfy a Switch head with the
 	// same game id or snapshot id. Other providers remain flat as before.
 	scope := func(saveType, name string) string {
@@ -713,7 +713,7 @@ func cloudReviewReason(cand cloudCandidate, follows bool, state saveState, rec s
 
 // readHead fetches a head, from the cache when it has been read before.
 func (d *Daemon) readHead(file cloud.CloudFile) (cloud.Head, error) {
-	// Names are only unique inside EDEN_SYNCD's save-type namespace. Keeping
+	// Names are only unique inside game-save's save-type namespace. Keeping
 	// the type in the cache key prevents a PC head being reused for a Switch
 	// head with the same game, device, and timestamp.
 	cacheKey := file.ID + "\x00" + file.Name

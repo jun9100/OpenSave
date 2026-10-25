@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/opensave/opensave/internal/cloud"
 	"github.com/opensave/opensave/internal/store"
 )
 
@@ -45,7 +46,7 @@ func TestNewMigratesLegacyGameSaveServiceURL(t *testing.T) {
 		first.Stop()
 		t.Fatal(err)
 	}
-	cfg.Provider = "eden_syncd"
+	cfg.Provider = cloud.GameSaveProvider
 	cfg.URL = "https://nas.example/opensave/"
 	if err := first.Store.UpdateCloudConfig(cfg); err != nil {
 		first.Stop()

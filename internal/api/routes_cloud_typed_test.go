@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opensave/opensave/internal/cloud"
 	"github.com/opensave/opensave/internal/store"
 )
 
@@ -41,7 +42,7 @@ func TestNativeCloudRoutesKeepSameNamedSaveTypesSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Enabled, cfg.Provider, cfg.URL, cfg.Password = true, "eden_syncd", service.URL, "test-key"
+	cfg.Enabled, cfg.Provider, cfg.URL, cfg.Password = true, cloud.GameSaveProvider, service.URL, "test-key"
 	if err := ts.daemon.Store.UpdateCloudConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
