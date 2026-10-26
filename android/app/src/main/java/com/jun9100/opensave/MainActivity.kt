@@ -1,5 +1,6 @@
 package com.jun9100.opensave
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -79,6 +80,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1063,6 +1065,7 @@ private fun GameLibraryCard(
     onSelectedChange: (Boolean) -> Unit,
 ) {
     val game = entry.game
+    val compactArtwork = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val cloudIdentity = GameCloudNaming.identity(entry.source, entry.sourceId, game)
     var expanded by remember(entry.libraryKey) { mutableStateOf(false) }
     var presentation by remember(entry.libraryKey) { mutableStateOf(game.presentation) }
@@ -1079,60 +1082,47 @@ private fun GameLibraryCard(
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
-            GameArtwork(
-                presentation = presentation,
-                coverRepository = coverRepository,
-                modifier = Modifier.fillMaxWidth().height(96.dp),
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.Top) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        entry.sourceLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+            if (compactArtwork) {
+                Row(verticalAlignment = Alignment.Top) {
+                    GameArtwork(
+                        presentation = presentation,
+                        coverRepository = coverRepository,
+                        modifier = Modifier.size(56.dp),
                     )
-                    Text(
-                        sourceAccessLabel(entry.sourceAccess),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Spacer(Modifier.size(10.dp))
+                    GameLibraryTitleBlock(
+                        entry = entry,
+                        presentation = presentation,
+                        modifier = Modifier.weight(1f),
                     )
-                    Text(
-                        entry.saveType.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    GameLibrarySelectionControls(
+                        selected = selected,
+                        enabled = !state.busy && GameLibrary.canBatchBackup(game),
+                        expanded = expanded,
+                        onSelectedChange = onSelectedChange,
+                        onExpandedChange = { expanded = !expanded },
                     )
-                    Text(
-                        presentation.primaryName,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    presentation.originalName?.takeIf { it != presentation.localizedName }?.let { original ->
-                        Text(
-                            original,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
-                Checkbox(
-                    checked = selected,
-                    onCheckedChange = onSelectedChange,
-                    enabled = !state.busy && GameLibrary.canBatchBackup(game),
+                Spacer(Modifier.height(8.dp))
+            } else {
+                GameArtwork(
+                    presentation = presentation,
+                    coverRepository = coverRepository,
+                    modifier = Modifier.fillMaxWidth().height(96.dp),
                 )
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                        contentDescription = if (expanded) "收起游戏详情" else "展开游戏详情",
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.Top) {
+                    GameLibraryTitleBlock(
+                        entry = entry,
+                        presentation = presentation,
+                        modifier = Modifier.weight(1f),
+                    )
+                    GameLibrarySelectionControls(
+                        selected = selected,
+                        enabled = !state.busy && GameLibrary.canBatchBackup(game),
+                        expanded = expanded,
+                        onSelectedChange = onSelectedChange,
+                        onExpandedChange = { expanded = !expanded },
                     )
                 }
             }
@@ -1237,6 +1227,73 @@ private fun GameLibraryCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun GameLibraryTitleBlock(
+    entry: SourceGameEntry,
+    presentation: GamePresentation,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Text(
+            entry.sourceLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            sourceAccessLabel(entry.sourceAccess),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            entry.saveType.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.secondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            presentation.primaryName,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        presentation.originalName?.takeIf { it != presentation.localizedName }?.let { original ->
+            Text(
+                original,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GameLibrarySelectionControls(
+    selected: Boolean,
+    enabled: Boolean,
+    expanded: Boolean,
+    onSelectedChange: (Boolean) -> Unit,
+    onExpandedChange: () -> Unit,
+) {
+    Checkbox(
+        checked = selected,
+        onCheckedChange = onSelectedChange,
+        enabled = enabled,
+    )
+    IconButton(onClick = onExpandedChange) {
+        Icon(
+            imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            contentDescription = if (expanded) "收起游戏详情" else "展开游戏详情",
+        )
     }
 }
 
