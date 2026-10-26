@@ -14,6 +14,7 @@ import (
 	"github.com/opensave/opensave/internal/cloud"
 	"github.com/opensave/opensave/internal/daemon"
 	"github.com/opensave/opensave/internal/snapshot"
+	"github.com/opensave/opensave/internal/store"
 )
 
 // pendingPKCE holds verifier state between /api/auth/start and
@@ -30,6 +31,7 @@ func (s *Server) cloudRoutes(r chi.Router) {
 	r.Post("/api/auth/disconnect", s.handleAuthDisconnect)
 
 	r.Get("/api/cloud/browse", s.handleCloudBrowse)
+	r.Get("/api/cloud/status/{gameId}", s.handleCloudStatus)
 	r.Get("/api/cloud/snapshots/{gameId}", s.handleCloudSnapshots)
 	r.Post("/api/cloud/restore/{gameId}", s.handleCloudRestore)
 	r.Post("/api/cloud/delete/{gameId}", s.handleCloudDelete)
@@ -40,6 +42,23 @@ func (s *Server) cloudRoutes(r chi.Router) {
 	r.Post("/api/cloud/offers/accept", s.handleCloudOfferAnswer(true))
 	r.Post("/api/cloud/offers/dismiss", s.handleCloudOfferAnswer(false))
 	r.Post("/api/cloud/check", s.handleCloudCheck)
+}
+
+// handleCloudStatus returns a read-only native game-save lineage summary for
+// one game. The daemon intentionally reports an unconfigured or legacy
+// service in-band, so the Cloud tab can distinguish that state from a failed
+// snapshot listing without attempting a fallback write.
+func (s *Server) handleCloudStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.Daemon.GameSaveStatus(chi.URLParam(r, "gameId"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // handleCloudOffers lists the saves from other devices waiting for an answer.
@@ -355,6 +374,40 @@ func (s *Server) handleCloudRestore(w http.ResponseWriter, r *http.Request) {
 		// them safe while current clients carry the listed namespace explicitly.
 		body.ID = cloud.SaveTypeScope(game.SaveType)
 	}
+	if cfg.Provider == cloud.GameSaveProvider {
+		status, statusErr := s.Daemon.GameSaveStatus(gameID)
+		if statusErr != nil {
+			writeError(w, http.StatusInternalServerError, statusErr.Error())
+			return
+		}
+		if status.NativeSupported {
+			if status.RestoreBlocked {
+				writeError(w, http.StatusConflict,
+					"native game-save scope needs conflict review before an ordinary cloud restore")
+				return
+			}
+			if status.CloudSnapshot == nil || status.CloudSnapshot.Archive == "" {
+				writeError(w, http.StatusConflict,
+					"native game-save scope has no authoritative cloud head to restore")
+				return
+			}
+			// The native scope lists retained history for review, but a normal
+			// restore may only apply the CAS-authoritative head. Selecting an
+			// older ZIP here would silently turn the history browser into a
+			// rollback path.
+			if body.FileName != status.CloudSnapshot.Archive {
+				writeError(w, http.StatusConflict,
+					"only the authoritative native game-save cloud head can be restored normally")
+				return
+			}
+		} else if status.State != "legacy" {
+			// Native support may fall back only after a route-level 404. An
+			// authorization, integrity, or network error must not revive the
+			// timestamped ZIP restore path.
+			writeError(w, http.StatusBadGateway, status.Detail)
+			return
+		}
+	}
 
 	settings, err := s.Daemon.Store.GetSettings()
 	if err != nil {
@@ -520,6 +573,62 @@ func (s *Server) handleCloudSyncLocal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if cfg.Provider == cloud.GameSaveProvider {
+		status, statusErr := s.Daemon.GameSaveStatus(gameID)
+		if statusErr != nil {
+			writeError(w, http.StatusInternalServerError, statusErr.Error())
+			return
+		}
+		if !status.Configured {
+			writeError(w, http.StatusBadRequest, status.Detail)
+			return
+		}
+		if status.NativeSupported {
+			switch status.State {
+			case "up_to_date":
+				writeJSON(w, http.StatusOK, map[string]int{"uploaded": 0, "skipped": 1})
+				return
+			case "conflict", "download_pending", "in_use":
+				writeError(w, http.StatusConflict,
+					"native game-save scope needs review before publishing the local head")
+				return
+			case "offline", "error":
+				writeError(w, http.StatusBadGateway, status.Detail)
+				return
+			}
+			if !status.Publishable {
+				writeError(w, http.StatusConflict, status.Detail)
+				return
+			}
+			if err := s.Daemon.PublishCurrentGameSaveHead(gameID); err != nil {
+				writeError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			// A CAS race retains the archive as a conflict copy rather than
+			// returning an upload error. Re-read the immutable scope before
+			// claiming that this manual action advanced the cloud head.
+			after, afterErr := s.Daemon.GameSaveStatus(gameID)
+			if afterErr != nil {
+				writeError(w, http.StatusBadGateway,
+					"current snapshot was submitted but its native cloud result could not be verified: "+afterErr.Error())
+				return
+			}
+			if after.NativeSupported && after.State == "conflict" {
+				writeError(w, http.StatusConflict,
+					"current snapshot was retained as a native game-save conflict copy; the cloud head did not change")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]int{"uploaded": 1, "skipped": 0})
+			return
+		}
+		// A route-level 404 is the only native compatibility fallback. The
+		// generic branch below retains the pre-CAS ZIP/head behavior for that
+		// older service, without treating a conflict or auth failure as legacy.
+		if status.State != "legacy" {
+			writeError(w, http.StatusBadGateway, status.Detail)
+			return
+		}
 	}
 
 	remote, err := s.Daemon.Cloud.List()

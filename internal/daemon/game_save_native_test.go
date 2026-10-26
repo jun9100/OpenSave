@@ -74,7 +74,7 @@ func (s *nativeGameSaveTestServer) serveHTTP(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	if strings.TrimSpace(r.Header.Get("X-OpenSave-Device-ID")) == "" {
+	if r.Method != http.MethodGet && strings.TrimSpace(r.Header.Get("X-OpenSave-Device-ID")) == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -434,6 +434,79 @@ func TestNativeGameSaveCASRaceRetainsConflict(t *testing.T) {
 	}
 	if len(scope.Conflicts) != 1 || scope.Conflicts[0].ID != localHead || scope.Conflicts[0].ConflictOf != raceID {
 		t.Fatalf("CAS race conflicts = %+v, want retained %q", scope.Conflicts, localHead)
+	}
+}
+
+func TestNativeGameSaveStatusIsReadOnlyAndReportsAuthoritativeConflict(t *testing.T) {
+	service := newNativeGameSaveTestServer(t)
+	desktop := newNativeCloudDevice(t, "Desktop", "desktop-node", service.url())
+	deck := newNativeCloudDevice(t, "Steam Deck", "deck-node", service.url())
+
+	desktop.play("base")
+	if offers := deck.check(); len(offers) != 0 {
+		t.Fatalf("new device was offered base instead of pulling it: %+v", offers)
+	}
+	remote := desktop.play("desktop continuation")
+	remoteHead := cloud.GameSaveSnapshotID(remote.ID, desktop.nodeID)
+	local := deck.play("deck divergence")
+	localHead := cloud.GameSaveSnapshotID(local.ID, deck.nodeID)
+
+	before := service.scope("switch", cloudGame)
+	status, err := deck.d.GameSaveStatus(cloudGame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Configured || !status.NativeSupported || status.State != gameSaveStatusConflict ||
+		!status.RestoreBlocked || status.CloudHead != remoteHead || status.ConflictCount != 1 {
+		t.Fatalf("status = %+v", status)
+	}
+	if status.CloudSnapshot == nil || status.CloudSnapshot.DeviceName != "Desktop" ||
+		status.Conflicts[0].ID != localHead || status.Conflicts[0].ConflictOf != remoteHead {
+		t.Fatalf("status lineage = %+v", status)
+	}
+
+	after := service.scope("switch", cloudGame)
+	if before.Head == nil || after.Head == nil || before.Head.ID != after.Head.ID ||
+		len(before.Snapshots) != len(after.Snapshots) || len(before.Conflicts) != len(after.Conflicts) {
+		t.Fatalf("status read changed native scope: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestNativeGameSaveStatusListsHistoryAndRequiresSnapshotBeforePublish(t *testing.T) {
+	service := newNativeGameSaveTestServer(t)
+	desktop := newNativeCloudDevice(t, "Desktop", "desktop-node", service.url())
+
+	first := desktop.play("base")
+	second := desktop.play("continuation")
+	firstHead := cloud.GameSaveSnapshotID(first.ID, desktop.nodeID)
+	secondHead := cloud.GameSaveSnapshotID(second.ID, desktop.nodeID)
+
+	status, err := desktop.d.GameSaveStatus(cloudGame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != gameSaveStatusUpToDate || status.Publishable ||
+		status.SnapshotCount != 2 || status.CloudHead != secondHead {
+		t.Fatalf("up-to-date status = %+v", status)
+	}
+	versions := map[string]bool{}
+	for _, item := range status.Snapshots {
+		versions[item.ID] = true
+	}
+	if !versions[firstHead] || !versions[secondHead] {
+		t.Fatalf("recoverable history = %+v, want %q and %q", status.Snapshots, firstHead, secondHead)
+	}
+
+	// A changed save does not acquire a new snapshot merely by opening the
+	// status screen. It must be snapshotted before a manual CAS publish is safe.
+	desktop.write("changed without a snapshot")
+	status, err = desktop.d.GameSaveStatus(cloudGame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != gameSaveStatusUploadPending || status.Publishable ||
+		!strings.Contains(status.Detail, "new snapshot") || status.CloudHead != secondHead {
+		t.Fatalf("unsnapshotted local change status = %+v", status)
 	}
 }
 

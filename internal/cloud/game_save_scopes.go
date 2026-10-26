@@ -73,7 +73,7 @@ func (p gameSave) getScope(saveType, gameID string) (GameSaveScope, error) {
 	if err != nil {
 		return GameSaveScope{}, err
 	}
-	if err := p.authorize(req); err != nil {
+	if err := p.authorizeReadOnly(req); err != nil {
 		return GameSaveScope{}, err
 	}
 	resp, err := p.s.httpClient().Do(req)
