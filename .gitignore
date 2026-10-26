@@ -33,6 +33,7 @@ cmd/opensave-app/build/bin/
 # Android Gradle creates these per-machine caches and build artifacts. Keep
 # the wrapper and project sources tracked so a fresh checkout remains buildable.
 android/.gradle/
+android/.kotlin/
 android/app/build/
 
 # IDE

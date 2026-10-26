@@ -343,28 +343,97 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     val label = option.label
                     when (source) {
                         is SourceSelection.Saf -> if (!storage.hasReadPermission(source.uri)) {
-                            SourceScanResult(source, label, skippedReason = "目录授权已失效")
+                            SourceScanResult(
+                                source,
+                                label,
+                                skippedReason = "目录授权已失效",
+                                access = SourceAccessStatus.unavailable(
+                                    SourceAccessCapability.SAF,
+                                    "目录授权已失效",
+                                ),
+                            )
                         } else {
                             storage.scanTree(source.uri, androidGames).fold(
-                                onSuccess = { SourceScanResult(source, label, scan = it) },
-                                onFailure = { SourceScanResult(source, label, skippedReason = it.message ?: "读取失败") },
+                                onSuccess = {
+                                    SourceScanResult(
+                                        source,
+                                        label,
+                                        scan = it,
+                                        access = SourceAccessStatus.safAccessible(
+                                            storage.hasWritePermission(source.uri),
+                                        ),
+                                    )
+                                },
+                                onFailure = {
+                                    val reason = it.message ?: "读取失败"
+                                    SourceScanResult(
+                                        source,
+                                        label,
+                                        skippedReason = reason,
+                                        access = SourceAccessStatus.unavailable(
+                                            SourceAccessCapability.SAF,
+                                            reason,
+                                        ),
+                                    )
+                                },
                             )
                         }
 
                         is SourceSelection.Root -> when {
-                            !rootAvailable -> SourceScanResult(source, label, skippedReason = "Root 未授权")
+                            !rootAvailable -> SourceScanResult(
+                                source,
+                                label,
+                                skippedReason = "Root 未授权",
+                                access = SourceAccessStatus.unavailable(
+                                    SourceAccessCapability.ROOT,
+                                    "Root 未授权",
+                                ),
+                            )
                             else -> {
                                 val exists = rootStorage.pathExists(source.path)
                                 when {
-                                    exists.isFailure -> SourceScanResult(
+                                    exists.isFailure -> {
+                                        val reason = exists.exceptionOrNull()?.message ?: "无法检查目录"
+                                        SourceScanResult(
+                                            source,
+                                            label,
+                                            skippedReason = reason,
+                                            access = SourceAccessStatus.unavailable(
+                                                SourceAccessCapability.ROOT,
+                                                reason,
+                                            ),
+                                        )
+                                    }
+                                    !exists.getOrThrow() -> SourceScanResult(
                                         source,
                                         label,
-                                        skippedReason = exists.exceptionOrNull()?.message ?: "无法检查目录",
+                                        skippedReason = "目录不存在",
+                                        access = SourceAccessStatus.unavailable(
+                                            SourceAccessCapability.ROOT,
+                                            "目录不存在",
+                                        ),
                                     )
-                                    !exists.getOrThrow() -> SourceScanResult(source, label, skippedReason = "目录不存在")
                                     else -> rootStorage.scanPath(source.path, androidGames).fold(
-                                        onSuccess = { SourceScanResult(source, label, scan = it) },
-                                        onFailure = { SourceScanResult(source, label, skippedReason = it.message ?: "扫描失败") },
+                                        onSuccess = {
+                                            SourceScanResult(
+                                                source,
+                                                label,
+                                                scan = it,
+                                                access = SourceAccessStatus.rootOnly(),
+                                            )
+                                        },
+                                        onFailure = {
+                                            val reason = it.message ?: "扫描失败"
+                                            SourceScanResult(
+                                                source,
+                                                label,
+                                                skippedReason = reason,
+                                                access = SourceAccessStatus.unavailable(
+                                                    SourceAccessCapability.ROOT,
+                                                    reason,
+                                                ),
+                                            )
+                                        },
                                     )
                                 }
                             }
@@ -374,7 +443,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 Triple(rootAvailable, options, results)
             }
             val games = GameLibrary.sourceGames(scans)
-            val availableSourceCount = scans.count { it.scan != null }
+            val availableSourceCount = scans.count { it.access.readable }
             val skippedSourceCount = scans.size - availableSourceCount
             val activeScan = scans.firstOrNull { it.sourceId == state.value.activeSourceId }?.scan
             state.value = state.value.copy(
