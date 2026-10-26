@@ -832,7 +832,6 @@ private fun CloudUpdateCard(state: SourceUiState, viewModel: SourceViewModel) {
             Text("跨设备更新", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             state.cloudUpdates.take(16).forEach { update ->
-                val candidate = update.decision.candidate
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -849,18 +848,18 @@ private fun CloudUpdateCard(state: SourceUiState, viewModel: SourceViewModel) {
                                 append(update.entry.sourceLabel)
                                 append(" · ")
                                 append(
-                                    when (update.decision.action) {
+                                    when (update.action) {
                                         GameSaveRemoteAction.AUTO_RESTORE -> "可安全恢复"
                                         GameSaveRemoteAction.REVIEW_REQUIRED -> "需要确认"
                                         GameSaveRemoteAction.WAIT_FOR_REMOTE -> "远端尚未就绪"
                                         GameSaveRemoteAction.UP_TO_DATE -> "已同步"
                                     },
                                 )
-                                candidate?.head?.deviceName?.takeIf(String::isNotBlank)?.let {
+                                update.deviceName.takeIf(String::isNotBlank)?.let {
                                     append(" · ")
                                     append(it)
                                 }
-                                candidate?.savedAtMillis?.takeIf { it > 0L }?.let {
+                                update.receivedAtMillis.takeIf { it > 0L }?.let {
                                     append(" · ")
                                     append(formatTime(it))
                                 }
@@ -870,7 +869,7 @@ private fun CloudUpdateCard(state: SourceUiState, viewModel: SourceViewModel) {
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        update.decision.message.takeIf(String::isNotBlank)?.let { message ->
+                        update.message.takeIf(String::isNotBlank)?.let { message ->
                             Text(
                                 message,
                                 style = MaterialTheme.typography.labelSmall,

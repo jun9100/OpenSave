@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.Instant
 import java.util.UUID
 
 enum class OpenSavePage {
@@ -22,6 +23,7 @@ data class RestoreRequest(
     val local: SnapshotRecord? = null,
     val remote: RemoteSnapshot? = null,
     val remoteHead: GameSaveRemoteHead? = null,
+    val nativeHead: GameSaveNativeCandidate? = null,
     val game: DetectedGame? = null,
     val source: SourceSelection? = null,
 )
@@ -29,10 +31,35 @@ data class RestoreRequest(
 /** A remote head that is deliberately waiting for a user-confirmed restore. */
 data class GameSaveCloudUpdate(
     val entry: SourceGameEntry,
-    val decision: GameSaveHeadDecision,
+    val legacyDecision: GameSaveHeadDecision? = null,
+    val nativeDecision: GameSaveNativeDecision? = null,
 ) {
+    init {
+        require((legacyDecision != null) xor (nativeDecision != null)) { "云端更新必须属于一种同步协议" }
+    }
+
+    val action: GameSaveRemoteAction
+        get() = nativeDecision?.action ?: checkNotNull(legacyDecision).action
+
+    val message: String
+        get() = nativeDecision?.message ?: checkNotNull(legacyDecision).message
+
     val remote: RemoteSnapshot?
-        get() = decision.candidate?.archive
+        get() = nativeDecision?.candidate?.remote ?: legacyDecision?.candidate?.archive
+
+    val legacyHead: GameSaveRemoteHead?
+        get() = legacyDecision?.candidate
+
+    val nativeHead: GameSaveNativeCandidate?
+        get() = nativeDecision?.candidate
+
+    val deviceName: String
+        get() = nativeHead?.snapshot?.deviceName ?: legacyHead?.head?.deviceName.orEmpty()
+
+    val receivedAtMillis: Long
+        get() = nativeHead?.snapshot?.receivedAt?.let { value ->
+            runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
+        } ?: legacyHead?.savedAtMillis ?: 0L
 }
 
 data class SourceUiState(
@@ -74,6 +101,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     private val snapshotEngine = SnapshotEngine()
     private val snapshotRepository = SnapshotRepository(File(application.filesDir, SNAPSHOT_DIRECTORY))
     private val gameSaveStore = GameSaveConfigStore(application)
+    private val gameSaveDevice = GameSaveDeviceStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
     private val state = MutableStateFlow(SourceUiState())
     val uiState: StateFlow<SourceUiState> = state.asStateFlow()
@@ -284,7 +312,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             state.value = state.value.copy(busy = true, action = "正在测试 game-save 连接", error = null)
             val result = withContext(Dispatchers.IO) {
-                runCatching { GameSaveClient(config).testConnection().getOrThrow() }
+                runCatching { gameSaveClient(config).testConnection().getOrThrow() }
             }
             result.onSuccess {
                 state.value = state.value.copy(busy = false, action = "game-save 连接成功")
@@ -583,39 +611,61 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             var syncNotice: String? = null
             var cloudUpdate: GameSaveCloudUpdate? = null
             if (config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) {
-                val client = GameSaveClient(config)
-                val upload = client.upload(archive, cloudIdentity.saveType, remoteName)
-                if (upload.isSuccess) {
+                val client = gameSaveClient(config)
+                val native = GameSaveNativeSync(app, config, client)
+                val nativeUpload = native.publishSnapshot(cloudIdentity, record, archive)
+                nativeUpload.onSuccess { result ->
+                    // A confirmed head and an immutable conflict are both durable;
+                    // neither should be retried later as a head-changing write.
                     snapshotRepository.markUploaded(record.id)
-                    if (cloudIdentity.desktopCompatible) {
-                        val decision = runCatching {
-                            GameSaveHeadReader(app, config, client).check(
-                                identity = cloudIdentity,
-                                currentManifestHash = contentFingerprint.manifestHash,
-                                remoteSnapshots = client.list().getOrThrow(),
-                            )
-                        }.getOrElse { error ->
-                            syncNotice = "无法检查跨设备更新，未推进当前存档：${error.message ?: "未知错误"}"
-                            null
-                        }
-                        when (decision?.action) {
-                            null -> Unit
-                            GameSaveRemoteAction.UP_TO_DATE -> {
-                                GameSaveHeadPublisher(app, config).publishSnapshot(cloudIdentity, record, archive)
-                                    .onFailure { error ->
-                                        uploadError = "云端同步公告失败：${error.message ?: "未知错误"}"
-                                    }
-                            }
+                    if (result is GameSaveNativePublishResult.Conflict) {
+                        val decision = native.check(cloudIdentity, contentFingerprint.manifestHash).getOrNull()
+                        cloudUpdate = decision
+                            ?.takeUnless { it.action == GameSaveRemoteAction.UP_TO_DATE }
+                            ?.let { GameSaveCloudUpdate(entry, nativeDecision = it) }
+                        syncNotice = "本机版本已保留为云端冲突副本，当前存档没有被覆盖"
+                    }
+                }.onFailure { error ->
+                    if (error !is GameSaveScopesUnsupportedException) {
+                        uploadError = "云端原生同步失败：${error.message ?: "未知错误"}"
+                        return@onFailure
+                    }
 
-                            else -> {
-                                cloudUpdate = GameSaveCloudUpdate(entry, decision)
-                                val device = decision.candidate?.head?.deviceName?.let { "$it 的" }.orEmpty()
-                                syncNotice = "检测到${device}跨设备版本，当前快照已上传但未更新云端当前存档"
-                            }
+                    // Older service images have no native scope route. Keep this
+                    // compatibility path isolated so any other native error can
+                    // never downgrade to the timestamped ZIP-head protocol.
+                    val upload = client.upload(archive, cloudIdentity.saveType, remoteName)
+                    if (upload.isFailure) {
+                        uploadError = "云端上传失败：${upload.exceptionOrNull()?.message ?: "未知错误"}"
+                        return@onFailure
+                    }
+                    snapshotRepository.markUploaded(record.id)
+                    if (!cloudIdentity.desktopCompatible) return@onFailure
+                    val decision = runCatching {
+                        GameSaveHeadReader(app, config, client).check(
+                            identity = cloudIdentity,
+                            currentManifestHash = contentFingerprint.manifestHash,
+                            remoteSnapshots = client.list().getOrThrow(),
+                        )
+                    }.getOrElse { legacyError ->
+                        syncNotice = "无法检查跨设备更新，未推进当前存档：${legacyError.message ?: "未知错误"}"
+                        null
+                    }
+                    when (decision?.action) {
+                        null -> Unit
+                        GameSaveRemoteAction.UP_TO_DATE -> {
+                            GameSaveHeadPublisher(app, config).publishSnapshot(cloudIdentity, record, archive)
+                                .onFailure { legacyError ->
+                                    uploadError = "云端同步公告失败：${legacyError.message ?: "未知错误"}"
+                                }
+                        }
+
+                        else -> {
+                            cloudUpdate = GameSaveCloudUpdate(entry, legacyDecision = decision)
+                            val device = decision.candidate?.head?.deviceName?.let { "$it 的" }.orEmpty()
+                            syncNotice = "检测到${device}跨设备版本，当前快照已上传但未更新云端当前存档"
                         }
                     }
-                } else {
-                    uploadError = "云端上传失败：${upload.exceptionOrNull()?.message ?: "未知错误"}"
                 }
             }
             return GameCaptureOutcome(
@@ -641,6 +691,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun inspectCloudUpdateLocked(
         entry: SourceGameEntry,
+        config: GameSaveConfig,
+        client: GameSaveClient,
         reader: GameSaveHeadReader,
         remoteSnapshots: List<RemoteSnapshot>,
     ): GameSaveCloudUpdate? {
@@ -648,16 +700,30 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         val manifest = GameSnapshotManifest.from(entry.game, saves)
         val selectedGame = entry.game.copy(saves = saves)
         val identity = GameCloudNaming.identity(entry.source, entry.sourceId, selectedGame)
-        if (!identity.desktopCompatible) return null
 
         val workspace = File(app.filesDir, ".cloud-check-${UUID.randomUUID()}")
         try {
             copyGameLocations(entry.source, manifest.locations, workspace).getOrThrow()
             manifest.write(File(workspace, GameSnapshotManifest.FILE_NAME))
             val fingerprint = AutoBackupPolicy.fingerprint(workspace)
+            val native = GameSaveNativeSync(app, config, client)
+            val nativeResult = native.check(identity, fingerprint.manifestHash)
+            nativeResult.getOrNull()?.let { decision ->
+                return decision.takeUnless { it.action == GameSaveRemoteAction.UP_TO_DATE }
+                    ?.let { GameSaveCloudUpdate(entry, nativeDecision = it) }
+            }
+            val nativeError = nativeResult.exceptionOrNull()
+            if (nativeError !is GameSaveScopesUnsupportedException) {
+                throw nativeError ?: error("读取 game-save 原生同步范围失败")
+            }
+
+            // Only an older server without the scope route may use the legacy
+            // announcement files, and that protocol is limited to the proven
+            // Root Switch layout shared with the desktop client.
+            if (!identity.desktopCompatible) return null
             val decision = reader.check(identity, fingerprint.manifestHash, remoteSnapshots)
             return decision.takeUnless { it.action == GameSaveRemoteAction.UP_TO_DATE }
-                ?.let { GameSaveCloudUpdate(entry, it) }
+                ?.let { GameSaveCloudUpdate(entry, legacyDecision = it) }
         } finally {
             workspace.deleteRecursively()
         }
@@ -672,7 +738,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             state.value = state.value.copy(busy = true, action = "正在列举云端快照", error = null)
             val result = withContext(Dispatchers.IO) {
-                runCatching { GameSaveClient(config).list().getOrThrow() }
+                runCatching { gameSaveClient(config).list().getOrThrow() }
             }
             result.onSuccess { files ->
                 state.value = state.value.copy(busy = false, action = "找到 ${files.size} 个云端快照", remoteSnapshots = files)
@@ -682,11 +748,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /**
-     * Reads every compatible Switch save and compares it with remote heads.
-     * This inspection only creates private workspaces; it never writes a game
-     * directory. Restores remain behind the normal confirmation dialog.
-     */
+    /** Inspects every selected save without writing outside a private workspace. */
     fun checkCloudUpdates() {
         if (state.value.busy) return
         val config = gameSaveConfigFromState()
@@ -695,9 +757,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         val entries = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(state.value.sourceScans))
-            .filter { entry -> GameCloudNaming.identity(entry.source, entry.sourceId, entry.game).desktopCompatible }
         if (entries.isEmpty()) {
-            updateState { copy(error = "请先扫描含有已识别 Switch TitleID 存档的来源") }
+            updateState { copy(error = "请先扫描含有已识别存档位置的来源") }
             return
         }
 
@@ -706,13 +767,15 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     StorageOperationLock.withLock {
-                        val client = GameSaveClient(config)
+                        val client = gameSaveClient(config)
                         val remoteSnapshots = client.list().getOrThrow()
                         val reader = GameSaveHeadReader(app, config, client)
                         val updates = mutableListOf<GameSaveCloudUpdate>()
                         val failures = mutableListOf<String>()
                         entries.forEach { entry ->
-                            runCatching { inspectCloudUpdateLocked(entry, reader, remoteSnapshots) }
+                            runCatching {
+                                inspectCloudUpdateLocked(entry, config, client, reader, remoteSnapshots)
+                            }
                                 .onSuccess { update -> update?.let(updates::add) }
                                 .onFailure { error ->
                                     failures += "${entry.game.presentation.primaryName}：${error.message ?: "无法检查"}"
@@ -742,14 +805,15 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun requestCloudUpdateRestore(update: GameSaveCloudUpdate) {
         val remote = update.remote ?: run {
-            updateState { copy(error = update.decision.message.ifBlank { "远端快照尚未就绪" }) }
+            updateState { copy(error = update.message.ifBlank { "远端快照尚未就绪" }) }
             return
         }
         updateState {
             copy(
                 pendingRestore = RestoreRequest(
                     remote = remote,
-                    remoteHead = update.decision.candidate,
+                    remoteHead = update.legacyHead,
+                    nativeHead = update.nativeHead,
                     game = update.entry.game,
                     source = update.entry.source,
                 ),
@@ -857,10 +921,18 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 require(request.remote.type == identity.saveType.id && request.remote.name.startsWith(GameCloudNaming.remotePrefix(identity))) {
                     "云端快照不属于当前游戏或存档来源"
                 }
+                request.nativeHead?.let { native ->
+                    require(native.remote.type == request.remote.type && native.remote.name == request.remote.name) {
+                        "原生云端快照与恢复请求不匹配"
+                    }
+                    require(native.snapshot.id == GameSaveNativeProtocol.archiveName(native.remote.name)?.snapshotId) {
+                        "原生云端快照身份无效"
+                    }
+                }
                 val downloaded = remoteCacheFile(request.remote)
                 if (!downloaded.isFile) {
                     val config = gameSaveStore.load()
-                    GameSaveClient(config).download(request.remote, downloaded).getOrThrow()
+                    gameSaveClient(config).download(request.remote, downloaded).getOrThrow()
                 }
                 downloaded
             }
@@ -950,14 +1022,22 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 is SourceSelection.Saf -> storage.restoreGameLocations(source.uri, manifest.locations, extractedRoot, safetyRoot)
                 is SourceSelection.Root -> rootStorage.restoreGameLocations(source.path, manifest.locations, extractedRoot)
             }.getOrThrow()
-            request.remote?.takeIf { GameCloudNaming.identity(source, sourceId, requestedGame).desktopCompatible }?.let { remote ->
+            val identity = GameCloudNaming.identity(source, sourceId, requestedGame)
+            request.nativeHead?.let { native ->
+                GameSaveNativeSync(app, gameSaveStore.load()).markRemoteRestore(
+                    identity = identity,
+                    candidate = native,
+                    manifestHash = restoredManifestHash,
+                    archiveFile = archive,
+                ).getOrThrow()
+            } ?: request.remote?.takeIf { identity.desktopCompatible }?.let { remote ->
                 GameSaveHeadPublisher(app, gameSaveStore.load()).markRemoteRestore(
-                    identity = GameCloudNaming.identity(source, sourceId, requestedGame),
+                    identity = identity,
                     remote = remote,
                     manifestHash = restoredManifestHash,
                     archiveFile = archive,
                     remoteHead = request.remoteHead,
-                )
+                ).getOrThrow()
             }
         } finally {
             workingRoot.deleteRecursively()
@@ -987,7 +1067,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             var uploadError: String? = null
             if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank() && !previous.uploaded) {
                 val recordType = GameSaveTypes.fromId(previous.saveType)
-                val uploadResult = GameSaveClient(config).upload(snapshotRepository.fileFor(previous), recordType, previous.remoteName)
+                val uploadResult = gameSaveClient(config).upload(snapshotRepository.fileFor(previous), recordType, previous.remoteName)
                 if (uploadResult.isSuccess) {
                     snapshotRepository.markUploaded(previous.id)
                 } else {
@@ -1021,7 +1101,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
         var uploadError: String? = null
         if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) {
-            val uploadResult = GameSaveClient(config).upload(build.archive, saveType, remoteName)
+            val uploadResult = gameSaveClient(config).upload(build.archive, saveType, remoteName)
             if (uploadResult.isSuccess) {
                 snapshotRepository.markUploaded(record.id)
             } else {
@@ -1051,7 +1131,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             ?: error("没有可恢复的快照")
         if (request.remote != null && !archive.isFile) {
             val config = gameSaveStore.load()
-            GameSaveClient(config).download(request.remote, archive).getOrThrow()
+            gameSaveClient(config).download(request.remote, archive).getOrThrow()
         }
         require(archive.isFile) { "快照文件不存在" }
 
@@ -1133,6 +1213,9 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         syncKey = state.value.gameSaveSyncKey,
     )
 
+    private fun gameSaveClient(config: GameSaveConfig) =
+        GameSaveClient(config, gameSaveDevice.identity())
+
     private fun remoteCacheFile(remote: RemoteSnapshot): File = File(
         app.filesDir,
         "$SNAPSHOT_DIRECTORY/remote-${remote.type}-${Hashing.sha256(remote.name).take(16)}.zip",
@@ -1148,7 +1231,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         incoming: List<GameSaveCloudUpdate>,
     ): List<GameSaveCloudUpdate> = (existing + incoming)
         .associateBy { update ->
-            "${update.entry.libraryKey}\u0000${update.remote?.name.orEmpty()}\u0000${update.decision.action}"
+            "${update.entry.libraryKey}\u0000${update.remote?.name.orEmpty()}\u0000${update.action}"
         }
         .values
         .sortedWith(

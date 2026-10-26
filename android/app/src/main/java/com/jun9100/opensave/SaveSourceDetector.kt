@@ -215,7 +215,10 @@ object SaveSourceDetector {
         val saveIndex = fullParts.indexOfLast { it.equals("save", ignoreCase = true) }
         if (saveIndex < 1 || fullParts.getOrNull(saveIndex - 1)?.equals("user", ignoreCase = true) != true) return
         if (fullParts.size <= saveIndex + 2) return
-        if (fullParts.take(saveIndex).any { it.lowercase() in ignoredPathNames }) return
+        // Ignore cache/log-like directories inside the selected root only. The
+        // selected root itself may legitimately live below /tmp during a test
+        // or inside a user-named cache directory, and must remain scannable.
+        if (relativeParts.any { it.lowercase() in ignoredPathNames }) return
 
         val family = when {
             fullParts.any { it.equals("bis", ignoreCase = true) } -> "ryujinx-switch"

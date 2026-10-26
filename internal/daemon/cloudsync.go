@@ -84,6 +84,15 @@ type cloudReader struct {
 	// snapshots, restores, uploads and answers all update from their own
 	// goroutines.
 	heads sync.Mutex
+	// native serializes game-save scope uploads. A CAS parent is a causal
+	// dependency, so two local snapshots must not race to submit it.
+	native sync.Mutex
+	// pulls marks the short restore window for a cloud-originated save. A
+	// RestoreKeeping without ignore rules delegates to Restore, whose normal
+	// callback would otherwise reset the just-confirmed native CAS head and
+	// enqueue an upload back to the service.
+	pullsMu sync.Mutex
+	pulls   map[string]int
 
 	offersMu sync.Mutex
 	offers   []CloudOffer
@@ -107,7 +116,13 @@ func cloudSnapshotName(gameID, branch, snapID string) string {
 
 // snapMillis reads the moment out of a snap_<unix ms> id; 0 when it has none.
 func snapMillis(snapID string) int64 {
-	ms, err := strconv.ParseInt(strings.TrimPrefix(snapID, "snap_"), 10, 64)
+	msText := strings.TrimPrefix(snapID, "snap_")
+	// Native game-save scopes add --dev-<device> to preserve identity across
+	// devices. The timestamp remains the local snap_ prefix, not the suffix.
+	if base, _, ok := strings.Cut(msText, "--"); ok {
+		msText = base
+	}
+	ms, err := strconv.ParseInt(msText, 10, 64)
 	if err != nil {
 		return 0
 	}
@@ -236,6 +251,11 @@ func (d *Daemon) noteSnapshotForCloud(snap store.Snapshot, current bool) {
 // restore is not what its save carries on from any more — whether the
 // snapshot came from another device or from this one's own past.
 func (d *Daemon) noteRestoreForCloud(snap store.Snapshot) {
+	if d.cloudPullActive(snap.GameID) {
+		// pullFromCloud records the exact server head after the restore returns.
+		// Do not turn a remote restore into a local rollback publication.
+		return
+	}
 	game, err := d.Store.GetGame(snap.GameID)
 	if err != nil {
 		return
@@ -248,6 +268,10 @@ func (d *Daemon) noteRestoreForCloud(snap store.Snapshot) {
 		rec.File = cloudSnapshotName(game.ID, snap.BranchName, snap.ID)
 		rec.Chain = []string{snap.ID}
 		rec.ContentAt = d.contentAtForSnapshot(snap)
+		// A manual restore intentionally moves this device to an earlier local
+		// point. It is not evidence that the restored snapshot is still the
+		// current native cloud head, so the next upload must be conflict-safe.
+		rec.NativeHead = ""
 		rec.Published = ""
 		err = d.Store.SetCloudHead(rec)
 	}
@@ -277,6 +301,16 @@ func (d *Daemon) publishHead(gameID string) error {
 	ok := rec.Snapshot != ""
 	if err != nil || !ok || rec.Snapshot == "" {
 		return err
+	}
+	if cfg.Provider == cloud.GameSaveProvider {
+		// Native game-save scopes are the authority. Do not create a legacy
+		// head ZIP once the service advertises them. Only a route-level scope
+		// GET 404 is a staged-server upgrade case; it deliberately falls
+		// through to the old head protocol below.
+		handled, nativeErr := d.publishNativeGameSaveCurrent(game, rec)
+		if handled || nativeErr != nil {
+			return nativeErr
+		}
 	}
 	if rec.ContentAt <= 0 {
 		if d.Log != nil {
@@ -530,6 +564,9 @@ func (d *Daemon) CheckCloud() {
 		d.setCloudOffers(nil)
 		return
 	}
+	if cfg.Provider == cloud.GameSaveProvider && d.checkNativeGameSaveScopes() {
+		return
+	}
 	files, err := d.Cloud.List()
 	if err != nil {
 		if cloud.IsNotConfigured(err) {
@@ -757,9 +794,18 @@ func (d *Daemon) pruneOwnHeads(files []cloud.CloudFile) {
 // device's save. The save it replaces is kept first, as every restore keeps
 // it.
 func (d *Daemon) pullFromCloud(game store.Game, fileName, deviceName string) error {
-	_, branch, snapID, ok := snapshot.ParseExportEntryName(fileName)
-	if !ok {
-		return fmt.Errorf("%q is not a snapshot", fileName)
+	branch, snapID, nativeHead := "", "", ""
+	if archiveGameID, archiveBranch, remoteID, native := cloud.ParseGameSaveArchiveName(fileName); native {
+		if archiveGameID != game.ID {
+			return fmt.Errorf("native archive %q belongs to %q, not %q", fileName, archiveGameID, game.ID)
+		}
+		branch, snapID, nativeHead = archiveBranch, remoteID, remoteID
+	} else {
+		_, archiveBranch, archiveID, ok := snapshot.ParseExportEntryName(fileName)
+		if !ok {
+			return fmt.Errorf("%q is not a snapshot", fileName)
+		}
+		branch, snapID = archiveBranch, archiveID
 	}
 	settings, err := d.Store.GetSettings()
 	if err != nil {
@@ -780,8 +826,12 @@ func (d *Daemon) pullFromCloud(game store.Game, fileName, deviceName string) err
 	if err := d.EnsureImportedSnapshot(game.ID, branch, snapID, destPath, info.Size()); err != nil {
 		return err
 	}
-	// Another device's save: the files this device keeps for itself stay
-	// its own. See Manager.RestoreKeeping.
+	// Another device's save: the files this device keeps for itself stay its
+	// own. Suppress Restore's ordinary callback while this particular remote
+	// snapshot is applied; noteCloudPullForCloud below writes the authoritative
+	// native CAS state only after the restore completed.
+	finishPull := d.beginCloudPull(game.ID)
+	defer finishPull()
 	if _, err := d.Snapshots.RestoreKeeping(game.ID, snapID, ignore.Parse(game.SyncIgnore)); err != nil {
 		return err
 	}
@@ -791,7 +841,7 @@ func (d *Daemon) pullFromCloud(game store.Game, fileName, deviceName string) err
 	if hash, err := d.currentContentHash(game); err == nil {
 		_ = d.Store.SetLastManifestHash(game.ID, hash)
 	}
-	if err := d.noteCloudPullForCloud(game, snapID, fileName, destPath); err != nil {
+	if err := d.noteCloudPullForCloud(game, snapID, fileName, destPath, nativeHead); err != nil {
 		return err
 	}
 	d.Log.Log("success", fmt.Sprintf("cloud: brought %s's save for %q here", deviceName, game.Name))
@@ -803,11 +853,9 @@ func (d *Daemon) pullFromCloud(game store.Game, fileName, deviceName string) err
 }
 
 // noteCloudPullForCloud makes a remotely restored snapshot the local head.
-// RestoreKeeping intentionally does not trigger Snapshot.Manager's restore
-// hook, so without this update a machine would keep publishing the snapshot it
-// had before the pull. That stale announcement was able to later overwrite a
-// newer save on another device.
-func (d *Daemon) noteCloudPullForCloud(game store.Game, snapshotID, fileName, zipPath string) error {
+// It runs after the guarded RestoreKeeping call, so it is the only transition
+// allowed to describe a cloud-originated restore to the upload path.
+func (d *Daemon) noteCloudPullForCloud(game store.Game, snapshotID, fileName, zipPath, nativeHead string) error {
 	contentAt, err := snapshotContentModifiedAt(zipPath)
 	if err != nil {
 		contentAt = 0
@@ -824,6 +872,10 @@ func (d *Daemon) noteCloudPullForCloud(game store.Game, snapshotID, fileName, zi
 		rec.File = fileName
 		rec.Chain = []string{snapshotID}
 		rec.ContentAt = contentAt
+		// A native archive's suffix is the server-issued scope snapshot id. A
+		// legacy pull deliberately clears any old native confirmation so a later
+		// server upgrade cannot treat an unrelated local snapshot as authoritative.
+		rec.NativeHead = nativeHead
 		rec.Published = ""
 		rec.Dismissed = ""
 		err = d.Store.SetCloudHead(rec)
@@ -839,6 +891,30 @@ func (d *Daemon) noteCloudPullForCloud(game store.Game, snapshotID, fileName, zi
 		_ = d.publishHead(game.ID)
 	}()
 	return nil
+}
+
+func (d *Daemon) beginCloudPull(gameID string) func() {
+	d.cloudRd.pullsMu.Lock()
+	if d.cloudRd.pulls == nil {
+		d.cloudRd.pulls = make(map[string]int)
+	}
+	d.cloudRd.pulls[gameID]++
+	d.cloudRd.pullsMu.Unlock()
+	return func() {
+		d.cloudRd.pullsMu.Lock()
+		if count := d.cloudRd.pulls[gameID]; count <= 1 {
+			delete(d.cloudRd.pulls, gameID)
+		} else {
+			d.cloudRd.pulls[gameID] = count - 1
+		}
+		d.cloudRd.pullsMu.Unlock()
+	}
+}
+
+func (d *Daemon) cloudPullActive(gameID string) bool {
+	d.cloudRd.pullsMu.Lock()
+	defer d.cloudRd.pullsMu.Unlock()
+	return d.cloudRd.pulls[gameID] > 0
 }
 
 // AcceptCloudOffer takes the offered save.

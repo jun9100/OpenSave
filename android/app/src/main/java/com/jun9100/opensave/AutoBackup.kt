@@ -95,7 +95,7 @@ class AutoBackupWorker(
         val rootStorage = RootStorage(applicationContext)
         val installedGameCatalog = InstalledGameCatalog(applicationContext)
         val repository = SnapshotRepository(File(applicationContext.filesDir, SNAPSHOT_DIRECTORY))
-        val client = GameSaveClient(config)
+        val client = GameSaveClient(config, GameSaveDeviceStore(applicationContext).identity())
         // Do not publish a local current-save head until the latest remote
         // heads have been inspected. A failed read is retried rather than
         // turning an offline device's progress into the new cloud current.
@@ -124,6 +124,7 @@ class AutoBackupWorker(
                         storage = storage,
                         rootStorage = rootStorage,
                         config = config,
+                        client = client,
                         remoteSnapshots = remoteSnapshots,
                         headReader = headReader,
                     )
@@ -192,6 +193,7 @@ class AutoBackupWorker(
         storage: SafStorage,
         rootStorage: RootStorage,
         config: GameSaveConfig,
+        client: GameSaveClient,
         remoteSnapshots: List<RemoteSnapshot>,
         headReader: GameSaveHeadReader,
     ): GameBackupOutcome {
@@ -210,7 +212,38 @@ class AutoBackupWorker(
             val fingerprint = AutoBackupPolicy.fingerprint(workspace)
             if (fingerprint.dataFileCount == 0) return GameBackupOutcome.Skipped
 
-            if (cloudIdentity.desktopCompatible) {
+            val native = GameSaveNativeSync(applicationContext, config, client)
+            val nativeResult = native.check(cloudIdentity, fingerprint.manifestHash)
+            val nativeDecision = nativeResult.getOrNull()
+            if (nativeDecision == null) {
+                val nativeError = nativeResult.exceptionOrNull()
+                if (nativeError !is GameSaveScopesUnsupportedException) {
+                    throw nativeError ?: error("读取 game-save 原生同步范围失败")
+                }
+            } else {
+                when (nativeDecision.action) {
+                    GameSaveRemoteAction.AUTO_RESTORE -> {
+                        // Background writes remain limited to the Root Switch
+                        // layout already proven portable with the desktop app.
+                        return GameBackupOutcome.Deferred(
+                            "检测到连续的云端更新，已等待在应用中确认恢复",
+                            retryable = false,
+                        )
+                    }
+
+                    GameSaveRemoteAction.REVIEW_REQUIRED -> {
+                        return GameBackupOutcome.Deferred(nativeDecision.message, retryable = false)
+                    }
+
+                    GameSaveRemoteAction.WAIT_FOR_REMOTE -> {
+                        return GameBackupOutcome.Deferred(nativeDecision.message, retryable = true)
+                    }
+
+                    GameSaveRemoteAction.UP_TO_DATE -> Unit
+                }
+            }
+
+            if (nativeDecision == null && cloudIdentity.desktopCompatible) {
                 val decision = headReader.check(
                     identity = cloudIdentity,
                     currentManifestHash = fingerprint.manifestHash,
@@ -229,6 +262,7 @@ class AutoBackupWorker(
                             repository = repository,
                             rootStorage = rootStorage,
                             config = config,
+                            client = client,
                             identity = cloudIdentity,
                             candidate = candidate,
                         )
@@ -253,7 +287,7 @@ class AutoBackupWorker(
             // to publish. Reuse that archive on the next worker run so the
             // desktop client eventually receives the automatic-sync signal.
             val existing = matching.firstOrNull { repository.fileFor(it).isFile }
-            if (existing?.uploaded == true) {
+            if (nativeDecision == null && existing?.uploaded == true) {
                 return publishCurrentHead(config, cloudIdentity, existing, repository.fileFor(existing))
             }
             val pending = existing
@@ -267,7 +301,11 @@ class AutoBackupWorker(
                 cloudIdentity = cloudIdentity,
             )
 
-            return GameSaveClient(config).upload(repository.fileFor(record), cloudIdentity.saveType, record.remoteName).fold(
+            if (nativeDecision != null) {
+                return publishNativeCurrentHead(native, cloudIdentity, record, repository.fileFor(record), repository)
+            }
+
+            return client.upload(repository.fileFor(record), cloudIdentity.saveType, record.remoteName).fold(
                 onSuccess = {
                     repository.markUploaded(record.id)
                     publishCurrentHead(config, cloudIdentity, record, repository.fileFor(record))
@@ -294,6 +332,7 @@ class AutoBackupWorker(
         repository: SnapshotRepository,
         rootStorage: RootStorage,
         config: GameSaveConfig,
+        client: GameSaveClient,
         identity: GameCloudIdentity,
         candidate: GameSaveRemoteHead,
     ): GameBackupOutcome {
@@ -302,7 +341,7 @@ class AutoBackupWorker(
         val location = manifest.locations.singleOrNull()
             ?: return GameBackupOutcome.Deferred("Switch 存档位置不是唯一目录，已等待确认", retryable = false)
         val remoteArchive = remoteCacheFile(candidate.archive)
-        GameSaveClient(config).download(candidate.archive, remoteArchive).getOrThrow()
+        client.download(candidate.archive, remoteArchive).getOrThrow()
 
         val workingRoot = File(applicationContext.filesDir, ".auto-game-restore-${java.util.UUID.randomUUID()}")
         val portableRoot = File(workingRoot, "portable")
@@ -428,6 +467,26 @@ class AutoBackupWorker(
             onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
         )
     }
+
+    private fun publishNativeCurrentHead(
+        native: GameSaveNativeSync,
+        cloudIdentity: GameCloudIdentity,
+        record: SnapshotRecord,
+        archiveFile: File,
+        repository: SnapshotRepository,
+    ): GameBackupOutcome = native.publishSnapshot(cloudIdentity, record, archiveFile).fold(
+        onSuccess = { result ->
+            repository.markUploaded(record.id)
+            when (result) {
+                is GameSaveNativePublishResult.Confirmed -> GameBackupOutcome.Uploaded
+                is GameSaveNativePublishResult.Conflict -> GameBackupOutcome.Deferred(
+                    "本机版本已保留为云端冲突副本，当前存档没有被覆盖",
+                    retryable = false,
+                )
+            }
+        },
+        onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
+    )
 
     private fun asGameSaveError(error: Throwable): GameSaveException = when (error) {
         is GameSaveException -> error

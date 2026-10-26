@@ -68,6 +68,8 @@ const MaxHeadChain = 64
 
 const headEntry = "head.json"
 
+const gameSaveDeviceSuffix = "--dev-"
+
 // headNameRe matches <gameId>__head-<device>-<unix ms>.zip. The device part
 // is DeviceKey's alphabet, so the dashes around it are unambiguous.
 var headNameRe = regexp.MustCompile(`^(.+)__head-([a-z0-9]+)-(\d+)\.zip$`)
@@ -81,6 +83,44 @@ func DeviceKey(deviceID string) string {
 		}
 	}
 	return b.String()
+}
+
+// GameSaveSnapshotID turns a device-local snapshot id into an identifier that
+// is safe to use as a game-save scope snapshot id. Local snapshots retain
+// their historical snap_<millis> ids, while the server-facing suffix prevents
+// two devices creating different archives during the same millisecond from
+// colliding.
+func GameSaveSnapshotID(snapshotID, deviceID string) string {
+	key := DeviceKey(deviceID)
+	if snapshotID == "" || key == "" {
+		return ""
+	}
+	return snapshotID + gameSaveDeviceSuffix + key
+}
+
+// GameSaveArchiveName names a native game-save archive. It intentionally
+// keeps the conventional three-part archive layout so legacy readers can
+// still recognize it as a snapshot, while the final component remains unique
+// per source device.
+func GameSaveArchiveName(gameID, branch, snapshotID, deviceID string) string {
+	remoteSnapshotID := GameSaveSnapshotID(snapshotID, deviceID)
+	if gameID == "" || branch == "" || remoteSnapshotID == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s__%s__%s.zip", gameID, branch, remoteSnapshotID)
+}
+
+// ParseGameSaveArchiveName recognizes the device-unique archive format. The
+// returned snapshot id is the server-facing id, not the local snap_<millis>
+// id, and is therefore suitable for a scope parent or head comparison.
+func ParseGameSaveArchiveName(name string) (gameID, branch, snapshotID string, ok bool) {
+	name = strings.TrimSuffix(name, ".zip")
+	parts := strings.SplitN(name, "__", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" ||
+		!strings.Contains(parts[2], gameSaveDeviceSuffix) {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
 }
 
 // HeadFileName names a head written at a given moment. The time is in the

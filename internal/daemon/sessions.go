@@ -414,7 +414,10 @@ func (d *Daemon) markSessionEnd(game store.Game, hash string, started time.Time,
 		snaps, err := d.Store.ListSnapshots(game.ID, game.ActiveBranch)
 		if err == nil && len(snaps) > 0 {
 			latest := snaps[0] // newest first
-			if at, perr := time.Parse(time.RFC3339Nano, latest.Timestamp); perr == nil && !at.Before(started) && latest.IsSystemAuto {
+			// Snapshot timestamps are stored at millisecond precision. Comparing a
+			// parsed millisecond timestamp with the nanosecond session start makes a
+			// snapshot created later in that same millisecond look older.
+			if at, perr := time.Parse(time.RFC3339Nano, latest.Timestamp); perr == nil && at.UnixMilli() >= started.UnixMilli() && latest.IsSystemAuto {
 				return d.Store.SetSnapshotComment(latest.ID, comment)
 			}
 		}

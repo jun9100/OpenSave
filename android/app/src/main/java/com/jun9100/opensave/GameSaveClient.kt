@@ -13,6 +13,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 
@@ -29,10 +30,64 @@ data class UploadReport(
     val sizeBytes: Long,
 )
 
-class GameSaveException(message: String, val retryable: Boolean = false) : Exception(message)
+/** One immutable archive proposal for a typed game-save scope. */
+data class GameSaveScopeCandidate(
+    val id: String,
+    val archive: String,
+    val parent: String,
+    val contentDigest: String,
+    val createdAt: String,
+)
+
+/** Server-audited native scope snapshot. Device fields are informative only. */
+data class GameSaveScopeSnapshot(
+    val id: String,
+    val archive: String,
+    val parent: String,
+    val contentDigest: String,
+    val createdAt: String,
+    val receivedAt: String,
+    val device: String = "",
+    val deviceName: String = "",
+    val platform: String = "",
+    val conflict: Boolean = false,
+    val conflictOf: String = "",
+)
+
+/** The authoritative state for exactly one `{type}/{gameId}` native scope. */
+data class GameSaveScope(
+    val type: String,
+    val gameId: String,
+    val head: GameSaveScopeSnapshot?,
+    val snapshots: List<GameSaveScopeSnapshot>,
+    val conflicts: List<GameSaveScopeSnapshot>,
+)
+
+/** Stable client identity sent with native game-save requests for audit only. */
+data class GameSaveDeviceIdentity(
+    val id: String,
+    val name: String,
+    val platform: String = "opensave-android",
+    val version: String = "",
+)
+
+open class GameSaveException(message: String, val retryable: Boolean = false) : Exception(message)
+
+/** Only a route-level GET 404 permits the old ZIP-head compatibility path. */
+class GameSaveScopesUnsupportedException : GameSaveException(
+    "当前 game-save 服务尚不支持原生存档范围同步",
+)
+
+/** A CAS write lost its race; the caller must retain a conflict copy. */
+class GameSaveScopeConflictException(val head: String) : GameSaveException(
+    if (head.isBlank()) "云端当前存档已变化" else "云端当前存档已变化：$head",
+)
 
 /** Native game-save API client. Every request is bearer-authenticated and type-scoped. */
-class GameSaveClient(private val config: GameSaveConfig) {
+class GameSaveClient(
+    private val config: GameSaveConfig,
+    private val device: GameSaveDeviceIdentity? = null,
+) {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -118,15 +173,164 @@ class GameSaveClient(private val config: GameSaveConfig) {
         }
     }.mapFailure()
 
+    /**
+     * Reads a native typed scope. Unlike missing files, an empty scope is a
+     * successful 200 response with `head: null`; only a route-level 404 means
+     * the NAS is still on a pre-CAS image and may use the legacy fallback.
+     */
+    fun getScope(type: GameSaveType, gameId: String): Result<GameSaveScope> = runCatching {
+        validateScope(type, gameId)
+        execute(request(scopeEndpoint(type.id, gameId))).use { response ->
+            if (response.code == 404) throw GameSaveScopesUnsupportedException()
+            requireSuccess(response, "读取 game-save 当前存档")
+            parseScope(response.body?.string().orEmpty(), type.id, gameId)
+        }
+    }.mapFailure()
+
+    /** Advances a scope only when `expectedHead` remains the confirmed parent. */
+    fun putScopeSnapshot(
+        type: GameSaveType,
+        gameId: String,
+        candidate: GameSaveScopeCandidate,
+        expectedHead: String,
+    ): Result<GameSaveScopeSnapshot> = putScopeCandidate(
+        type = type,
+        gameId = gameId,
+        candidate = candidate,
+        expectedHead = expectedHead,
+        conflict = false,
+    )
+
+    /** Retains a divergent archive without changing the scope head. */
+    fun putScopeConflict(
+        type: GameSaveType,
+        gameId: String,
+        candidate: GameSaveScopeCandidate,
+    ): Result<GameSaveScopeSnapshot> = putScopeCandidate(
+        type = type,
+        gameId = gameId,
+        candidate = candidate,
+        expectedHead = "",
+        conflict = true,
+    )
+
     private fun validateRemote(remote: RemoteSnapshot) {
         require(GameSaveTypes.isValid(remote.type)) { "云端快照类型无效" }
         require(PathPolicy.isSafeDocumentName(remote.name) && remote.name.endsWith(".zip")) { "云端快照名称无效" }
     }
 
+    private fun putScopeCandidate(
+        type: GameSaveType,
+        gameId: String,
+        candidate: GameSaveScopeCandidate,
+        expectedHead: String,
+        conflict: Boolean,
+    ): Result<GameSaveScopeSnapshot> = runCatching {
+        validateScope(type, gameId)
+        require(isSafeScopeSnapshotId(candidate.id)) { "云端快照标识无效" }
+        require(PathPolicy.isSafeDocumentName(candidate.archive) && candidate.archive.endsWith(".zip")) {
+            "云端快照名称无效"
+        }
+        require(candidate.parent.isBlank() || isSafeScopeSnapshotId(candidate.parent)) { "云端父快照标识无效" }
+        require(candidate.contentDigest.matches(SHA256_PATTERN)) { "云端快照摘要无效" }
+        require(candidate.createdAt.isNotBlank()) { "云端快照创建时间无效" }
+        val path = scopeEndpoint(type.id, gameId) +
+            if (conflict) "/conflicts/${encodePathSegment(candidate.id)}" else "/snapshots/${encodePathSegment(candidate.id)}"
+        val body = JSONObject()
+            .put("id", candidate.id)
+            .put("archive", candidate.archive)
+            .put("parent", candidate.parent)
+            .put("contentDigest", candidate.contentDigest)
+            .put("createdAt", candidate.createdAt)
+            .toString()
+            .toRequestBody(JSON_MEDIA_TYPE)
+        val request = request(path)
+            .put(body)
+            .header("Content-Type", "application/json")
+        if (!conflict) request.header("If-Match", "\"$expectedHead\"")
+        execute(request).use { response ->
+            if (response.code == 409) {
+                val head = runCatching { JSONObject(response.body?.string().orEmpty()).optString("head").trim() }
+                    .getOrDefault("")
+                throw GameSaveScopeConflictException(head)
+            }
+            requireSuccess(response, if (conflict) "保留 game-save 冲突快照" else "更新 game-save 当前存档")
+            parseScopeSnapshot(JSONObject(response.body?.string().orEmpty()))
+        }
+    }.mapFailure()
+
+    private fun parseScope(body: String, expectedType: String, expectedGameId: String): GameSaveScope {
+        val json = JSONObject(body)
+        val type = json.optString("type").trim().lowercase()
+        val gameId = json.optString("gameId").trim()
+        require(type == expectedType && gameId == expectedGameId) { "game-save 返回了不匹配的存档范围" }
+        val snapshots = json.optJSONArray("snapshots").toScopeSnapshots()
+        val conflicts = json.optJSONArray("conflicts").toScopeSnapshots()
+        val head = json.optJSONObject("head")?.let(::parseScopeSnapshot)
+        if (head != null) {
+            require(head.id.isNotBlank() && snapshots.any { it.id == head.id }) { "game-save 当前存档状态无效" }
+        }
+        return GameSaveScope(type, gameId, head, snapshots, conflicts)
+    }
+
+    private fun org.json.JSONArray?.toScopeSnapshots(): List<GameSaveScopeSnapshot> = buildList {
+        if (this@toScopeSnapshots == null) return@buildList
+        for (index in 0 until this@toScopeSnapshots.length()) {
+            this@toScopeSnapshots.optJSONObject(index)?.let { add(parseScopeSnapshot(it)) }
+        }
+    }
+
+    private fun parseScopeSnapshot(json: JSONObject): GameSaveScopeSnapshot {
+        val id = json.optString("id").trim()
+        val archive = json.optString("archive").trim()
+        val parent = json.optString("parent").trim()
+        val digest = json.optString("contentDigest").trim().lowercase()
+        val createdAt = json.optString("createdAt").trim()
+        val receivedAt = json.optString("receivedAt").trim()
+        require(isSafeScopeSnapshotId(id)) { "game-save 返回了无效快照标识" }
+        require(PathPolicy.isSafeDocumentName(archive) && archive.endsWith(".zip")) { "game-save 返回了无效快照名称" }
+        require(parent.isBlank() || isSafeScopeSnapshotId(parent)) { "game-save 返回了无效父快照标识" }
+        require(digest.matches(SHA256_PATTERN)) { "game-save 返回了无效快照摘要" }
+        require(createdAt.isNotBlank() && receivedAt.isNotBlank()) { "game-save 返回了无效快照时间" }
+        return GameSaveScopeSnapshot(
+            id = id,
+            archive = archive,
+            parent = parent,
+            contentDigest = digest,
+            createdAt = createdAt,
+            receivedAt = receivedAt,
+            device = json.optString("device").trim(),
+            deviceName = json.optString("deviceName").trim(),
+            platform = json.optString("platform").trim(),
+            conflict = json.optBoolean("conflict"),
+            conflictOf = json.optString("conflictOf").trim(),
+        )
+    }
+
+    private fun validateScope(type: GameSaveType, gameId: String) {
+        require(GameSaveTypes.isValid(type.id)) { "存档类型无效" }
+        require(SCOPE_GAME_ID_PATTERN.matches(gameId)) { "游戏同步标识无效" }
+    }
+
     private fun request(url: String): Request.Builder = Request.Builder()
         .url(url)
         .header("Authorization", "Bearer ${config.syncKey}")
-        .header("X-Eden-Platform", "opensave-android")
+        .also(::applyDeviceHeaders)
+
+    private fun applyDeviceHeaders(request: Request.Builder) {
+        val identity = device
+        val platform = identity?.platform ?: "opensave-android"
+        // Keep released servers observable during a staggered upgrade while
+        // preferring the OpenSave-specific family in current game-save builds.
+        for (family in listOf("X-OpenSave", "X-Eden")) {
+            request.header("$family-Platform", platform)
+            if (identity != null) {
+                request.header("$family-Device-ID", identity.id)
+                request.header("$family-Device-Name", identity.name)
+                if (identity.version.isNotBlank()) request.header("$family-Version", identity.version)
+            }
+        }
+    }
 
     private fun execute(builder: Request.Builder): Response = httpClient.newCall(builder.build()).execute()
 
@@ -141,6 +345,9 @@ class GameSaveClient(private val config: GameSaveConfig) {
 
     private fun listEndpoint(): String = "$serviceUrl/v1/opensave/files"
 
+    private fun scopeEndpoint(type: String, gameId: String): String =
+        "$serviceUrl/v1/opensave/scopes/${encodePathSegment(type)}/${encodePathSegment(gameId)}"
+
     private fun fileEndpoint(type: String, name: String): String =
         "${listEndpoint()}/${encodePathSegment(type)}/${encodePathSegment(name)}"
 
@@ -154,6 +361,10 @@ class GameSaveClient(private val config: GameSaveConfig) {
 
     companion object {
         private val ZIP_MEDIA_TYPE = "application/zip".toMediaType()
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private val SHA256_PATTERN = Regex("^[a-f0-9]{64}$")
+        private val SCOPE_GAME_ID_PATTERN = Regex("^[a-z0-9][a-z0-9_.-]{0,127}$", RegexOption.IGNORE_CASE)
+        private val SCOPE_SNAPSHOT_ID_PATTERN = Regex("^[a-z0-9][a-z0-9_.-]{0,191}$", RegexOption.IGNORE_CASE)
         private const val BUFFER_SIZE = 1024 * 1024
         private const val TIMEOUT_MS = 30L * 1000L
 
@@ -184,5 +395,8 @@ class GameSaveClient(private val config: GameSaveConfig) {
 
         private fun encodePathSegment(value: String): String =
             URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+
+        private fun isSafeScopeSnapshotId(value: String): Boolean =
+            SCOPE_SNAPSHOT_ID_PATTERN.matches(value)
     }
 }

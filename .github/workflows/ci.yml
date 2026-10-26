@@ -51,6 +51,23 @@ jobs:
       - run: npx tsc --noEmit -p .
       - run: npm run build
 
+  # The release workflow intentionally publishes Windows artifacts only. This
+  # job compiles and runs Android's local unit tests without creating an APK,
+  # so native game-save protocol changes cannot ship untested.
+  android-unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - run: ./gradlew :app:testDebugUnitTest --no-daemon
+
   tests:
     runs-on: ${{ matrix.os }}
     strategy:

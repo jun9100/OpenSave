@@ -545,6 +545,31 @@ func SteamCoverURL(appID string) string {
 // incremented by the caller, and it owns releasing that count.
 func (d *Daemon) runCloudUpload(zipPath, remoteFileName, retryKey string, log *logging.Logger) {
 	defer d.uploads.Done()
+	if cfg, err := d.Store.GetCloudConfig(); err == nil && cfg.Provider == cloud.GameSaveProvider {
+		handled, nativeErr := d.runGameSaveScopeUpload(zipPath, remoteFileName)
+		if handled {
+			if nativeErr != nil {
+				if !cloud.IsNotConfigured(nativeErr) {
+					log.Log("error", fmt.Sprintf("game-save upload of %s failed: %v — it will be sent again once the cloud can be reached", remoteFileName, nativeErr))
+					d.noteUploadFailed(zipPath, remoteFileName, retryKey)
+				}
+				return
+			}
+			if retryKey == "" {
+				if gameID, _, _, ok := snapshot.ParseExportEntryName(remoteFileName); ok {
+					saveType := "pc"
+					if game, err := d.Store.GetGame(gameID); err == nil {
+						saveType = game.SaveType
+					}
+					retryKey = cloud.RetryKey(saveType, remoteFileName)
+				}
+			}
+			if retryKey != "" {
+				_ = d.Store.ForgetCloudRetry(retryKey)
+			}
+			return
+		}
+	}
 
 	// Whole, even if it has been compacted since it was queued (a pause can
 	// hold an upload back for as long as it lasts).
@@ -1064,6 +1089,9 @@ func (d *Daemon) EnsureImportedSnapshot(gameID, branch, snapID, zipPath string, 
 
 func snapIDToTimestamp(snapID string) string {
 	msStr := strings.TrimPrefix(snapID, "snap_")
+	if base, _, ok := strings.Cut(msStr, "--"); ok {
+		msStr = base
+	}
 	ms, err := strconv.ParseInt(msStr, 10, 64)
 	if err != nil {
 		return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")

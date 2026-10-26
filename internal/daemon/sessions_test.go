@@ -101,6 +101,47 @@ func TestSessionNamesTheSnapshotAlreadyTaken(t *testing.T) {
 	}
 }
 
+// A snapshot ID and its persisted timestamp have millisecond precision. A
+// session may start later in the same millisecond; it must still reuse the
+// watcher snapshot instead of taking a duplicate Auto backup.
+func TestSessionNamesSnapshotTakenDuringStartMillisecond(t *testing.T) {
+	d := newTestDaemon(t)
+	g, dir := sessionGame(t, d, "watched-same-millisecond")
+	start := time.UnixMilli(1_700_000_000_123).Add(999 * time.Microsecond)
+	d.sessions.tracker.Begin(g.ID, start)
+
+	if err := os.WriteFile(filepath.Join(dir, "slot1.sav"), []byte("saved at the checkpoint"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Store.CreateSnapshot(store.Snapshot{
+		ID:           "snap_1700000000123",
+		GameID:       g.ID,
+		BranchName:   "main",
+		Timestamp:    time.UnixMilli(start.UnixMilli()).UTC().Format(time.RFC3339Nano),
+		Comment:      "Auto backup",
+		IsSystemAuto: true,
+		ZipPath:      filepath.Join(t.TempDir(), "watcher.zip"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	game, err := d.Store.GetGame(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := d.currentContentHash(game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Store.SetLastManifestHash(g.ID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	d.sessions.tracker.Finish(g.ID, start.Add(45*time.Minute))
+	if got := snapComments(t, d, g.ID); len(got) != 1 || got[0] != "After playing (45 min)" {
+		t.Errorf("snapshots = %q, want the watcher snapshot renamed for the session", got)
+	}
+}
+
 // A session that changed nothing takes nothing; one too short to be play is
 // not recorded at all.
 func TestSessionsThatLeaveNothing(t *testing.T) {

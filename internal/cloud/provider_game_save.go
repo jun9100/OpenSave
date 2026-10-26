@@ -7,11 +7,13 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/opensave/opensave/internal/snapshot"
 	"github.com/opensave/opensave/internal/store"
+	"github.com/opensave/opensave/internal/version"
 )
 
 // NormalizeGameSaveURL validates a game-save service address. Native
@@ -89,9 +91,28 @@ func (p gameSave) endpoint(kind, name string) string {
 	return strings.TrimRight(p.cfg.URL, "/") + "/v1/opensave/files/" + url.PathEscape(kind) + "/" + url.PathEscape(name)
 }
 
-func (p gameSave) authorize(req *http.Request) {
+func (p gameSave) authorize(req *http.Request) error {
+	settings, err := p.s.Store.GetSettings()
+	if err != nil {
+		return fmt.Errorf("read OpenSave device identity: %w", err)
+	}
+	deviceID := strings.TrimSpace(settings.NodeID)
+	deviceName := strings.TrimSpace(settings.DeviceName)
+	if deviceName == "" {
+		deviceName = "OpenSave " + runtime.GOOS
+	}
+	platform := "opensave-" + runtime.GOOS
 	req.Header.Set("Authorization", "Bearer "+p.token())
-	req.Header.Set("X-Eden-Platform", "opensave")
+	// Send both header families while clients and servers upgrade independently.
+	// game-save prefers X-OpenSave-*; released eden-syncd-compatible services
+	// only recognize the X-Eden-* equivalents.
+	for _, header := range []string{"X-OpenSave", "X-Eden"} {
+		req.Header.Set(header+"-Device-ID", deviceID)
+		req.Header.Set(header+"-Device-Name", deviceName)
+		req.Header.Set(header+"-Platform", platform)
+		req.Header.Set(header+"-Version", version.Version)
+	}
+	return nil
 }
 
 func (p gameSave) upload(f *os.File, size int64, fileName string) error {
@@ -104,7 +125,9 @@ func (p gameSave) upload(f *os.File, size int64, fileName string) error {
 	}
 	req.ContentLength = size
 	req.Header.Set("Content-Type", "application/zip")
-	p.authorize(req)
+	if err := p.authorize(req); err != nil {
+		return err
+	}
 	resp, err := p.s.doTransfer(req)
 	if err != nil {
 		return err
@@ -121,7 +144,9 @@ func (p gameSave) list() ([]CloudFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.authorize(req)
+	if err := p.authorize(req); err != nil {
+		return nil, err
+	}
 	resp, err := p.s.httpClient().Do(req)
 	if err != nil {
 		return nil, err
@@ -161,7 +186,9 @@ func (p gameSave) downloadFile(file CloudFile, localPath string) error {
 	if err != nil {
 		return err
 	}
-	p.authorize(req)
+	if err := p.authorize(req); err != nil {
+		return err
+	}
 	return p.s.fetchToFile(req, localPath)
 }
 
@@ -174,6 +201,8 @@ func (p gameSave) remove(f CloudFile) error {
 	if err != nil {
 		return err
 	}
-	p.authorize(req)
+	if err := p.authorize(req); err != nil {
+		return err
+	}
 	return p.s.doOK(req)
 }
