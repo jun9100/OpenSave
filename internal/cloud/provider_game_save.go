@@ -91,6 +91,18 @@ func (p gameSave) endpoint(kind, name string) string {
 	return strings.TrimRight(p.cfg.URL, "/") + "/v1/opensave/files/" + url.PathEscape(kind) + "/" + url.PathEscape(name)
 }
 
+// authorizeReadOnly intentionally omits device headers. A native archive or
+// scope GET is inspection, not synchronization; omitting those headers also
+// keeps the read harmless against an older service that still records device
+// activity in its broad token middleware.
+func (p gameSave) authorizeReadOnly(req *http.Request) error {
+	if p.token() == "" {
+		return fmt.Errorf("game-save sync key is required")
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token())
+	return nil
+}
+
 func (p gameSave) authorize(req *http.Request) error {
 	settings, err := p.s.Store.GetSettings()
 	if err != nil {
@@ -144,7 +156,7 @@ func (p gameSave) list() ([]CloudFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := p.authorize(req); err != nil {
+	if err := p.authorizeReadOnly(req); err != nil {
 		return nil, err
 	}
 	resp, err := p.s.httpClient().Do(req)
@@ -186,7 +198,7 @@ func (p gameSave) downloadFile(file CloudFile, localPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := p.authorize(req); err != nil {
+	if err := p.authorizeReadOnly(req); err != nil {
 		return err
 	}
 	return p.s.fetchToFile(req, localPath)

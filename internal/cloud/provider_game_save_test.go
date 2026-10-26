@@ -47,14 +47,18 @@ func TestGameSaveProviderUsesNativeTypedAPI(t *testing.T) {
 	const token = "sync-key"
 	var mu sync.Mutex
 	files := map[string][]byte{}
-	var requestHeaders []http.Header
+	type requestInfo struct {
+		method  string
+		headers http.Header
+	}
+	var requests []requestInfo
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		mu.Lock()
-		requestHeaders = append(requestHeaders, r.Header.Clone())
+		requests = append(requests, requestInfo{method: r.Method, headers: r.Header.Clone()})
 		mu.Unlock()
 		if r.URL.Path == "/v1/opensave/files" && r.Method == http.MethodGet {
 			mu.Lock()
@@ -181,21 +185,27 @@ func TestGameSaveProviderUsesNativeTypedAPI(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requestHeaders) == 0 {
+	if len(requests) == 0 {
 		t.Fatal("native requests did not reach the test server")
 	}
-	for _, headers := range requestHeaders {
+	for _, request := range requests {
 		for _, family := range []string{"X-OpenSave", "X-Eden"} {
-			if got := headers.Get(family + "-Device-ID"); got != settings.NodeID {
+			if request.method == http.MethodGet {
+				if got := request.headers.Get(family + "-Device-ID"); got != "" {
+					t.Fatalf("read %s device ID = %q, want empty", family, got)
+				}
+				continue
+			}
+			if got := request.headers.Get(family + "-Device-ID"); got != settings.NodeID {
 				t.Fatalf("%s device ID = %q, want %q", family, got, settings.NodeID)
 			}
-			if got := headers.Get(family + "-Device-Name"); got != settings.DeviceName {
+			if got := request.headers.Get(family + "-Device-Name"); got != settings.DeviceName {
 				t.Fatalf("%s device name = %q, want %q", family, got, settings.DeviceName)
 			}
-			if got, want := headers.Get(family+"-Platform"), "opensave-"+runtime.GOOS; got != want {
+			if got, want := request.headers.Get(family+"-Platform"), "opensave-"+runtime.GOOS; got != want {
 				t.Fatalf("%s platform = %q, want %q", family, got, want)
 			}
-			if got := headers.Get(family + "-Version"); got != version.Version {
+			if got := request.headers.Get(family + "-Version"); got != version.Version {
 				t.Fatalf("%s version = %q, want %q", family, got, version.Version)
 			}
 		}
@@ -214,13 +224,17 @@ func TestScopedNameKeepsNativeSaveTypesSeparate(t *testing.T) {
 
 func TestGameSaveScopeUsesCASContract(t *testing.T) {
 	const token = "sync-key"
-	var headers []http.Header
+	type requestInfo struct {
+		method  string
+		headers http.Header
+	}
+	var requests []requestInfo
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		headers = append(headers, r.Header.Clone())
+		requests = append(requests, requestInfo{method: r.Method, headers: r.Header.Clone()})
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/opensave/scopes/switch/hollow-knight":
 			_ = json.NewEncoder(w).Encode(GameSaveScope{
@@ -311,15 +325,21 @@ func TestGameSaveScopeUsesCASContract(t *testing.T) {
 	if !retained.Conflict || retained.ConflictOf != "snap_2--dev-other" {
 		t.Fatalf("retained conflict = %+v", retained)
 	}
-	if len(headers) != 3 {
-		t.Fatalf("scope request count = %d, want 3", len(headers))
+	if len(requests) != 3 {
+		t.Fatalf("scope request count = %d, want 3", len(requests))
 	}
-	for _, requestHeaders := range headers {
+	for _, request := range requests {
 		for _, family := range []string{"X-OpenSave", "X-Eden"} {
-			if got := requestHeaders.Get(family + "-Device-ID"); got != settings.NodeID {
+			if request.method == http.MethodGet {
+				if got := request.headers.Get(family + "-Device-ID"); got != "" {
+					t.Fatalf("scope read %s device ID = %q, want empty", family, got)
+				}
+				continue
+			}
+			if got := request.headers.Get(family + "-Device-ID"); got != settings.NodeID {
 				t.Fatalf("%s device ID = %q, want %q", family, got, settings.NodeID)
 			}
-			if got := requestHeaders.Get(family + "-Device-Name"); got != settings.DeviceName {
+			if got := request.headers.Get(family + "-Device-Name"); got != settings.DeviceName {
 				t.Fatalf("%s device name = %q, want %q", family, got, settings.DeviceName)
 			}
 		}
