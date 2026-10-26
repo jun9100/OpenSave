@@ -69,11 +69,15 @@ data class SaveSourceOption(
     val source: SourceSelection,
     val label: String,
     val saveType: GameSaveType,
+    val requiredAccess: SourceAccessCapability,
     val selected: Boolean,
     val enabledByDefault: Boolean = true,
 ) {
     val id: String
         get() = source.idSeed
+
+    val sourceId: String
+        get() = SnapshotNaming.sourceId(source.idSeed)
 }
 
 /** Builds the complete, de-duplicated source list. Sources are enabled by default. */
@@ -104,6 +108,7 @@ object SaveSourceOptions {
                 source = source,
                 label = label,
                 saveType = GameSaveTypes.forSource(source),
+                requiredAccess = source.requiredAccessCapability(),
                 selected = source.idSeed !in disabledSourceIds &&
                     (enabledByDefault || source.idSeed in explicitlyEnabledSourceIds),
                 enabledByDefault = enabledByDefault,

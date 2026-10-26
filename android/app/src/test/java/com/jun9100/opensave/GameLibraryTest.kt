@@ -125,11 +125,13 @@ class GameLibraryTest {
                     SourceSelection.Root("/data/user/0/dev.eden.eden_emulator/files"),
                     "Eden Switch",
                     SaveScanReport("/eden", 5, listOf(save)),
+                    access = SourceAccessStatus.rootOnly(),
                 ),
                 SourceScanResult(
                     SourceSelection.Root("/storage/emulated/0/Android/data"),
                     "Android 应用数据",
                     SaveScanReport("/android-data", 8, listOf(save)),
+                    access = SourceAccessStatus.rootOnly(),
                 ),
             ),
         )
@@ -138,6 +140,7 @@ class GameLibraryTest {
         assertEquals(2, entries.map { it.libraryKey }.distinct().size)
         assertEquals(2, GameLibrary.batchBackupEligibleEntries(entries).size)
         assertEquals("Eden Switch", entries.first { it.sourceLabel == "Eden Switch" }.sourceLabel)
+        assertTrue(entries.all { it.sourceAccess.capability == SourceAccessCapability.ROOT })
     }
 
     @Test

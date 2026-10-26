@@ -23,6 +23,7 @@ data class SourceScanResult(
     val label: String,
     val scan: SaveScanReport? = null,
     val skippedReason: String? = null,
+    val access: SourceAccessStatus = SourceAccessStatus.pending(source.requiredAccessCapability()),
 ) {
     val sourceId: String
         get() = SnapshotNaming.sourceId(source.idSeed)
@@ -32,6 +33,7 @@ data class SourceGameEntry(
     val source: SourceSelection,
     val sourceId: String,
     val sourceLabel: String,
+    val sourceAccess: SourceAccessStatus,
     val game: DetectedGame,
 ) {
     val libraryKey: String
@@ -67,7 +69,13 @@ object GameLibrary {
         .flatMap { source ->
             source.scan?.let { scan ->
                 group(scan.detected).map { game ->
-                    SourceGameEntry(source.source, source.sourceId, source.label, game)
+                    SourceGameEntry(
+                        source = source.source,
+                        sourceId = source.sourceId,
+                        sourceLabel = source.label,
+                        sourceAccess = source.access,
+                        game = game,
+                    )
                 }
             }.orEmpty()
         }

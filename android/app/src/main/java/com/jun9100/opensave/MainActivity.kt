@@ -120,6 +120,7 @@ private fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("来源：${entry.sourceLabel}")
+                    Text("访问：${sourceAccessLabel(entry.sourceAccess)}")
                     Text("已识别位置 ${game.saves.count { !it.candidate }} 个；候选位置 ${game.candidateCount} 个。")
                     Text("候选位置只有在你明确确认后才会写入快照。")
                     game.saves.forEach { save ->
@@ -328,9 +329,9 @@ private fun GameLibraryPage(
                                 "${scan.gameCount} 款已识别 · ${scan.detected.size} 个位置"
                             } ?: "跳过 · ${source.skippedReason}"
                             Text(
-                                "${source.label} · $detail",
+                                "${source.label} · ${sourceAccessLabel(source.access)} · $detail",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (source.scan == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                                color = if (source.access.readable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -448,6 +449,39 @@ private fun GameLibraryPage(
             }
         }
     }
+}
+
+private fun sourceAccessLabel(access: SourceAccessStatus): String = when (access.capability) {
+    SourceAccessCapability.APP -> if (access.writable) "应用可访问 · 可读写" else "应用可访问 · 只读"
+    SourceAccessCapability.SAF -> if (access.writable) "SAF 已授权 · 可读写" else "SAF 已授权 · 只读，可备份"
+    SourceAccessCapability.ROOT -> "仅 Root 可访问 · 可读写"
+    SourceAccessCapability.UNAVAILABLE -> buildString {
+        append("不可访问 · ")
+        append(
+            when (access.requiredCapability) {
+                SourceAccessCapability.APP -> "应用访问"
+                SourceAccessCapability.SAF -> "需要 SAF 授权"
+                SourceAccessCapability.ROOT -> "需要 Root"
+                SourceAccessCapability.UNAVAILABLE -> "来源检查"
+            },
+        )
+        access.reason.takeIf(String::isNotBlank)?.let { append(" · $it") }
+    }
+}
+
+private fun plannedAccessStatus(
+    option: SaveSourceOption,
+    rootChecked: Boolean,
+    rootAvailable: Boolean,
+): SourceAccessStatus = when (option.requiredAccess) {
+    SourceAccessCapability.APP -> SourceAccessStatus.appAccessible()
+    SourceAccessCapability.SAF -> SourceAccessStatus.pending(SourceAccessCapability.SAF)
+    SourceAccessCapability.ROOT -> if (rootChecked && !rootAvailable) {
+        SourceAccessStatus.unavailable(SourceAccessCapability.ROOT, "Root 未授权")
+    } else {
+        SourceAccessStatus.pending(SourceAccessCapability.ROOT)
+    }
+    SourceAccessCapability.UNAVAILABLE -> SourceAccessStatus.pending(SourceAccessCapability.UNAVAILABLE)
 }
 
 @Composable
@@ -690,6 +724,7 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                 HorizontalDivider()
                 Spacer(Modifier.height(12.dp))
                 val selectedCount = state.sourceOptions.count(SaveSourceOption::selected)
+                val scanBySourceId = state.sourceScans.associateBy(SourceScanResult::sourceId)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -712,6 +747,8 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                     ) { Text("全不选") }
                 }
                 state.sourceOptions.forEach { option ->
+                    val access = scanBySourceId[option.sourceId]?.access
+                        ?: plannedAccessStatus(option, state.rootChecked, state.rootAvailable)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -727,11 +764,11 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                                 buildString {
                                     append(if (option.enabledByDefault) option.saveType.label else "未归类应用候选")
                                     append(" · ")
-                                    append(if (option.source is SourceSelection.Root) "Root（需 Root 权限）" else "系统授权")
+                                    append(sourceAccessLabel(access))
                                     if (!option.enabledByDefault) append(" · 默认关闭，避免扫描非游戏数据")
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (access.readable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                             )
                         }
                     }
@@ -1054,6 +1091,13 @@ private fun GameLibraryCard(
                         entry.sourceLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        sourceAccessLabel(entry.sourceAccess),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

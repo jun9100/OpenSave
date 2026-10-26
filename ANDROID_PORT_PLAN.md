@@ -17,6 +17,7 @@ OpenSave Android 作为 `game-save` 的原生客户端，与 Windows OpenSave �
 - 原生 `game-save` 客户端：Bearer 同步密钥、连接测试、按类型列举、上传、下载和删除；同步密钥经 Android Keystore AES-GCM 加密后保存。
 - 单目录 Switch TitleID 快照上传后发布与 Windows OpenSave 兼容的当前存档公告；连续版本可由 Windows 自动拉取，首次分叉仍要求确认。
 - 自动备份：Wi-Fi WorkManager 周期扫描所有可访问预设及授权来源，按 manifest hash 跳过未变化的游戏并重试临时故障。
+- 来源访问能力：每个来源和已发现游戏都显示为应用可访问、SAF 已授权、仅 Root 可访问或不可访问；不可访问来源保留原因，不会被误判为“没有存档”。
 - 本地验证：`testDebugUnitTest`、`lintDebug` 和 `assembleDebug` 已通过。
 
 ## 云端协议
@@ -61,9 +62,20 @@ Authorization: Bearer <同步密钥>
 ### 来源与识别
 
 1. 无 Root 时仅读取用户通过 SAF 明确授权的目录。
-2. Root 可用时，自动探测存在的内置预设与用户添加的精确路径；缺失或无权限的来源显示原因，不当作空存档。
+2. Root 可用时，自动探测存在的内置预设与用户添加的精确路径；缺失、无权限和目录不存在都会显示访问能力与原因，不当作空存档。
 3. Eden/Yuzu 系按 `nand/user/save/.../<TitleID>`，Ryujinx/Ryubing 按 `bis/user/save/.../<TitleID>` 拆分成独立游戏。
 4. GameHub 仅备份实际存在于 Odin2 本地、可读的 PC/模拟器存档；云游戏和串流存档仍由承载它的电脑负责。
+
+### 访问能力边界
+
+| 状态 | 含义 | 备份 / 恢复行为 |
+| --- | --- | --- |
+| 应用可访问 | 仅适用于未来由 OpenSave 自身或明确集成的应用直接提供的数据。第三方私有目录不会被标成此状态。 | 按该来源实际读写能力执行。 |
+| SAF 已授权 | 用户通过系统文件选择器持久授权的目录。 | 只读授权可备份；读写授权才可恢复。 |
+| 仅 Root 可访问 | 预设或精确 Root 路径，例如 Eden、GameHub、其他应用的私有目录。 | 必须由 Magisk 向 OpenSave 授权；未授权时不读取、不备份、不恢复。 |
+| 不可访问 | 授权失效、Root 未授权、路径缺失或扫描失败。 | 保留原因；绝不把它显示为零存档，也不尝试写入。 |
+
+`/data/user/0/<其他应用>` 和 Android 13 受限的 `Android/data` 不能因“路径已识别”就被视为可读。非 Root 设备只能通过系统实际授予的 SAF 目录加入备份。
 
 ### 游戏库与批量操作
 
@@ -86,6 +98,7 @@ Authorization: Bearer <同步密钥>
 | --- | --- |
 | SAF | 选择测试目录、重启应用后权限仍在、备份/恢复后 hash 一致 |
 | Root | Magisk 对 APK 授权、预设来源只读扫描、精确 TitleID 目录安全恢复 |
+| 访问能力 | Root 未授权、失效 SAF、目录不存在与可读但只读 SAF 分别显示正确标签和原因；均不得产生写入 |
 | Eden | 至少两个已存在 TitleID 显示名称/类别，备份后由 Eden 实际读取恢复的数据 |
 | GameHub | 区分本地 PC/模拟器存档、私有/云端不可访问路径的准确提示 |
 | 分类与批量 | 切换每个类别后全选只影响该类别，候选条目未经确认不会备份 |
