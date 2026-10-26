@@ -18,9 +18,12 @@ type CloudHead struct {
 	ChainJSON string   `db:"chain"`
 	// ContentAt is the newest file modification time in the current snapshot.
 	// A zero value is an older or otherwise unverifiable local head.
-	ContentAt int64  `db:"content_at"`
-	Published string `db:"published"`
-	Dismissed string `db:"dismissed"`
+	ContentAt int64 `db:"content_at"`
+	// NativeHead is the server-confirmed CAS snapshot id for game-save. It is
+	// distinct from Snapshot, which remains this device's local snapshot id.
+	NativeHead string `db:"native_head"`
+	Published  string `db:"published"`
+	Dismissed  string `db:"dismissed"`
 }
 
 // GetCloudHead returns the game's record, and false when it has none yet.
@@ -58,8 +61,8 @@ func (s *Store) SetCloudHead(h CloudHead) error {
 	}
 	h.ChainJSON = string(b)
 	_, err = s.db.NamedExec(`
-		INSERT INTO cloud_heads (game_id, snapshot, since, file, chain, content_at, published, dismissed)
-		SELECT :game_id, :snapshot, :since, :file, :chain, :content_at, :published, :dismissed
+		INSERT INTO cloud_heads (game_id, snapshot, since, file, chain, content_at, native_head, published, dismissed)
+		SELECT :game_id, :snapshot, :since, :file, :chain, :content_at, :native_head, :published, :dismissed
 		WHERE EXISTS (SELECT 1 FROM games WHERE id = :game_id)
 		ON CONFLICT(game_id) DO UPDATE SET
 			snapshot  = excluded.snapshot,
@@ -67,6 +70,7 @@ func (s *Store) SetCloudHead(h CloudHead) error {
 			file      = excluded.file,
 			chain     = excluded.chain,
 			content_at = excluded.content_at,
+			native_head = excluded.native_head,
 			published = excluded.published,
 			dismissed = excluded.dismissed`, h)
 	if err != nil {

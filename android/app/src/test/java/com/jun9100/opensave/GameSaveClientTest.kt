@@ -33,6 +33,11 @@ class GameSaveClientTest {
         try {
             val client = GameSaveClient(
                 GameSaveConfig(enabled = true, serviceUrl = "http://127.0.0.1:${server.port}", syncKey = "sync-key"),
+                GameSaveDeviceIdentity(
+                    id = "odin2-test-1",
+                    name = "Odin2 Test",
+                    version = "0.3.15",
+                ),
             )
             val local = File(root, "mario.zip").apply { writeText("zip-content") }
             val name = "switch-0100000000010000__main__snap_1.zip"
@@ -54,6 +59,82 @@ class GameSaveClientTest {
             client.delete(listed.single()).getOrThrow()
             assertFalse(server.files.containsKey("switch/$name"))
             assertTrue(server.authorizedRequests > 0)
+            server.requestHeaders.forEach { headers ->
+                for (family in listOf("x-opensave", "x-eden")) {
+                    assertEquals("odin2-test-1", headers["$family-device-id"])
+                    assertEquals("Odin2 Test", headers["$family-device-name"])
+                    assertEquals("opensave-android", headers["$family-platform"])
+                    assertEquals("0.3.15", headers["$family-version"])
+                }
+            }
+        } finally {
+            root.deleteRecursively()
+            server.close()
+        }
+    }
+
+    @Test
+    fun nativeScopesUseCasRetainConflictsAndOnlyFallbackOnMissingRoute() {
+        val server = MiniGameSaveServer()
+        server.start()
+        val root = createTempDir(prefix = "opensave-native-scope-")
+        try {
+            val client = GameSaveClient(
+                GameSaveConfig(enabled = true, serviceUrl = "http://127.0.0.1:${server.port}", syncKey = "sync-key"),
+                GameSaveDeviceIdentity("odin2", "Odin2"),
+            )
+            val gameId = "switch-0100000000010000"
+            val firstID = "snap_1730000000000--dev-odin2"
+            val firstArchive = "${gameId}__main__${firstID}.zip"
+            val firstFile = File(root, firstArchive).apply { writeText("progress-1788") }
+
+            assertEquals(null, client.getScope(GameSaveTypes.SWITCH, gameId).getOrThrow().head)
+            client.upload(firstFile, GameSaveTypes.SWITCH, firstArchive).getOrThrow()
+            val first = GameSaveScopeCandidate(
+                id = firstID,
+                archive = firstArchive,
+                parent = "",
+                contentDigest = Hashing.sha256(firstFile),
+                createdAt = "2026-10-26T00:00:00Z",
+            )
+            assertEquals(firstID, client.putScopeSnapshot(GameSaveTypes.SWITCH, gameId, first, "").getOrThrow().id)
+
+            val staleID = "snap_1730000001000--dev-desktop1"
+            val staleArchive = "${gameId}__main__${staleID}.zip"
+            val staleFile = File(root, staleArchive).apply { writeText("progress-1789") }
+            client.upload(staleFile, GameSaveTypes.SWITCH, staleArchive).getOrThrow()
+            val stale = GameSaveScopeCandidate(
+                id = staleID,
+                archive = staleArchive,
+                parent = "",
+                contentDigest = Hashing.sha256(staleFile),
+                createdAt = "2026-10-26T00:01:00Z",
+            )
+            val race = client.putScopeSnapshot(GameSaveTypes.SWITCH, gameId, stale, "")
+            assertTrue(race.exceptionOrNull() is GameSaveScopeConflictException)
+            assertEquals(firstID, (race.exceptionOrNull() as GameSaveScopeConflictException).head)
+            client.putScopeConflict(GameSaveTypes.SWITCH, gameId, stale).getOrThrow()
+
+            val scope = client.getScope(GameSaveTypes.SWITCH, gameId).getOrThrow()
+            assertEquals(firstID, scope.head?.id)
+            assertEquals(listOf(staleID), scope.conflicts.map(GameSaveScopeSnapshot::id))
+
+            server.scopeWritesEnabled = false
+            val write404 = client.putScopeSnapshot(
+                GameSaveTypes.SWITCH,
+                gameId,
+                stale.copy(
+                    id = "snap_1730000002000--dev-odin2",
+                    archive = "${gameId}__main__snap_1730000002000--dev-odin2.zip",
+                    parent = firstID,
+                ),
+                firstID,
+            ).exceptionOrNull()
+            assertTrue(write404 is GameSaveException)
+            assertFalse(write404 is GameSaveScopesUnsupportedException)
+
+            server.scopeRoutesEnabled = false
+            assertTrue(client.getScope(GameSaveTypes.SWITCH, gameId).exceptionOrNull() is GameSaveScopesUnsupportedException)
         } finally {
             root.deleteRecursively()
             server.close()
@@ -68,6 +149,11 @@ private class MiniGameSaveServer : AutoCloseable {
     private var thread: Thread? = null
     var authorizedRequests = 0
         private set
+    val requestHeaders = mutableListOf<Map<String, String>>()
+    @Volatile
+    var scopeRoutesEnabled = true
+    @Volatile
+    var scopeWritesEnabled = true
     val port: Int get() = socket.localPort
 
     fun start() {
@@ -99,6 +185,7 @@ private class MiniGameSaveServer : AutoCloseable {
             return
         }
         authorizedRequests++
+        requestHeaders += headers
         if (method == "GET" && path == "/v1/opensave/files") {
             val payload = JSONObject().put("files", JSONArray().apply {
                 files.entries.sortedBy { it.key }.forEach { (key, value) ->
@@ -114,6 +201,11 @@ private class MiniGameSaveServer : AutoCloseable {
                 }
             }).toString().toByteArray()
             respond(client, 200, payload, "Content-Type: application/json")
+            return
+        }
+
+        if (path.startsWith("/v1/opensave/scopes/")) {
+            handleScope(client, method, path, headers, body)
             return
         }
 
@@ -139,6 +231,125 @@ private class MiniGameSaveServer : AutoCloseable {
             else -> respond(client, 405, ByteArray(0))
         }
     }
+
+    private data class ScopeRecord(
+        val id: String,
+        val archive: String,
+        val parent: String,
+        val digest: String,
+        val createdAt: String,
+        val receivedAt: String,
+        val conflict: Boolean = false,
+        val conflictOf: String = "",
+    )
+
+    private data class ScopeState(
+        var head: String = "",
+        val records: LinkedHashMap<String, ScopeRecord> = linkedMapOf(),
+    )
+
+    private val scopes = linkedMapOf<String, ScopeState>()
+
+    private fun handleScope(
+        client: Socket,
+        method: String,
+        path: String,
+        headers: Map<String, String>,
+        body: ByteArray,
+    ) {
+        if (!scopeRoutesEnabled) {
+            respond(client, 404, ByteArray(0))
+            return
+        }
+        val segments = path.removePrefix("/v1/opensave/scopes/").split('/')
+        if (segments.size !in setOf(2, 4)) {
+            respond(client, 404, ByteArray(0))
+            return
+        }
+        val type = segments[0]
+        val gameId = segments[1]
+        val key = "$type/$gameId"
+        synchronized(scopes) {
+            val state = scopes.getOrPut(key, ::ScopeState)
+            if (segments.size == 2 && method == "GET") {
+                respond(client, 200, scopeJson(type, gameId, state).toString().toByteArray(), "Content-Type: application/json")
+                return
+            }
+            if (segments.size != 4 || method != "PUT") {
+                respond(client, 405, ByteArray(0))
+                return
+            }
+            if (!scopeWritesEnabled) {
+                respond(client, 404, ByteArray(0))
+                return
+            }
+            val payload = runCatching { JSONObject(String(body)) }.getOrNull()
+            if (payload == null || payload.optString("id") != segments[3]) {
+                respond(client, 400, ByteArray(0))
+                return
+            }
+            val candidate = ScopeRecord(
+                id = payload.getString("id"),
+                archive = payload.getString("archive"),
+                parent = payload.optString("parent"),
+                digest = payload.getString("contentDigest"),
+                createdAt = payload.getString("createdAt"),
+                receivedAt = "2026-10-26T00:02:00Z",
+            )
+            when (segments[2]) {
+                "snapshots" -> {
+                    val expected = headers["if-match"]?.removePrefix("\"")?.removeSuffix("\"")
+                    if (expected != state.head || candidate.parent != state.head) {
+                        respond(client, 409, JSONObject().put("head", state.head).toString().toByteArray(), "Content-Type: application/json")
+                        return
+                    }
+                    state.records[candidate.id] = candidate
+                    state.head = candidate.id
+                    respond(client, 201, recordJson(candidate).toString().toByteArray(), "Content-Type: application/json")
+                }
+
+                "conflicts" -> {
+                    if (state.head.isBlank() || candidate.parent == state.head) {
+                        respond(client, 409, JSONObject().put("head", state.head).toString().toByteArray(), "Content-Type: application/json")
+                        return
+                    }
+                    val retained = candidate.copy(conflict = true, conflictOf = state.head)
+                    state.records[retained.id] = retained
+                    respond(client, 201, recordJson(retained).toString().toByteArray(), "Content-Type: application/json")
+                }
+
+                else -> respond(client, 404, ByteArray(0))
+            }
+        }
+    }
+
+    private fun scopeJson(type: String, gameId: String, state: ScopeState): JSONObject {
+        val snapshots = JSONArray()
+        val conflicts = JSONArray()
+        state.records.values.forEach { record ->
+            snapshots.put(recordJson(record))
+            if (record.conflict) conflicts.put(recordJson(record))
+        }
+        return JSONObject()
+            .put("type", type)
+            .put("gameId", gameId)
+            .put("head", state.records[state.head]?.let(::recordJson) ?: JSONObject.NULL)
+            .put("snapshots", snapshots)
+            .put("conflicts", conflicts)
+    }
+
+    private fun recordJson(record: ScopeRecord): JSONObject = JSONObject()
+        .put("id", record.id)
+        .put("archive", record.archive)
+        .put("parent", record.parent)
+        .put("contentDigest", record.digest)
+        .put("createdAt", record.createdAt)
+        .put("receivedAt", record.receivedAt)
+        .put("device", "test-device")
+        .put("deviceName", "Test device")
+        .put("platform", "opensave-android")
+        .put("conflict", record.conflict)
+        .put("conflictOf", record.conflictOf)
 
     private fun readAsciiLine(input: BufferedInputStream): String? {
         val line = ByteArrayOutputStream()

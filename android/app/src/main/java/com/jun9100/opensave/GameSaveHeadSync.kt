@@ -387,6 +387,10 @@ data class GameSaveHeadState(
     val chain: List<String>,
     val savedAtMillis: Long,
     val contentModifiedAtMillis: Long = 0L,
+    // Server-confirmed native `{type}/{game}` CAS head. It intentionally uses
+    // the remote --dev- snapshot id, while snapshotId remains local storage
+    // state (or the imported remote id after a restore).
+    val nativeHead: String = "",
     val publishedSnapshotId: String = "",
     val announcedAtMillis: Long = 0L,
 )
@@ -412,6 +416,7 @@ class GameSaveHeadStore(context: Context) {
             chain = chain,
             savedAtMillis = json.getLong("savedAtMillis"),
             contentModifiedAtMillis = json.optLong("contentModifiedAtMillis"),
+            nativeHead = json.optString("nativeHead").trim(),
             publishedSnapshotId = json.optString("publishedSnapshotId"),
             announcedAtMillis = json.optLong("announcedAtMillis"),
         ).also { state ->
@@ -430,6 +435,7 @@ class GameSaveHeadStore(context: Context) {
             .put("chain", JSONArray(state.chain.takeLast(GameSaveCloudProtocol.MAX_HEAD_CHAIN)))
             .put("savedAtMillis", state.savedAtMillis)
             .put("contentModifiedAtMillis", state.contentModifiedAtMillis)
+            .put("nativeHead", state.nativeHead)
             .put("publishedSnapshotId", state.publishedSnapshotId)
             .put("announcedAtMillis", state.announcedAtMillis)
         check(preferences.edit().putString(key(identity), json.toString()).commit()) { "无法保存同步状态" }
@@ -513,14 +519,14 @@ internal object GameSaveRemoteRestorePlanner {
 class GameSaveDeviceStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
-    fun identity(): Pair<String, String> {
+    fun identity(): GameSaveDeviceIdentity {
         val id = preferences.getString(DEVICE_ID, null)
             ?.takeIf(String::isNotBlank)
             ?: UUID.randomUUID().toString().also { generated ->
                 check(preferences.edit().putString(DEVICE_ID, generated).commit()) { "无法保存设备标识" }
             }
         val name = Build.MODEL?.trim()?.takeIf(String::isNotBlank)?.take(80) ?: "Android"
-        return id to name
+        return GameSaveDeviceIdentity(id = id, name = name)
     }
 
     private companion object {
@@ -533,20 +539,20 @@ class GameSaveDeviceStore(context: Context) {
 class GameSaveHeadReader(
     context: Context,
     config: GameSaveConfig,
-    private val client: GameSaveClient = GameSaveClient(config),
+    client: GameSaveClient? = null,
 ) {
     private val appContext = context.applicationContext
     private val device = GameSaveDeviceStore(appContext)
+    private val client = client ?: GameSaveClient(config, device.identity())
 
     fun check(
         identity: GameCloudIdentity,
         currentManifestHash: String,
         remoteSnapshots: List<RemoteSnapshot>,
     ): GameSaveHeadDecision {
-        val (deviceId, _) = device.identity()
         return GameSaveHeadResolver.decide(
             identity = identity,
-            localDeviceId = deviceId,
+            localDeviceId = device.identity().id,
             localState = GameSaveHeadStore(appContext).load(identity),
             currentManifestHash = currentManifestHash,
             remoteSnapshots = remoteSnapshots,
@@ -626,10 +632,10 @@ class GameSaveHeadPublisher(
             "当前存档缺少可验证的内容修改时间，已拒绝更新跨设备当前存档"
         }
         val announcedAt = max(System.currentTimeMillis(), state.announcedAtMillis + 1L)
-        val (deviceId, deviceName) = device.identity()
+        val deviceIdentity = device.identity()
         val head = GameSaveCloudHead(
-            deviceId = deviceId,
-            deviceName = deviceName,
+            deviceId = deviceIdentity.id,
+            deviceName = deviceIdentity.name,
             gameId = identity.gameId,
             snapshot = state.snapshotId,
             file = state.fileName,
@@ -639,10 +645,10 @@ class GameSaveHeadPublisher(
         )
         val directory = File(appContext.cacheDir, "game-save-heads")
         require(directory.exists() || directory.mkdirs()) { "无法创建同步公告目录" }
-        val headFile = File(directory, GameSaveCloudProtocol.headFileName(identity.gameId, deviceId, announcedAt))
+        val headFile = File(directory, GameSaveCloudProtocol.headFileName(identity.gameId, deviceIdentity.id, announcedAt))
         try {
             GameSaveCloudProtocol.writeHead(headFile, head)
-            GameSaveClient(config).upload(headFile, identity.saveType, headFile.name).getOrThrow()
+            GameSaveClient(config, deviceIdentity).upload(headFile, identity.saveType, headFile.name).getOrThrow()
             states.save(
                 identity,
                 state.copy(
