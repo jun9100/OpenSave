@@ -16,9 +16,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.CoverRepository
@@ -27,6 +30,7 @@ import com.jun9100.opensave.LibraryRowHistory
 import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.ui.formatShortTime
+import com.jun9100.opensave.ui.input.handheldFocusRing
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.PreviewData
 import com.jun9100.opensave.ui.preview.PreviewSurface
@@ -34,7 +38,8 @@ import com.jun9100.opensave.ui.preview.PreviewSurface
 /**
  * One compact library row (60dp, plan §3.4). The whole row is the single focus
  * stop: click shows the game in the detail pane or page, long press toggles the
- * batch selection. The checkbox stays tappable by touch but is skipped by D-pad.
+ * batch selection. The checkbox stays tappable by touch but is skipped by D-pad;
+ * pad users toggle it with Select or the X menu.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -54,6 +59,7 @@ internal fun GameListRow(
     modifier: Modifier = Modifier,
     /** Called when the row gains D-pad focus; null leaves focus without effect. */
     onFocused: (() -> Unit)? = null,
+    focusRequester: FocusRequester? = null,
 ) {
     val selectable = batchEligible && batchEnabled
     Row(
@@ -61,7 +67,9 @@ internal fun GameListRow(
             .fillMaxWidth()
             .height(GAME_ROW_HEIGHT)
             .background(if (current) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+            .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
             .onFocusChanged { if (it.isFocused) onFocused?.invoke() }
+            .handheldFocusRing(RectangleShape, outset = (-2).dp)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = if (selectable) ({ onBatchCheckedChange(!batchChecked) }) else null,

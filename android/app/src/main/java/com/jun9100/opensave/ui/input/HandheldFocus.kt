@@ -1,0 +1,159 @@
+package com.jun9100.opensave.ui.input
+
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+
+/** Pad or D-pad navigation is in use: either our own gamepad flag or Compose's keyboard input mode. */
+@Composable
+fun handheldNavigationActive(): Boolean =
+    LocalGamepadActive.current || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+
+/**
+ * Visible focus for pad users (plan §4.2 item 4): a 3dp primary ring around
+ * the control plus a light primary tint behind it. Nothing is drawn for touch
+ * input. Put it before the clickable/toggleable of the control (or pass it in
+ * the `modifier` of a Material control) so it sees that control's focus.
+ * A positive [outset] draws the ring outside the bounds (buttons, chips); rows
+ * that fill a clipped list use a negative one so the ring stays inside.
+ */
+@Composable
+fun Modifier.handheldFocusRing(
+    shape: Shape = RoundedCornerShape(12.dp),
+    outset: Dp = 2.dp,
+): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    val show = focused && handheldNavigationActive()
+    val ring = MaterialTheme.colorScheme.primary
+    val tint = ring.copy(alpha = 0.14f)
+    return this
+        .onFocusChanged { focused = it.isFocused }
+        .drawWithContent {
+            if (show) drawOutline(shape.createOutline(size, layoutDirection, this), tint)
+            drawContent()
+            if (show) {
+                val offset = outset.toPx()
+                val ringSize = Size(size.width + 2 * offset, size.height + 2 * offset)
+                if (ringSize.width > 0f && ringSize.height > 0f) {
+                    translate(-offset, -offset) {
+                        drawOutline(shape.createOutline(ringSize, layoutDirection, this), ring, style = Stroke(FOCUS_RING_WIDTH.toPx()))
+                    }
+                }
+            }
+        }
+}
+
+val FOCUS_RING_WIDTH = 3.dp
+
+/** Whether anything inside a region holds focus; the shell uses it to decide when to place focus. */
+@Stable
+class FocusWatch {
+    var hasFocus by mutableStateOf(false)
+}
+
+/** The whole app window; pages put focus back when it is empty and the pad is in use. */
+val LocalShellFocus = staticCompositionLocalOf { FocusWatch() }
+
+fun Modifier.watchFocus(watch: FocusWatch): Modifier = onFocusChanged { watch.hasFocus = it.hasFocus }
+
+/**
+ * A long, otherwise unfocusable text block (dialog bodies, reports): it takes
+ * one focus stop when it overflows, and Up/Down scroll it until its end
+ * before focus moves on.
+ */
+@Composable
+fun Modifier.dpadScrollable(state: ScrollState): Modifier {
+    val scope = rememberCoroutineScope()
+    val step = with(LocalDensity.current) { DPAD_SCROLL_STEP.toPx() }
+    return this
+        .handheldFocusRing(RoundedCornerShape(8.dp), outset = 0.dp)
+        .onKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+            when (event.key) {
+                Key.DirectionDown -> state.canScrollForward.also { if (it) scope.launch { state.animateScrollBy(step) } }
+                Key.DirectionUp -> state.canScrollBackward.also { if (it) scope.launch { state.animateScrollBy(-step) } }
+                else -> false
+            }
+        }
+        // Text that fits needs no focus stop of its own.
+        .focusProperties { canFocus = state.maxValue > 0 }
+        .focusable()
+}
+
+private val DPAD_SCROLL_STEP = 96.dp
+
+/**
+ * Dialogs are their own windows, so `MainActivity` never sees their keys.
+ * Swallow the shortcut keys there too, otherwise X/Start fall back to
+ * DPAD_CENTER and press whatever button holds focus.
+ */
+fun Modifier.consumeHandheldShortcuts(): Modifier =
+    onPreviewKeyEvent { HandheldKeyMap.commandFor(it.nativeKeyEvent.keyCode) != null }
+
+/**
+ * Controls stay enabled while an operation runs so D-pad focus never drops
+ * (plan R4); the click is ignored instead and the control is dimmed.
+ */
+fun whenIdle(busy: Boolean, action: () -> Unit): () -> Unit = { if (!busy) action() }
+
+fun <T> whenIdleWith(busy: Boolean, action: (T) -> Unit): (T) -> Unit = { if (!busy) action(it) }
+
+fun Modifier.busyDimmed(busy: Boolean): Modifier = if (busy) alpha(BUSY_ALPHA) else this
+
+private const val BUSY_ALPHA = 0.5f
+
+/** requestFocus throws when the requester is not attached yet (item scrolled away, dialog not laid out). */
+fun FocusRequester.tryRequestFocus(): Boolean = runCatching { requestFocus() }.isSuccess
+
+/**
+ * A requester focused once when the dialog or page holding it appears. A new
+ * dialog window may need a few frames before its nodes are attached.
+ */
+@Composable
+fun rememberInitialFocus(): FocusRequester {
+    val requester = remember { FocusRequester() }
+    LaunchedEffect(requester) {
+        repeat(INITIAL_FOCUS_ATTEMPTS) {
+            withFrameNanos { }
+            if (requester.tryRequestFocus()) return@LaunchedEffect
+        }
+    }
+    return requester
+}
+
+private const val INITIAL_FOCUS_ATTEMPTS = 10

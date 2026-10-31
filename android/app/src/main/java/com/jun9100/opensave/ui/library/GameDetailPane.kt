@@ -1,5 +1,6 @@
 package com.jun9100.opensave.ui.library
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Save
@@ -31,6 +34,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,13 +48,16 @@ import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.ui.GAME_DETAIL_TAG
 import com.jun9100.opensave.ui.formatBytes
 import com.jun9100.opensave.ui.formatTime
+import com.jun9100.opensave.ui.input.busyDimmed
+import com.jun9100.opensave.ui.input.handheldFocusRing
+import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.kindLabel
 import com.jun9100.opensave.ui.preview.OdinScreenPreviews
 import com.jun9100.opensave.ui.preview.PreviewData
 import com.jun9100.opensave.ui.preview.PreviewSurface
 import com.jun9100.opensave.ui.sourceAccessLabel
 
-private enum class DetailTab(val label: String) {
+internal enum class DetailTab(val label: String) {
     VERSIONS("版本"),
     LOCATIONS("存档位置"),
 }
@@ -57,7 +65,9 @@ private enum class DetailTab(val label: String) {
 /**
  * Detail of one game: the landscape right pane and the portrait full-screen page.
  * It carries what the old expanded library card showed: backup this game, local
- * and cloud versions with restore, and the save locations.
+ * and cloud versions with restore, and the save locations. Buttons stay
+ * focusable while [busy] (clicks are ignored) so D-pad focus never drops;
+ * [primaryFocusRequester] lets the list hand focus to "备份这款游戏".
  */
 @Composable
 internal fun GameDetailPane(
@@ -75,13 +85,20 @@ internal fun GameDetailPane(
     onRestoreLocal: (SnapshotRecord) -> Unit,
     onRestoreRemote: (RemoteSnapshot) -> Unit,
     modifier: Modifier = Modifier,
+    /** Hoisted so the X menu can open a tab; null keeps the tab inside the pane. */
+    tab: DetailTab? = null,
+    onTabChange: (DetailTab) -> Unit = {},
+    scrollState: ScrollState = rememberScrollState(),
+    primaryFocusRequester: FocusRequester? = null,
 ) {
     val game = entry.game
-    var tab by rememberSaveable(entry.libraryKey) { mutableStateOf(DetailTab.VERSIONS) }
+    var localTab by rememberSaveable(entry.libraryKey) { mutableStateOf(DetailTab.VERSIONS) }
+    val shownTab = tab ?: localTab
+    val selectTab: (DetailTab) -> Unit = { localTab = it; onTabChange(it) }
     Column(
         modifier = modifier
             .testTag(GAME_DETAIL_TAG)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.Top) {
@@ -133,13 +150,20 @@ internal fun GameDetailPane(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Button(onClick = onBackup, enabled = !busy) {
+            Button(
+                onClick = whenIdle(busy, onBackup),
+                modifier = Modifier
+                    .let { if (primaryFocusRequester != null) it.focusRequester(primaryFocusRequester) else it }
+                    .handheldFocusRing(RoundedCornerShape(20.dp))
+                    .busyDimmed(busy),
+            ) {
                 Icon(Icons.Outlined.Save, contentDescription = null)
                 Text("备份这款游戏", modifier = Modifier.padding(start = 8.dp), maxLines = 1)
             }
             Row(
                 modifier = Modifier
                     .weight(1f)
+                    .handheldFocusRing(RoundedCornerShape(8.dp))
                     .toggleable(
                         value = batchChecked,
                         enabled = batchEnabled,
@@ -162,8 +186,9 @@ internal fun GameDetailPane(
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
             DetailTab.entries.forEachIndexed { index, item ->
                 SegmentedButton(
-                    selected = tab == item,
-                    onClick = { tab = item },
+                    selected = shownTab == item,
+                    onClick = { selectTab(item) },
+                    modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)),
                     shape = SegmentedButtonDefaults.itemShape(index = index, count = DetailTab.entries.size),
                     label = {
                         Text(
@@ -177,7 +202,7 @@ internal fun GameDetailPane(
                 )
             }
         }
-        when (tab) {
+        when (shownTab) {
             DetailTab.VERSIONS -> VersionsTab(
                 localHistory = localHistory,
                 remoteHistory = remoteHistory,
@@ -279,7 +304,10 @@ private fun SnapshotHistoryRow(
             Text(title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        IconButton(onClick = onRestore, enabled = enabled) {
+        IconButton(
+            onClick = whenIdle(!enabled, onRestore),
+            modifier = Modifier.handheldFocusRing(CircleShape).busyDimmed(!enabled),
+        ) {
             Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "恢复此游戏快照")
         }
     }

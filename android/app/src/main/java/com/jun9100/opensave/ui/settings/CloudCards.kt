@@ -7,42 +7,41 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SettingsBackupRestore
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.GameSaveRemoteAction
 import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.ui.formatTime
+import com.jun9100.opensave.ui.input.busyDimmed
+import com.jun9100.opensave.ui.input.handheldFocusRing
+import com.jun9100.opensave.ui.input.whenIdle
 
 @Composable
-internal fun GameSaveCard(state: SourceUiState, viewModel: SourceViewModel) {
+internal fun GameSaveCard(
+    state: SourceUiState,
+    viewModel: SourceViewModel,
+    /** The first control of the settings page, focused when the page opens with the pad. */
+    initialFocus: FocusRequester? = null,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text("game-save 云端备份", style = MaterialTheme.typography.titleMedium)
@@ -53,50 +52,34 @@ internal fun GameSaveCard(state: SourceUiState, viewModel: SourceViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
+            TextSettingRow(
+                label = "game-save 服务地址",
                 value = state.gameSaveUrl,
+                placeholder = "http://nas.example:8788",
+                keyboardType = KeyboardType.Uri,
+                focusRequester = initialFocus,
                 onValueChange = viewModel::updateGameSaveUrl,
-                label = { Text("game-save 服务地址") },
-                placeholder = { Text("http://nas.example:8788") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(8.dp))
-            var syncKeyVisible by rememberSaveable { mutableStateOf(false) }
-            OutlinedTextField(
+            TextSettingRow(
+                label = "同步密钥",
                 value = state.gameSaveSyncKey,
+                secret = true,
                 onValueChange = viewModel::updateGameSaveSyncKey,
-                label = { Text("同步密钥") },
-                singleLine = true,
-                visualTransformation = if (syncKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                trailingIcon = {
-                    IconButton(onClick = { syncKeyVisible = !syncKeyVisible }) {
-                        Icon(
-                            if (syncKeyVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                            contentDescription = if (syncKeyVisible) "隐藏同步密钥" else "显示同步密钥",
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("启用新快照自动上传")
-                Switch(checked = state.gameSaveEnabled, onCheckedChange = viewModel::updateGameSaveEnabled)
-            }
+            SwitchSettingRow(
+                label = "启用新快照自动上传",
+                checked = state.gameSaveEnabled,
+                onCheckedChange = viewModel::updateGameSaveEnabled,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(onClick = viewModel::saveGameSave, modifier = Modifier.weight(1f)) {
+                Button(onClick = viewModel::saveGameSave, modifier = Modifier.weight(1f).settingButtonFocus()) {
                     Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "保存")
                     Text("保存", modifier = Modifier.padding(start = 6.dp))
                 }
-                OutlinedButton(onClick = viewModel::testGameSave, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = viewModel::testGameSave, modifier = Modifier.weight(1f).settingButtonFocus()) {
                     Icon(Icons.Outlined.CloudUpload, contentDescription = "测试")
                     Text("测试连接", modifier = Modifier.padding(start = 6.dp))
                 }
@@ -107,17 +90,15 @@ internal fun GameSaveCard(state: SourceUiState, viewModel: SourceViewModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedButton(
-                    onClick = viewModel::listCloud,
-                    enabled = !state.busy,
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = whenIdle(state.busy, viewModel::listCloud),
+                    modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
                 ) {
                     Icon(Icons.Outlined.Refresh, contentDescription = "列举云端")
                     Text("列举云端快照", modifier = Modifier.padding(start = 6.dp))
                 }
                 OutlinedButton(
-                    onClick = viewModel::checkCloudUpdates,
-                    enabled = !state.busy,
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = whenIdle(state.busy, viewModel::checkCloudUpdates),
+                    modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
                 ) {
                     Icon(Icons.Outlined.CloudDownload, contentDescription = "检查跨设备更新")
                     Text("检查跨设备更新", modifier = Modifier.padding(start = 6.dp))
@@ -184,8 +165,8 @@ internal fun CloudUpdateCard(state: SourceUiState, viewModel: SourceViewModel) {
                     }
                     if (update.remote != null) {
                         IconButton(
-                            onClick = { viewModel.requestCloudUpdateRestore(update) },
-                            enabled = !state.busy,
+                            onClick = whenIdle(state.busy) { viewModel.requestCloudUpdateRestore(update) },
+                            modifier = Modifier.handheldFocusRing(CircleShape).busyDimmed(state.busy),
                         ) {
                             Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "确认恢复此跨设备更新")
                         }

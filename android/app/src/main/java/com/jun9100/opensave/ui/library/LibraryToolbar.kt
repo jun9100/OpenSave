@@ -1,5 +1,6 @@
 package com.jun9100.opensave.ui.library
 
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material3.Button
@@ -22,17 +24,24 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.ui.LIBRARY_TOOLBAR_TAG
+import com.jun9100.opensave.ui.input.busyDimmed
+import com.jun9100.opensave.ui.input.handheldFocusRing
+import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.PreviewSurface
 
 /**
  * The fixed library toolbar above the list; it never scrolls away. Landscape
  * fits it into one 52dp row, portrait uses a chip row and an action row.
+ * It is one focus group: coming back from the list returns to the control
+ * used last. While [enabled] is false (an operation runs) the controls stay
+ * focusable and dimmed and ignore clicks, so D-pad focus does not drop.
  */
 @Composable
 internal fun LibraryToolbar(
@@ -49,7 +58,7 @@ internal fun LibraryToolbar(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth().testTag(LIBRARY_TOOLBAR_TAG),
+        modifier = modifier.fillMaxWidth().testTag(LIBRARY_TOOLBAR_TAG).focusRestorer().focusGroup(),
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         if (singleRow) {
@@ -104,16 +113,20 @@ private fun RowScope.BatchActions(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
-    TextButton(onClick = onToggleAll, enabled = enabled && eligibleCount > 0) {
+    TextButton(
+        onClick = whenIdle(!enabled, onToggleAll),
+        enabled = eligibleCount > 0,
+        modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(!enabled),
+    ) {
         Text(if (allSelected) "取消全选" else "全选", maxLines = 1)
     }
     // TODO(plan §5.2): becomes "备份有变更 (N)" once change detection exists.
     // Content-hash dedup (§5.3) already skips unchanged games, but knowing N
     // needs every game's saves copied and hashed, so the label stays honest.
     Button(
-        onClick = onBackupSelected,
-        enabled = enabled && selectedCount > 0,
-        modifier = Modifier.height(40.dp),
+        onClick = whenIdle(!enabled, onBackupSelected),
+        enabled = selectedCount > 0,
+        modifier = Modifier.height(40.dp).handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(!enabled),
         contentPadding = PaddingValues(horizontal = 14.dp),
     ) {
         Icon(Icons.Outlined.Save, contentDescription = null)
@@ -139,8 +152,8 @@ private fun SaveTypeFilterBar(
         options.forEach { (id, label) ->
             FilterChip(
                 selected = selectedTypeId == id,
-                onClick = { onSelected(id) },
-                enabled = enabled,
+                onClick = whenIdle(!enabled) { onSelected(id) },
+                modifier = Modifier.handheldFocusRing(RoundedCornerShape(8.dp)).busyDimmed(!enabled),
                 label = { Text(label, maxLines = 1) },
             )
         }

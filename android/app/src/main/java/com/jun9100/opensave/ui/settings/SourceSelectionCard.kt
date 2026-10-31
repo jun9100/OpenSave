@@ -6,7 +6,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -17,7 +21,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -26,6 +29,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.AuthorizedSafTree
 import com.jun9100.opensave.SaveSourceOption
@@ -36,6 +41,10 @@ import com.jun9100.opensave.SourceScanResult
 import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.StorageMode
+import com.jun9100.opensave.ui.input.busyDimmed
+import com.jun9100.opensave.ui.input.handheldFocusRing
+import com.jun9100.opensave.ui.input.whenIdle
+import com.jun9100.opensave.ui.input.whenIdleWith
 import com.jun9100.opensave.ui.sourceAccessLabel
 
 @Composable
@@ -47,31 +56,31 @@ internal fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewMode
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 SegmentedButton(
                     selected = state.storageMode == StorageMode.SAF,
-                    onClick = { viewModel.selectStorageMode(StorageMode.SAF) },
-                    enabled = !state.busy,
+                    onClick = whenIdle(state.busy) { viewModel.selectStorageMode(StorageMode.SAF) },
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).settingButtonFocus().busyDimmed(state.busy),
                 ) { Text("系统授权") }
                 SegmentedButton(
                     selected = state.storageMode == StorageMode.ROOT,
-                    onClick = { viewModel.selectStorageMode(StorageMode.ROOT) },
-                    enabled = !state.busy,
+                    onClick = whenIdle(state.busy) { viewModel.selectStorageMode(StorageMode.ROOT) },
                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).settingButtonFocus().busyDimmed(state.busy),
                 ) { Text("Root 路径") }
             }
             Spacer(Modifier.height(12.dp))
             if (state.storageMode == StorageMode.ROOT) {
-                OutlinedTextField(
+                TextSettingRow(
+                    label = "Root 扫描路径",
                     value = state.rootPath,
+                    placeholder = "/data/user/0/com.xiaoji.egggame/files",
+                    keyboardType = KeyboardType.Uri,
                     onValueChange = viewModel::updateRootPath,
-                    label = { Text("Root 扫描路径") },
-                    placeholder = { Text("/data/user/0/com.xiaoji.egggame/files") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
-                Button(onClick = viewModel::applyRootPath, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = whenIdle(state.busy, viewModel::applyRootPath),
+                    modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
+                ) {
                     Icon(Icons.Outlined.FolderOpen, contentDescription = "保存 Root 路径")
                     Text("保存并扫描", modifier = Modifier.padding(start = 8.dp))
                 }
@@ -111,8 +120,8 @@ internal fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewMode
                                 )
                             }
                             IconButton(
-                                onClick = { viewModel.forgetAuthorizedTree(tree.uri) },
-                                enabled = !state.busy,
+                                onClick = whenIdle(state.busy) { viewModel.forgetAuthorizedTree(tree.uri) },
+                                modifier = Modifier.handheldFocusRing(CircleShape).busyDimmed(state.busy),
                             ) {
                                 Icon(Icons.Outlined.DeleteOutline, contentDescription = "移除授权目录")
                             }
@@ -120,7 +129,10 @@ internal fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewMode
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                Button(onClick = onPickFolder, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = whenIdle(state.busy, onPickFolder),
+                    modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
+                ) {
                     Icon(Icons.Outlined.FolderOpen, contentDescription = "选择目录")
                     Text("添加并授权目录", modifier = Modifier.padding(start = 8.dp))
                 }
@@ -165,26 +177,43 @@ internal fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewMode
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(
-                        onClick = { viewModel.setAllSourcesEnabled(true) },
-                        enabled = !state.busy && selectedCount < checkableCount,
+                        onClick = whenIdle(state.busy) { viewModel.setAllSourcesEnabled(true) },
+                        enabled = selectedCount < checkableCount,
+                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy),
                     ) { Text("全选") }
                     TextButton(
-                        onClick = { viewModel.setAllSourcesEnabled(false) },
-                        enabled = !state.busy && selectedCount > 0,
+                        onClick = whenIdle(state.busy) { viewModel.setAllSourcesEnabled(false) },
+                        enabled = selectedCount > 0,
+                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy),
                     ) { Text("全不选") }
                 }
                 state.sourceOptions.forEach { option ->
                     val access = scanBySourceId[option.sourceId]?.access
                         ?: plannedAccessStatus(option, state.rootChecked, state.rootAvailable)
                     val unreachable = option.id in unreachableIds
+                    val checked = SourceOptionPolicy.displayedChecked(option, unreachable)
+                    // The whole row is the checkbox (plan R1/I8): one focus stop, A toggles it.
+                    // Busy only ignores the change, so focus does not drop.
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .heightIn(min = 48.dp)
+                            .handheldFocusRing(RoundedCornerShape(12.dp))
+                            .toggleable(
+                                value = checked,
+                                enabled = !unreachable,
+                                role = Role.Checkbox,
+                                onValueChange = whenIdleWith(state.busy) { selected -> viewModel.setSourceEnabled(option.id, selected) },
+                            )
+                            .busyDimmed(state.busy),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(
-                            checked = SourceOptionPolicy.displayedChecked(option, unreachable),
-                            onCheckedChange = { selected -> viewModel.setSourceEnabled(option.id, selected) },
-                            enabled = !state.busy && !unreachable,
+                            checked = checked,
+                            onCheckedChange = null,
+                            enabled = !unreachable,
+                            modifier = Modifier.padding(horizontal = 12.dp),
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(option.label, style = MaterialTheme.typography.bodyMedium)

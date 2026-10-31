@@ -28,6 +28,8 @@ import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.ui.formatBytes
 import com.jun9100.opensave.ui.formatTime
+import com.jun9100.opensave.ui.input.busyDimmed
+import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.PreviewData
 import com.jun9100.opensave.ui.preview.PreviewSurface
@@ -55,8 +57,8 @@ internal fun LocalSnapshotCard(state: SourceUiState, viewModel: SourceViewModel)
                         )
                     }
                     OutlinedButton(
-                        onClick = { viewModel.requestLocalRestore(snapshot) },
-                        enabled = !state.busy,
+                        onClick = whenIdle(state.busy) { viewModel.requestLocalRestore(snapshot) },
+                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy),
                     ) {
                         Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "恢复")
                         Text("恢复")
@@ -91,8 +93,8 @@ internal fun RemoteSnapshotCard(state: SourceUiState, viewModel: SourceViewModel
                         )
                     }
                     OutlinedButton(
-                        onClick = { viewModel.requestRemoteRestore(remote) },
-                        enabled = !state.busy,
+                        onClick = whenIdle(state.busy) { viewModel.requestRemoteRestore(remote) },
+                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy),
                     ) {
                         Icon(Icons.Outlined.Download, contentDescription = "下载并恢复")
                         Text("恢复")
