@@ -50,14 +50,17 @@ class AutoBackupScheduler(context: Context) {
 internal data class AutoBackupFingerprint(
     val manifestHash: String,
     val dataFileCount: Int,
+    /** [ContentHash] of the data files; blank when the manifest cannot be read. */
+    val contentHash: String = "",
 )
 
 internal object AutoBackupPolicy {
-    fun eligibleGames(scan: SaveScanReport): List<DetectedGame> = GameLibrary.group(
-        scan.detected.filter { save ->
-            !save.candidate && save.kind != "android-app" && save.relativePath != "."
-        },
-    )
+    /**
+     * Same games and, through [GameLibrary.batchBackupLocations], the same
+     * location set as a manual batch backup, so both reuse each other's snapshots.
+     */
+    fun eligibleGames(scan: SaveScanReport): List<DetectedGame> =
+        GameLibrary.batchBackupEligible(GameLibrary.group(scan.detected))
 
     fun fingerprint(workspace: File): AutoBackupFingerprint {
         require(workspace.isDirectory) { "自动备份工作区不存在" }
@@ -76,8 +79,11 @@ internal object AutoBackupPolicy {
                 dataFileCount++
             }
         }
+        val contentHash = runCatching {
+            ContentHash.of(records, GameSnapshotManifest.read(manifest).locations)
+        }.getOrDefault("")
         records += FileRecord(manifest.name, manifest.length(), Hashing.sha256(manifest))
-        return AutoBackupFingerprint(Hashing.manifestHash(records), dataFileCount)
+        return AutoBackupFingerprint(Hashing.manifestHash(records), dataFileCount, contentHash)
     }
 }
 
@@ -280,13 +286,16 @@ class AutoBackupWorker(
                 }
             }
 
-            val matching = repository.list().filter {
-                it.sourceId == sourceId && it.gameKey == game.gameKey && it.manifestHash == fingerprint.manifestHash
-            }
-            // A snapshot can finish uploading while its current-save head fails
-            // to publish. Reuse that archive on the next worker run so the
-            // desktop client eventually receives the automatic-sync signal.
-            val existing = matching.firstOrNull { repository.fileFor(it).isFile }
+            // Unchanged content reuses the newest snapshot (shared with manual
+            // backups through the content hash). A snapshot can also finish
+            // uploading while its current-save head fails to publish; reusing
+            // it lets the desktop client eventually receive the sync signal.
+            val existing = repository.findReusableRecord(
+                sourceId = sourceId,
+                gameKey = game.gameKey,
+                contentHash = fingerprint.contentHash,
+                legacyManifestHash = fingerprint.manifestHash,
+            )
             if (nativeDecision == null && existing?.uploaded == true) {
                 return publishCurrentHead(config, cloudIdentity, existing, repository.fileFor(existing))
             }
@@ -450,6 +459,8 @@ class AutoBackupWorker(
             gameName = manifest.gameName,
             saveType = cloudIdentity.saveType.id,
             cloudGameId = cloudIdentity.gameId,
+            contentHash = fingerprint.contentHash,
+            hashVersion = if (fingerprint.contentHash.isBlank()) 0 else ContentHash.VERSION,
         )
         repository.add(record)
         return record

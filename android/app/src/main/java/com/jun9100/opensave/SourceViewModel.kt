@@ -695,6 +695,7 @@ class SourceViewModel(
 
         viewModelScope.launch {
             var completed = 0
+            var unchanged = 0
             val failures = mutableListOf<String>()
             val uploadFailures = mutableListOf<String>()
             val syncNotices = mutableListOf<String>()
@@ -720,7 +721,7 @@ class SourceViewModel(
                     }
                 }
                 result.onSuccess { captured ->
-                    completed++
+                    if (captured.reused) unchanged++ else completed++
                     captured.uploadError?.let { uploadFailures += "${game.presentation.primaryName}：$it" }
                     captured.syncNotice?.let { syncNotices += "${game.presentation.primaryName}：$it" }
                     captured.cloudUpdate?.let(cloudUpdates::add)
@@ -731,7 +732,7 @@ class SourceViewModel(
 
             state.value = state.value.finished(
                 OpenSavePage.LIBRARY,
-                action = "批量备份完成：本地快照 $completed 款，失败 ${failures.size} 款，云端上传失败 ${uploadFailures.size} 款，跨设备待处理 ${cloudUpdates.size} 款",
+                action = "批量备份完成：新建快照 $completed 款，$UNCHANGED_SKIPPED $unchanged 款，失败 ${failures.size} 款，云端上传失败 ${uploadFailures.size} 款，跨设备待处理 ${cloudUpdates.size} 款",
                 error = (failures + uploadFailures + syncNotices).take(6).takeIf { it.isNotEmpty() }?.joinToString("\n"),
             ).copy(
                 snapshots = currentSnapshots(),
@@ -742,7 +743,9 @@ class SourceViewModel(
 
     private fun createGameBackup(entry: SourceGameEntry, includeCandidates: Boolean) {
         val game = entry.game
-        val selectedSaves = game.saves.filter { includeCandidates || !it.candidate }
+        // A single-game backup is an explicit request, so it keeps Android app
+        // data; games without such a location share the batch location set.
+        val selectedSaves = GameLibrary.backupLocations(game, includeCandidates, includeAndroidApp = true)
         if (selectedSaves.isEmpty()) {
             updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "该游戏只有候选存档位置；确认后才能备份")) }
             return
@@ -763,9 +766,14 @@ class SourceViewModel(
             result.onSuccess { captured ->
                 val notice = listOfNotNull(captured.uploadError, captured.syncNotice).joinToString("；")
                 val uploadSuffix = notice.takeIf { it.isNotBlank() }?.let { "；$it" }.orEmpty()
+                val action = if (captured.reused) {
+                    "${manifest.gameName}：$UNCHANGED_SKIPPED${reusedUploadSuffix(captured)}$uploadSuffix"
+                } else {
+                    "已备份 ${manifest.gameName}：${captured.record.remoteName}$uploadSuffix"
+                }
                 state.value = state.value.finished(
                     OpenSavePage.LIBRARY,
-                    action = "已备份 ${manifest.gameName}：${captured.record.remoteName}$uploadSuffix",
+                    action = action,
                     error = captured.uploadError,
                 ).copy(
                     snapshots = currentSnapshots(),
@@ -794,34 +802,63 @@ class SourceViewModel(
             val contentFingerprint = AutoBackupPolicy.fingerprint(workspace)
 
             val sourceId = entry.sourceId
-            val timestamp = maxOf(
-                System.currentTimeMillis(),
-                (snapshotRepository.list().maxOfOrNull { it.createdAtMillis } ?: 0L) + 1L,
-            )
-            val remoteName = GameCloudNaming.remoteName(cloudIdentity, timestamp)
-            val archive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$remoteName")
-            val build = if (cloudIdentity.desktopCompatible) {
-                val saveRoot = File(workspace, manifest.locations.single().archivePath)
-                require(saveRoot.isDirectory) { "Switch 存档暂存目录不完整" }
-                snapshotEngine.createSnapshot(saveRoot, archive).getOrThrow()
-            } else {
-                snapshotEngine.createSnapshot(workspace, archive).getOrThrow()
-            }
-            val record = SnapshotRecord(
-                id = "game_${UUID.randomUUID()}",
+            // Unchanged content (same data as the newest snapshot of this game)
+            // reuses that snapshot; it is only uploaded if it never was.
+            val reusable = snapshotRepository.findReusableRecord(
                 sourceId = sourceId,
-                remoteName = remoteName,
-                localPath = remoteName,
-                createdAtMillis = timestamp,
-                sizeBytes = build.archive.length(),
-                sha256 = build.archiveSha256,
-                manifestHash = contentFingerprint.manifestHash,
                 gameKey = manifest.gameKey,
-                gameName = manifest.gameName,
-                saveType = cloudIdentity.saveType.id,
-                cloudGameId = cloudIdentity.gameId,
+                contentHash = contentFingerprint.contentHash,
+                legacyManifestHash = contentFingerprint.manifestHash,
             )
-            snapshotRepository.add(record)
+            if (reusable?.uploaded == true) {
+                return GameCaptureOutcome(
+                    record = reusable,
+                    fileCount = contentFingerprint.dataFileCount,
+                    uploadError = null,
+                    reused = true,
+                )
+            }
+            val record: SnapshotRecord
+            val archive: File
+            val fileCount: Int
+            if (reusable != null) {
+                record = reusable
+                archive = snapshotRepository.fileFor(reusable)
+                fileCount = contentFingerprint.dataFileCount
+            } else {
+                val timestamp = maxOf(
+                    System.currentTimeMillis(),
+                    (snapshotRepository.list().maxOfOrNull { it.createdAtMillis } ?: 0L) + 1L,
+                )
+                val newRemoteName = GameCloudNaming.remoteName(cloudIdentity, timestamp)
+                archive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$newRemoteName")
+                val build = if (cloudIdentity.desktopCompatible) {
+                    val saveRoot = File(workspace, manifest.locations.single().archivePath)
+                    require(saveRoot.isDirectory) { "Switch 存档暂存目录不完整" }
+                    snapshotEngine.createSnapshot(saveRoot, archive).getOrThrow()
+                } else {
+                    snapshotEngine.createSnapshot(workspace, archive).getOrThrow()
+                }
+                record = SnapshotRecord(
+                    id = "game_${UUID.randomUUID()}",
+                    sourceId = sourceId,
+                    remoteName = newRemoteName,
+                    localPath = newRemoteName,
+                    createdAtMillis = timestamp,
+                    sizeBytes = build.archive.length(),
+                    sha256 = build.archiveSha256,
+                    manifestHash = contentFingerprint.manifestHash,
+                    gameKey = manifest.gameKey,
+                    gameName = manifest.gameName,
+                    saveType = cloudIdentity.saveType.id,
+                    cloudGameId = cloudIdentity.gameId,
+                    contentHash = contentFingerprint.contentHash,
+                    hashVersion = if (contentFingerprint.contentHash.isBlank()) 0 else ContentHash.VERSION,
+                )
+                snapshotRepository.add(record)
+                fileCount = build.fileCount
+            }
+            val remoteName = record.remoteName
 
             val config = gameSaveStore.load()
             var uploadError: String? = null
@@ -885,17 +922,25 @@ class SourceViewModel(
                     }
                 }
             }
+            val finalRecord = snapshotRepository.list().first { it.id == record.id }
             return GameCaptureOutcome(
-                record = snapshotRepository.list().first { it.id == record.id },
-                fileCount = build.fileCount,
+                record = finalRecord,
+                fileCount = fileCount,
                 uploadError = uploadError,
                 syncNotice = syncNotice,
                 cloudUpdate = cloudUpdate,
+                reused = reusable != null,
+                // Only a reused record that had never been uploaded gets here.
+                uploadedReused = reusable != null && finalRecord.uploaded,
             )
         } finally {
             workspace.deleteRecursively()
         }
     }
+
+    /** Notes that a reused snapshot was uploaded just now because it never had been. */
+    private fun reusedUploadSuffix(captured: GameCaptureOutcome): String =
+        if (captured.uploadedReused) "；已补传云端" else ""
 
     private suspend fun copyGameLocations(
         source: SourceSelection,
@@ -1583,6 +1628,10 @@ class SourceViewModel(
         val uploadError: String?,
         val syncNotice: String? = null,
         val cloudUpdate: GameSaveCloudUpdate? = null,
+        /** True when the content matched the newest snapshot and no new one was written. */
+        val reused: Boolean = false,
+        /** True when a reused snapshot that had never been uploaded was uploaded now. */
+        val uploadedReused: Boolean = false,
     )
 
     private data class CloudCheckResult(
@@ -1599,6 +1648,7 @@ class SourceViewModel(
     private companion object {
         const val SNAPSHOT_DIRECTORY = "snapshots"
         const val GAME_WORKSPACE_DIRECTORY = "game-workspace"
+        const val UNCHANGED_SKIPPED = "无变化，已跳过"
         const val MAX_HISTORY = 40
         const val SOURCE_RESCAN_DEBOUNCE_MILLIS = 300L
         const val WRITE_BACK_TEMPORARY_PREFIX = ".source-workspace-write-back-"

@@ -107,8 +107,9 @@ private fun RowScope.BatchActions(
     TextButton(onClick = onToggleAll, enabled = enabled && eligibleCount > 0) {
         Text(if (allSelected) "取消全选" else "全选", maxLines = 1)
     }
-    // TODO(plan §5.2/§5.3): becomes "备份有变更 (N)" once change detection and
-    // content-hash dedup exist; until then it backs up the explicit selection.
+    // TODO(plan §5.2): becomes "备份有变更 (N)" once change detection exists.
+    // Content-hash dedup (§5.3) already skips unchanged games, but knowing N
+    // needs every game's saves copied and hashed, so the label stays honest.
     Button(
         onClick = onBackupSelected,
         enabled = enabled && selectedCount > 0,

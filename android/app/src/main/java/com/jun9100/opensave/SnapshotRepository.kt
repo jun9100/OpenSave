@@ -24,6 +24,10 @@ data class SnapshotRecord(
     val gameName: String = "",
     val saveType: String = GameSaveTypes.PC.id,
     val cloudGameId: String = "",
+    /** [ContentHash] of the captured saves; blank for safety copies and records from older builds. */
+    val contentHash: String = "",
+    /** [ContentHash.VERSION] that produced [contentHash]; 0 when there is none. */
+    val hashVersion: Int = 0,
 )
 
 /**
@@ -56,6 +60,40 @@ class SnapshotRepository(private val root: File) {
             if (record.id == id) record.copy(uploaded = uploaded) else record
         }
         writeRecords(records)
+    }
+
+    /**
+     * The snapshot a backup of unchanged content should reuse instead of
+     * writing a new one: the newest ordinary (non-safety) snapshot of this game
+     * from this source, if its archive still exists and it holds exactly
+     * [contentHash]. Only the newest counts, so content that changes back to an
+     * older state still gets a new version on the timeline.
+     *
+     * A record from an older build has no content hash; when its
+     * [SnapshotRecord.manifestHash] equals [legacyManifestHash] (same data and
+     * same manifest) it is the same content, and the hash is filled in on it.
+     */
+    fun findReusableRecord(
+        sourceId: String,
+        gameKey: String,
+        contentHash: String,
+        legacyManifestHash: String? = null,
+    ): SnapshotRecord? = synchronized(lock) {
+        if (contentHash.isBlank()) return@synchronized null
+        val latest = readRecords()
+            .filter { it.sourceId == sourceId && it.gameKey == gameKey && it.comment.isBlank() }
+            .maxByOrNull { it.createdAtMillis }
+            ?: return@synchronized null
+        if (!fileFor(latest).isFile) return@synchronized null
+        when {
+            latest.hashVersion == ContentHash.VERSION && latest.contentHash == contentHash -> latest
+            latest.hashVersion == 0 && legacyManifestHash != null && latest.manifestHash == legacyManifestHash -> {
+                val backfilled = latest.copy(contentHash = contentHash, hashVersion = ContentHash.VERSION)
+                writeRecords(readRecords().map { if (it.id == latest.id) backfilled else it })
+                backfilled
+            }
+            else -> null
+        }
     }
 
     fun fileFor(record: SnapshotRecord): File = File(
@@ -124,12 +162,14 @@ class SnapshotRepository(private val root: File) {
         record.gameName,
         record.saveType,
         record.cloudGameId,
+        record.contentHash,
+        record.hashVersion.toString(),
     ).joinToString("\t", transform = ::encodeField)
 
     private fun decode(line: String): SnapshotRecord? {
         return runCatching {
             val fields = line.split('\t').map(::decodeField)
-            if (fields.size != 10 && fields.size != 12 && fields.size != 14) return null
+            if (fields.size !in RECORD_FIELD_COUNTS) return null
             val gameKey = fields.getOrNull(10)?.takeIf(String::isNotBlank)
             SnapshotRecord(
                 id = fields[0],
@@ -147,6 +187,8 @@ class SnapshotRepository(private val root: File) {
                 saveType = fields.getOrNull(12)?.takeIf(GameSaveTypes::isValid)
                     ?: if (gameKey?.startsWith("switch:") == true) GameSaveTypes.SWITCH.id else GameSaveTypes.PC.id,
                 cloudGameId = fields.getOrNull(13).orEmpty(),
+                contentHash = fields.getOrNull(14).orEmpty(),
+                hashVersion = fields.getOrNull(15)?.toIntOrNull() ?: 0,
             )
         }.getOrNull()
     }
@@ -162,6 +204,9 @@ class SnapshotRepository(private val root: File) {
         private const val INDEX_FILE_NAME = "index.tsv"
         private const val TEMPORARY_PREFIX = ".index-"
         private const val TEMPORARY_SUFFIX = ".part"
+
+        /** Older builds wrote 10, 12 or 14 columns; 16 adds the content hash and its version. */
+        private val RECORD_FIELD_COUNTS = setOf(10, 12, 14, 16)
 
         private val locks = ConcurrentHashMap<String, Any>()
         private val instances = ConcurrentHashMap<String, SnapshotRepository>()

@@ -5,6 +5,7 @@ import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,6 +29,8 @@ class SnapshotRepositoryTest {
                 gameName = "示例游戏",
                 saveType = GameSaveTypes.PPSSPP.id,
                 cloudGameId = "android-emu-1234567890abcdef",
+                contentHash = "c".repeat(64),
+                hashVersion = ContentHash.VERSION,
             )
             val repository = SnapshotRepository(root)
             repository.add(record)
@@ -56,6 +59,96 @@ class SnapshotRepositoryTest {
 
             assertEquals(null, record.gameKey)
             assertEquals("", record.gameName)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun readsFourteenColumnRecordsWithoutContentHash() {
+        val root = createTempDir(prefix = "opensave-v14-index-")
+        try {
+            val values = listOf(
+                "snap_old", "source", "old.zip", "old.zip", "1", "42", "a", "b", "true", "",
+                "switch:0100", "游戏", GameSaveTypes.SWITCH.id, "switch-0100",
+            )
+            File(root, "index.tsv").writeText(encode(values))
+
+            val record = SnapshotRepository(root).list().single()
+
+            assertEquals("switch:0100", record.gameKey)
+            assertEquals("switch-0100", record.cloudGameId)
+            assertTrue(record.uploaded)
+            assertEquals("", record.contentHash)
+            assertEquals(0, record.hashVersion)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun reusesOnlyTheNewestOrdinarySnapshotWithTheSameContent() {
+        val root = createTempDir(prefix = "opensave-reuse-")
+        try {
+            val repository = SnapshotRepository(root)
+            val older = gameRecord("old", createdAt = 1, contentHash = "A")
+            val newer = gameRecord("new", createdAt = 2, contentHash = "B")
+            listOf(older, newer).forEach { record ->
+                repository.add(record)
+                repository.fileFor(record).writeText("zip")
+            }
+
+            assertEquals("new", repository.findReusableRecord("source", "pc:game", "B")?.id)
+            // A -> B -> A must still produce a new version on the timeline.
+            assertNull(repository.findReusableRecord("source", "pc:game", "A"))
+            assertNull(repository.findReusableRecord("other-source", "pc:game", "B"))
+            assertNull(repository.findReusableRecord("source", "pc:other", "B"))
+            assertNull(repository.findReusableRecord("source", "pc:game", ""))
+
+            // Safety copies never count as the game's latest backup.
+            repository.add(gameRecord("safety", createdAt = 3, contentHash = "", comment = "恢复前安全副本"))
+            assertEquals("new", repository.findReusableRecord("source", "pc:game", "B")?.id)
+
+            // A missing archive cannot be reused.
+            repository.fileFor(newer).delete()
+            assertNull(repository.findReusableRecord("source", "pc:game", "B"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun legacyRecordIsReusedByManifestHashAndBackfilled() {
+        val root = createTempDir(prefix = "opensave-reuse-legacy-")
+        try {
+            val repository = SnapshotRepository(root)
+            val legacy = gameRecord("legacy", createdAt = 1, contentHash = "").copy(manifestHash = "M", hashVersion = 0)
+            repository.add(legacy)
+            repository.fileFor(legacy).writeText("zip")
+
+            assertNull(repository.findReusableRecord("source", "pc:game", "C", legacyManifestHash = "other"))
+            val reused = repository.findReusableRecord("source", "pc:game", "C", legacyManifestHash = "M")
+
+            assertEquals("legacy", reused?.id)
+            val stored = SnapshotRepository(File(root.absolutePath)).list().single()
+            assertEquals("C", stored.contentHash)
+            assertEquals(ContentHash.VERSION, stored.hashVersion)
+            assertEquals("legacy", repository.findReusableRecord("source", "pc:game", "C")?.id)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun recordFromAnotherHashVersionIsNotReused() {
+        val root = createTempDir(prefix = "opensave-reuse-version-")
+        try {
+            val repository = SnapshotRepository(root)
+            val future = gameRecord("future", createdAt = 1, contentHash = "A").copy(hashVersion = ContentHash.VERSION + 1)
+            repository.add(future)
+            repository.fileFor(future).writeText("zip")
+
+            assertNull(repository.findReusableRecord("source", "pc:game", "A", legacyManifestHash = future.manifestHash))
         } finally {
             root.deleteRecursively()
         }
@@ -127,6 +220,25 @@ class SnapshotRepositoryTest {
             root.deleteRecursively()
         }
     }
+
+    private fun encode(values: List<String>): String = values.joinToString("\t") { value ->
+        java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun gameRecord(id: String, createdAt: Long, contentHash: String, comment: String = "") = SnapshotRecord(
+        id = id,
+        sourceId = "source",
+        remoteName = "$id.zip",
+        localPath = "$id.zip",
+        createdAtMillis = createdAt,
+        sizeBytes = 1,
+        sha256 = "a",
+        manifestHash = "m-$id",
+        comment = comment,
+        gameKey = "pc:game",
+        contentHash = contentHash,
+        hashVersion = if (contentHash.isBlank()) 0 else ContentHash.VERSION,
+    )
 
     private fun record(id: String, createdAt: Long) = SnapshotRecord(
         id = id,
