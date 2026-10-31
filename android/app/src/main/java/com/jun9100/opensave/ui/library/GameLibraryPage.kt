@@ -276,6 +276,19 @@ internal fun GameLibraryContent(
         }
     }
 
+    // Waking pad mode starts on the preferred row even when the system already
+    // gave focus to the first focusable (the filter chip) in non-touch mode.
+    LaunchedEffect(handheld) {
+        if (!handheld || focus.listHasFocus || focus.detailHasFocus || menuKey != null || commandsOpen) return@LaunchedEffect
+        withFrameNanos { }
+        if (showingPortraitDetail) {
+            focus.detailPrimary.tryRequestFocus()
+        } else {
+            HandheldDispatch.preferredFocusKey(focus.lastFocusedKey, state.selectedGameKey, visibleKeys)
+                ?.let { focusRow(it) }
+        }
+    }
+
     // Landscape A on a row: once the pane shows that game, focus its "备份这款游戏".
     LaunchedEffect(focus.pendingDetailFocus, detail?.libraryKey) {
         val pending = focus.pendingDetailFocus ?: return@LaunchedEffect

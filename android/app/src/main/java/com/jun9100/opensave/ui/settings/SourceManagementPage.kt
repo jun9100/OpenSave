@@ -93,6 +93,13 @@ internal fun SourceManagementPage(
         val restored = landscape && lastFocusRight && rightFirstControl.tryRequestFocus()
         if (!restored) firstControl.tryRequestFocus()
     }
+    // Entering the page with the pad (L1/R1, rail) starts on its first control:
+    // focus left over on the rail would otherwise keep the effect above idle.
+    LaunchedEffect(Unit) {
+        if (!handheld) return@LaunchedEffect
+        withFrameNanos { }
+        firstControl.tryRequestFocus()
+    }
     HandheldCommandEffect { command ->
         when (command) {
             HandheldCommand.COMMAND_PANEL -> commandsOpen = true

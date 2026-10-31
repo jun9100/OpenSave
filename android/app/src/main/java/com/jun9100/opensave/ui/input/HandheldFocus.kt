@@ -35,8 +35,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -169,18 +171,32 @@ fun FocusRequester.tryRequestFocus(): Boolean = runCatching { requestFocus() }.i
 
 /**
  * A requester focused once when the dialog or page holding it appears. A new
- * dialog window may need a few frames before its nodes are attached.
+ * dialog window may need a few frames before its nodes are attached and can
+ * drop a request made before the window gains focus, so the request is
+ * repeated until the target really holds focus (checked with captureFocus).
  */
 @Composable
 fun rememberInitialFocus(): FocusRequester {
     val requester = remember { FocusRequester() }
+    val view = LocalView.current
     LaunchedEffect(requester) {
         repeat(INITIAL_FOCUS_ATTEMPTS) {
             withFrameNanos { }
-            if (requester.tryRequestFocus()) return@LaunchedEffect
+            // A new dialog window starts in touch mode, where its ComposeView
+            // refuses view focus; the Compose request is then accepted but
+            // nothing gets focused (seen on the Odin2).
+            if (!view.hasFocus()) view.requestFocusFromTouch()
+            if (requester.tryRequestFocus() && requester.holdsFocus()) return@LaunchedEffect
+            delay(INITIAL_FOCUS_RETRY_MS)
         }
     }
     return requester
 }
 
-private const val INITIAL_FOCUS_ATTEMPTS = 10
+/** True when the requester's node is the focused one; captureFocus only succeeds on a focused node. */
+private fun FocusRequester.holdsFocus(): Boolean = runCatching {
+    captureFocus().also { captured -> if (captured) freeFocus() }
+}.getOrDefault(false)
+
+private const val INITIAL_FOCUS_ATTEMPTS = 30
+private const val INITIAL_FOCUS_RETRY_MS = 50L
