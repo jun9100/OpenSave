@@ -52,9 +52,13 @@ object LibraryView {
         visibleGames.firstOrNull { it.libraryKey == selectedGameKey }
             ?: visibleGames.firstOrNull().takeIf { fallbackToFirst }
 
-    /** Groups local versions by library key so each row does not rescan every snapshot. */
+    /**
+     * Groups local versions by library key so each row does not rescan every
+     * snapshot. Safety copies taken before a restore are not backups the user
+     * made (and are never uploaded), so they count for nothing here.
+     */
     fun historyIndex(snapshots: List<SnapshotRecord>): Map<String, LibraryRowHistory> = snapshots
-        .filter { it.gameKey != null }
+        .filter { it.gameKey != null && !it.isSafetyCopy }
         .groupBy { "${it.sourceId}::${it.gameKey}" }
         .mapValues { (_, records) ->
             val latest = records.maxBy(SnapshotRecord::createdAtMillis)

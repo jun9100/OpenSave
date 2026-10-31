@@ -32,8 +32,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +50,7 @@ import com.jun9100.opensave.LibraryRowHistory
 import com.jun9100.opensave.LibrarySelection
 import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.OpenSavePage
+import com.jun9100.opensave.PageMessage
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SourceGameEntry
@@ -55,11 +59,13 @@ import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.SteamMetadataRepository
 import com.jun9100.opensave.ui.LocalAdaptiveLayout
 import com.jun9100.opensave.ui.ProvideAdaptiveLayout
+import com.jun9100.opensave.ui.StatusStrip
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.OdinScreenPreviews
 import com.jun9100.opensave.ui.preview.PreviewData
 import com.jun9100.opensave.ui.preview.PreviewSurface
 import com.jun9100.opensave.ui.sourceAccessLabel
+import kotlinx.coroutines.delay
 
 /** Everything the library page can ask for; the ViewModel in the app, no-ops in previews. */
 internal class LibraryActions(
@@ -118,7 +124,8 @@ internal fun GameLibraryPage(
 
 /**
  * Landscape: fixed toolbar, compact list on the left, detail of the current game
- * on the right. Portrait: fixed toolbar over a single column of compact rows; a
+ * on the right, with the page messages and the progress strip above and below
+ * the detail so the list keeps its full height. Portrait: fixed toolbar over a single column of compact rows; a
  * tapped row opens the full-screen detail instead.
  */
 @Composable
@@ -158,13 +165,17 @@ internal fun GameLibraryContent(
     }
 
     if (!landscape && state.gameDetailOpen && detail != null) {
-        GameDetailFor(
-            entry = presented(detail),
-            state = state,
-            actions = actions,
-            coverRepository = coverRepository,
-            modifier = modifier.fillMaxSize(),
-        )
+        // Results of the backup and restores started here are shown on top of the detail.
+        Column(modifier = modifier.fillMaxSize()) {
+            LibraryMessageLines(messages = messages, busy = state.busy)
+            GameDetailFor(
+                entry = presented(detail),
+                state = state,
+                actions = actions,
+                coverRepository = coverRepository,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
+        }
         return
     }
 
@@ -183,25 +194,9 @@ internal fun GameLibraryContent(
                 onBackupSelected = { actions.onBackupSelected(visibleSelectedKeys) },
             )
         }
-        messages.error?.let {
-            Text(
-                it,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        messages.action?.takeIf { !state.busy && !it.startsWith("扫描完成：") }?.let {
-            Text(
-                it,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        // Landscape keeps the whole list height (plan S1/S2): messages and the
+        // progress strip live in the right pane there.
+        if (!landscape) LibraryMessageLines(messages = messages, busy = state.busy)
         val list: @Composable (Modifier) -> Unit = { listModifier ->
             GameList(
                 state = state,
@@ -215,6 +210,8 @@ internal fun GameLibraryContent(
                 metadataRepository = metadataRepository,
                 actions = actions,
                 onRowClick = { key -> if (landscape) actions.onSelectGame(key) else actions.onOpenGame(key) },
+                // Landscape: the detail follows D-pad focus; portrait focus never opens a page.
+                onRowFocused = if (landscape) actions.onSelectGame else null,
                 modifier = listModifier,
             )
         }
@@ -222,22 +219,26 @@ internal fun GameLibraryContent(
             Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 list(Modifier.width(layout.listPaneWidthDp.dp).fillMaxHeight())
                 VerticalDivider()
-                if (detail != null) {
-                    GameDetailFor(
-                        entry = presented(detail),
-                        state = state,
-                        actions = actions,
-                        coverRepository = coverRepository,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
-                } else {
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                        Text(
-                            "选择左侧的游戏查看详情",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    LibraryMessageLines(messages = messages, busy = state.busy)
+                    if (detail != null) {
+                        GameDetailFor(
+                            entry = presented(detail),
+                            state = state,
+                            actions = actions,
+                            coverRepository = coverRepository,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
                         )
+                    } else {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text(
+                                "选择左侧的游戏查看详情",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
+                    StatusStrip(busy = state.busy, progress = state.progress)
                 }
             }
         } else {
@@ -259,8 +260,19 @@ private fun GameList(
     metadataRepository: SteamMetadataRepository?,
     actions: LibraryActions,
     onRowClick: (String) -> Unit,
+    onRowFocused: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    // D-pad focus selects a row only after it rests there, so scrolling through
+    // the list does not rebuild the detail pane for every row passed.
+    var focusedKey by remember { mutableStateOf<String?>(null) }
+    if (onRowFocused != null) {
+        LaunchedEffect(focusedKey) {
+            val key = focusedKey ?: return@LaunchedEffect
+            delay(FOCUS_SELECT_DEBOUNCE_MILLIS)
+            if (key != currentKey) onRowFocused(key)
+        }
+    }
     LazyColumn(
         state = listState,
         modifier = modifier,
@@ -303,9 +315,11 @@ private fun GameList(
                     history = history[key],
                     coverRepository = coverRepository,
                     batchChecked = key in state.librarySelection,
-                    batchEnabled = !state.busy && GameLibrary.canBatchBackup(entry.game),
+                    batchEligible = GameLibrary.canBatchBackup(entry.game),
+                    batchEnabled = !state.busy,
                     current = key == currentKey,
                     onClick = { onRowClick(key) },
+                    onFocused = onRowFocused?.let { { focusedKey = key } },
                     onBatchCheckedChange = { selected -> actions.onBatchSelected(key, selected) },
                 )
                 HorizontalDivider(modifier = Modifier.padding(start = 98.dp))
@@ -313,6 +327,32 @@ private fun GameList(
         }
     }
 }
+
+/** The library's error line and, once nothing runs, its last result. */
+@Composable
+private fun LibraryMessageLines(messages: PageMessage, busy: Boolean) {
+    messages.error?.let {
+        Text(
+            it,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    messages.action?.takeIf { !busy && !it.startsWith("扫描完成：") }?.let {
+        Text(
+            it,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private const val FOCUS_SELECT_DEBOUNCE_MILLIS = 150L
 
 /** Detail pane wired to the library state: histories, batch toggle and the backup/restore requests. */
 @Composable

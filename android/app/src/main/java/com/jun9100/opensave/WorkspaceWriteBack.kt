@@ -24,6 +24,37 @@ object WorkspaceWriteBackPolicy {
         canonicalPersisted
     }
 
+    /** Prefix of every write-back leftover; names without a kind come from older builds. */
+    const val TEMPORARY_PREFIX = ".source-workspace-write-back-"
+
+    /** The user's workspace, set aside while the source is imported. */
+    const val HELD_PREFIX = "${TEMPORARY_PREFIX}held-"
+
+    /** The imported source copy, thrown away after its safety snapshot. */
+    const val DISCARDED_PREFIX = "${TEMPORARY_PREFIX}discarded-"
+
+    /**
+     * Cleans up after a write-back that the process did not finish. When the
+     * workspace is missing, the newest held directory (or, from an older build,
+     * an unlabelled one) was the user's workspace and is renamed back. Leftovers
+     * are deleted only once a workspace exists, so a held workspace is never
+     * deleted before it is recovered. Runs under the storage lock.
+     */
+    fun recoverHeldWorkspace(workspace: File) {
+        val parent = workspace.absoluteFile.parentFile ?: return
+        val leftovers = parent.listFiles { file -> file.name.startsWith(TEMPORARY_PREFIX) }.orEmpty().toList()
+        if (leftovers.isEmpty()) return
+        if (!workspace.exists()) {
+            val candidates = leftovers.filter { it.isDirectory && !it.name.startsWith(DISCARDED_PREFIX) }
+            val heldOnes = candidates.filter { it.name.startsWith(HELD_PREFIX) }
+            val recovered = (heldOnes.ifEmpty { candidates }).maxByOrNull(File::lastModified) ?: return
+            if (!recovered.renameTo(workspace)) return
+        }
+        if (workspace.isDirectory) {
+            leftovers.filter { it.exists() }.forEach { runCatching { it.deleteRecursively() } }
+        }
+    }
+
     /** An empty or missing workspace would wipe the source, so it is never written back. */
     fun requireWorkspace(workspace: File) {
         require(workspace.isDirectory && !workspace.list().isNullOrEmpty()) {

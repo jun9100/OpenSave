@@ -126,14 +126,41 @@ class SnapshotRepositoryTest {
             repository.add(legacy)
             repository.fileFor(legacy).writeText("zip")
 
-            assertNull(repository.findReusableRecord("source", "pc:game", "C", legacyManifestHash = "other"))
-            val reused = repository.findReusableRecord("source", "pc:game", "C", legacyManifestHash = "M")
+            assertNull(repository.findReusableRecord("source", "pc:game", "C", currentManifestHash = "other"))
+            val reused = repository.findReusableRecord("source", "pc:game", "C", currentManifestHash = "M")
 
             assertEquals("legacy", reused?.id)
             val stored = SnapshotRepository(File(root.absolutePath)).list().single()
             assertEquals("C", stored.contentHash)
             assertEquals(ContentHash.VERSION, stored.hashVersion)
             assertEquals("legacy", repository.findReusableRecord("source", "pc:game", "C")?.id)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun recordFromAnotherCapturePathIsRebasedOntoTheCurrentManifestHash() {
+        val root = createTempDir(prefix = "opensave-reuse-rebase-")
+        try {
+            val repository = SnapshotRepository(root)
+            // A manual backup wrote the record; the worker captures the same data under another manifest.
+            val manual = gameRecord("manual", createdAt = 1, contentHash = "C").copy(manifestHash = "Hm", uploaded = true)
+            repository.add(manual)
+            repository.fileFor(manual).writeText("zip")
+
+            val reused = repository.findReusableRecord("source", "pc:game", "C", currentManifestHash = "Hw")
+
+            assertEquals("manual", reused?.id)
+            // The head published from it must agree with the worker's own fingerprint.
+            assertEquals("Hw", reused?.manifestHash)
+            val stored = SnapshotRepository(File(root.absolutePath)).list().single()
+            assertEquals("Hw", stored.manifestHash)
+            assertTrue(stored.uploaded)
+            assertEquals("C", stored.contentHash)
+            // The other path then gets it back under its own hash, still the same record.
+            assertEquals("Hm", repository.findReusableRecord("source", "pc:game", "C", currentManifestHash = "Hm")?.manifestHash)
+            assertEquals(1, repository.list().size)
         } finally {
             root.deleteRecursively()
         }
@@ -148,7 +175,7 @@ class SnapshotRepositoryTest {
             repository.add(future)
             repository.fileFor(future).writeText("zip")
 
-            assertNull(repository.findReusableRecord("source", "pc:game", "A", legacyManifestHash = future.manifestHash))
+            assertNull(repository.findReusableRecord("source", "pc:game", "A", currentManifestHash = future.manifestHash))
         } finally {
             root.deleteRecursively()
         }

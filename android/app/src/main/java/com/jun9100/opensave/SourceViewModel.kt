@@ -131,6 +131,13 @@ class SourceViewModel(
         // Navigation, filter and selections survive rotation through the ViewModel
         // and process death through SavedStateHandle (plan S8).
         viewModelScope.launch { state.collect(::saveUiState) }
+        // Before anything recreates the workspace, bring back one an interrupted
+        // write-back left set aside.
+        viewModelScope.launch(Dispatchers.IO) {
+            StorageOperationLock.withLock {
+                runCatching { WorkspaceWriteBackPolicy.recoverHeldWorkspace(storage.workspaceDirectory()) }
+            }
+        }
         refreshPersistedSource()
     }
 
@@ -808,7 +815,7 @@ class SourceViewModel(
                 sourceId = sourceId,
                 gameKey = manifest.gameKey,
                 contentHash = contentFingerprint.contentHash,
-                legacyManifestHash = contentFingerprint.manifestHash,
+                currentManifestHash = contentFingerprint.manifestHash,
             )
             if (reusable?.uploaded == true) {
                 return GameCaptureOutcome(
@@ -1430,10 +1437,11 @@ class SourceViewModel(
         }
         require(archive.isFile) { "快照文件不存在" }
 
+        // The safety copy is taken from the live source, never from a private
+        // workspace that may be days old; without it the restore does not run.
         val workspace = storage.workspaceDirectory()
-        if (workspace.isDirectory) {
-            addSafetySnapshot(sourceId, workspace, "恢复前安全副本")
-        }
+        importSelection(source).getOrThrow()
+        addSafetySnapshot(sourceId, workspace, "恢复前安全副本")
         snapshotEngine.restoreSnapshot(archive, workspace).getOrThrow()
         return restoreSelection(source).getOrThrow()
     }
@@ -1467,18 +1475,17 @@ class SourceViewModel(
     private suspend fun writeBackWorkspaceLocked(source: SourceSelection): Result<CopyReport> = withContext(Dispatchers.IO) {
         runCatching {
             val workspace = storage.workspaceDirectory()
+            // A workspace left set aside by an interrupted write-back comes back first.
+            WorkspaceWriteBackPolicy.recoverHeldWorkspace(workspace)
             WorkspaceWriteBackPolicy.requireWorkspace(workspace)
             val parent = workspace.absoluteFile.parentFile ?: error("工作区没有上级目录")
-            // Only this function creates these names, and it runs under the storage lock.
-            parent.listFiles { file -> file.name.startsWith(WRITE_BACK_TEMPORARY_PREFIX) }
-                ?.forEach { runCatching { it.deleteRecursively() } }
-            val held = File(parent, "$WRITE_BACK_TEMPORARY_PREFIX${UUID.randomUUID()}")
+            val held = File(parent, "${WorkspaceWriteBackPolicy.HELD_PREFIX}${UUID.randomUUID()}")
             require(workspace.renameTo(held)) { "无法暂存工作区" }
             try {
                 importSelection(source).getOrThrow()
                 addSafetySnapshot(SnapshotNaming.sourceId(source.idSeed), workspace, "写回前安全副本")
             } finally {
-                val discarded = File(parent, "$WRITE_BACK_TEMPORARY_PREFIX${UUID.randomUUID()}")
+                val discarded = File(parent, "${WorkspaceWriteBackPolicy.DISCARDED_PREFIX}${UUID.randomUUID()}")
                 if (workspace.exists()) require(workspace.renameTo(discarded)) { "无法清理来源副本" }
                 require(held.renameTo(workspace)) { "无法还原工作区" }
                 runCatching { discarded.deleteRecursively() }
@@ -1651,7 +1658,6 @@ class SourceViewModel(
         const val UNCHANGED_SKIPPED = "无变化，已跳过"
         const val MAX_HISTORY = 40
         const val SOURCE_RESCAN_DEBOUNCE_MILLIS = 300L
-        const val WRITE_BACK_TEMPORARY_PREFIX = ".source-workspace-write-back-"
         const val KEY_PAGE = "ui.page"
         const val KEY_SELECTED_GAME = "ui.selectedGameKey"
         const val KEY_DETAIL_OPEN = "ui.gameDetailOpen"

@@ -294,7 +294,7 @@ class AutoBackupWorker(
                 sourceId = sourceId,
                 gameKey = game.gameKey,
                 contentHash = fingerprint.contentHash,
-                legacyManifestHash = fingerprint.manifestHash,
+                currentManifestHash = fingerprint.manifestHash,
             )
             if (nativeDecision == null && existing?.uploaded == true) {
                 return publishCurrentHead(config, cloudIdentity, existing, repository.fileFor(existing))

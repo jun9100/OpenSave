@@ -68,6 +68,18 @@ class LibraryViewTest {
     }
 
     @Test
+    fun historyIndexIgnoresRestoreSafetyCopies() {
+        val records = listOf(
+            record("1", gameKey = "pc:test-a", createdAt = 100, uploaded = true),
+            record("2", gameKey = "pc:test-a", createdAt = 300, uploaded = false, comment = "恢复前安全副本"),
+            record("3", gameKey = "pc:test-b", createdAt = 200, uploaded = false, comment = "跨设备恢复前安全副本"),
+        )
+        val index = LibraryView.historyIndex(records)
+        assertEquals(LibraryRowHistory(localCount = 1, lastBackupAtMillis = 100, latestUploaded = true), index["$sourceId::pc:test-a"])
+        assertNull(index["$sourceId::pc:test-b"])
+    }
+
+    @Test
     fun rowSecondaryShowsSourceLastBackupAndUploadState() {
         val time: (Long) -> String = { "T$it" }
         assertEquals("Eden · 从未备份", LibraryView.rowSecondary("Eden", null, batchEligible = true, formatTime = time))
@@ -90,7 +102,7 @@ class LibraryViewTest {
         assertEquals(BackTarget.LIBRARY, LibraryView.backTarget(OpenSavePage.MANAGEMENT, gameDetailOpen = false, landscape = true))
     }
 
-    private fun record(id: String, gameKey: String?, createdAt: Long, uploaded: Boolean) = SnapshotRecord(
+    private fun record(id: String, gameKey: String?, createdAt: Long, uploaded: Boolean, comment: String = "") = SnapshotRecord(
         id = id,
         sourceId = sourceId,
         remoteName = "",
@@ -100,6 +112,7 @@ class LibraryViewTest {
         sha256 = "",
         manifestHash = "",
         uploaded = uploaded,
+        comment = comment,
         gameKey = gameKey,
     )
 }

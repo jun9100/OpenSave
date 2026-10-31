@@ -28,7 +28,10 @@ data class SnapshotRecord(
     val contentHash: String = "",
     /** [ContentHash.VERSION] that produced [contentHash]; 0 when there is none. */
     val hashVersion: Int = 0,
-)
+) {
+    /** A pre-restore / pre-write-back copy, not a backup the user made; it carries a comment. */
+    val isSafetyCopy: Boolean get() = comment.isNotBlank()
+}
 
 /**
  * Small atomic catalog; the archives remain ordinary files and are never put in preferences.
@@ -69,31 +72,40 @@ class SnapshotRepository(private val root: File) {
      * [contentHash]. Only the newest counts, so content that changes back to an
      * older state still gets a new version on the timeline.
      *
-     * A record from an older build has no content hash; when its
-     * [SnapshotRecord.manifestHash] equals [legacyManifestHash] (same data and
-     * same manifest) it is the same content, and the hash is filled in on it.
+     * [currentManifestHash] is the manifest hash of the capture asking. A
+     * record from an older build has no content hash; when its
+     * [SnapshotRecord.manifestHash] equals it (same data and same manifest) it
+     * is the same content, and the hash is filled in on it. A record captured
+     * by another path (manual backup vs. worker) can hold the same content
+     * under another manifest hash; it is rebased onto [currentManifestHash],
+     * because the sync head published from it is later compared against this
+     * path's manifest hash and would otherwise read as a local change.
      */
     fun findReusableRecord(
         sourceId: String,
         gameKey: String,
         contentHash: String,
-        legacyManifestHash: String? = null,
+        currentManifestHash: String? = null,
     ): SnapshotRecord? = synchronized(lock) {
         if (contentHash.isBlank()) return@synchronized null
         val latest = readRecords()
-            .filter { it.sourceId == sourceId && it.gameKey == gameKey && it.comment.isBlank() }
+            .filter { it.sourceId == sourceId && it.gameKey == gameKey && !it.isSafetyCopy }
             .maxByOrNull { it.createdAtMillis }
             ?: return@synchronized null
         if (!fileFor(latest).isFile) return@synchronized null
-        when {
+        val reused = when {
             latest.hashVersion == ContentHash.VERSION && latest.contentHash == contentHash -> latest
-            latest.hashVersion == 0 && legacyManifestHash != null && latest.manifestHash == legacyManifestHash -> {
-                val backfilled = latest.copy(contentHash = contentHash, hashVersion = ContentHash.VERSION)
-                writeRecords(readRecords().map { if (it.id == latest.id) backfilled else it })
-                backfilled
-            }
-            else -> null
+            latest.hashVersion == 0 && currentManifestHash != null && latest.manifestHash == currentManifestHash ->
+                latest.copy(contentHash = contentHash, hashVersion = ContentHash.VERSION)
+            else -> return@synchronized null
+        }.let { record ->
+            if (currentManifestHash.isNullOrBlank() || record.manifestHash == currentManifestHash) record
+            else record.copy(manifestHash = currentManifestHash)
         }
+        if (reused != latest) {
+            writeRecords(readRecords().map { if (it.id == latest.id) reused else it })
+        }
+        reused
     }
 
     fun fileFor(record: SnapshotRecord): File = File(

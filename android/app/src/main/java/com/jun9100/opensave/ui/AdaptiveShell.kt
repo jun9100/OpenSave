@@ -129,7 +129,8 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
  * The navigation frame without the ViewModel. Landscape: NavigationRail on the
  * left and no TopAppBar, so the page keeps the whole height. Portrait: TopAppBar
  * and NavigationBar; the full-screen game detail swaps them for a back arrow.
- * The status strip is drawn under the page only while [busy].
+ * The status strip is drawn under the page only while [busy]; in landscape the
+ * library page draws its own under the detail pane instead.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -186,7 +187,8 @@ internal fun AdaptiveShellFrame(
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical + WindowInsetsSides.End)),
                 ) {
                     content(Modifier.weight(1f))
-                    StatusStrip(busy = busy, progress = progress)
+                    // The library draws it under its detail pane so the list keeps its height.
+                    if (page != OpenSavePage.LIBRARY) StatusStrip(busy = busy, progress = progress)
                 }
             }
         }

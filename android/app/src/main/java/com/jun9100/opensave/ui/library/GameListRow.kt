@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -43,21 +44,27 @@ internal fun GameListRow(
     history: LibraryRowHistory?,
     coverRepository: CoverRepository?,
     batchChecked: Boolean,
+    /** Whether batch backup takes this game at all (confirmed locations). */
+    batchEligible: Boolean,
+    /** Whether the selection can change right now (nothing is running). */
     batchEnabled: Boolean,
     current: Boolean,
     onClick: () -> Unit,
     onBatchCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** Called when the row gains D-pad focus; null leaves focus without effect. */
+    onFocused: (() -> Unit)? = null,
 ) {
-    val eligible = batchEnabled
+    val selectable = batchEligible && batchEnabled
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(GAME_ROW_HEIGHT)
             .background(if (current) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+            .onFocusChanged { if (it.isFocused) onFocused?.invoke() }
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = if (eligible) ({ onBatchCheckedChange(!batchChecked) }) else null,
+                onLongClick = if (selectable) ({ onBatchCheckedChange(!batchChecked) }) else null,
                 onLongClickLabel = if (batchChecked) "移出批量选择" else "加入批量选择",
             )
             .padding(end = 12.dp),
@@ -66,7 +73,7 @@ internal fun GameListRow(
         Checkbox(
             checked = batchChecked,
             onCheckedChange = onBatchCheckedChange,
-            enabled = eligible,
+            enabled = selectable,
             modifier = Modifier.focusProperties { canFocus = false },
         )
         if (coverRepository != null) {
@@ -84,10 +91,10 @@ internal fun GameListRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                LibraryView.rowSecondary(entry.sourceLabel, history, eligible, ::formatShortTime),
+                LibraryView.rowSecondary(entry.sourceLabel, history, batchEligible, ::formatShortTime),
                 modifier = Modifier.padding(top = 2.dp),
                 style = MaterialTheme.typography.labelSmall,
-                color = if (eligible) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
+                color = if (batchEligible) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -108,6 +115,7 @@ private fun GameListRowPreview() {
                 history = LibraryRowHistory(localCount = 3, lastBackupAtMillis = 1_793_000_000_000, latestUploaded = true),
                 coverRepository = null,
                 batchChecked = true,
+                batchEligible = true,
                 batchEnabled = true,
                 current = true,
                 onClick = {},
@@ -119,6 +127,7 @@ private fun GameListRowPreview() {
                 history = null,
                 coverRepository = null,
                 batchChecked = false,
+                batchEligible = true,
                 batchEnabled = true,
                 current = false,
                 onClick = {},
