@@ -37,6 +37,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Pad or D-pad navigation is in use: either our own gamepad flag or Compose's keyboard input mode. */
@@ -123,15 +127,38 @@ private val DPAD_SCROLL_STEP = 96.dp
  * DPAD_CENTER and press whatever button holds focus.
  */
 fun Modifier.consumeHandheldShortcuts(): Modifier =
-    onPreviewKeyEvent { HandheldKeyMap.commandFor(it.nativeKeyEvent.keyCode) != null }
+    onPreviewKeyEvent { HandheldKeyMap.isConsumed(it.nativeKeyEvent.keyCode) }
 
 /**
  * Controls stay enabled while an operation runs so D-pad focus never drops
  * (plan R4); the click is ignored instead and the control is dimmed.
  */
-fun whenIdle(busy: Boolean, action: () -> Unit): () -> Unit = { if (!busy) action() }
+fun whenIdle(busy: Boolean, action: () -> Unit): () -> Unit = {
+    if (busy) BusyNotice.notifyBlocked() else action()
+}
 
-fun <T> whenIdleWith(busy: Boolean, action: (T) -> Unit): (T) -> Unit = { if (!busy) action(it) }
+fun <T> whenIdleWith(busy: Boolean, action: (T) -> Unit): (T) -> Unit = {
+    if (busy) BusyNotice.notifyBlocked() else action(it)
+}
+
+/**
+ * Presses ignored while something runs (plan R4). The status strip, which is
+ * on screen exactly while busy, says "正在处理，稍后再试" for a moment so a pad
+ * user can tell a refused press from a missed one.
+ */
+object BusyNotice {
+    private val count = MutableStateFlow(0)
+
+    /** Grows by one per refused press; the strip shows the notice on each change. */
+    val blockedCount: StateFlow<Int> = count.asStateFlow()
+
+    fun notifyBlocked() {
+        count.update { it + 1 }
+    }
+
+    const val TEXT = "正在处理，稍后再试"
+    const val SHOW_MILLIS = 2_000L
+}
 
 fun Modifier.busyDimmed(busy: Boolean): Modifier = if (busy) alpha(BUSY_ALPHA) else this
 

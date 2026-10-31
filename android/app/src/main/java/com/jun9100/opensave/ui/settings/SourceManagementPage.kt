@@ -78,6 +78,9 @@ internal fun SourceManagementPage(
     val shellFocus = LocalShellFocus.current
     val scope = rememberCoroutineScope()
     val firstControl = remember { FocusRequester() }
+    // Landscape: focus that drops in the right column goes back to its top, not across to the left.
+    val rightFirstControl = remember { FocusRequester() }
+    var lastFocusRight by remember { mutableStateOf(false) }
     val leftScroll = rememberScrollState()
     val rightScroll = rememberScrollState()
     var rightHasFocus by remember { mutableStateOf(false) }
@@ -87,7 +90,8 @@ internal fun SourceManagementPage(
     LaunchedEffect(handheld, shellFocus.hasFocus, commandsOpen) {
         if (!handheld || shellFocus.hasFocus || commandsOpen) return@LaunchedEffect
         withFrameNanos { }
-        firstControl.tryRequestFocus()
+        val restored = landscape && lastFocusRight && rightFirstControl.tryRequestFocus()
+        if (!restored) firstControl.tryRequestFocus()
     }
     HandheldCommandEffect { command ->
         when (command) {
@@ -128,6 +132,7 @@ internal fun SourceManagementPage(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .onFocusChanged { if (it.hasFocus) lastFocusRight = false }
                     .focusRestorer()
                     .focusGroup()
                     .verticalScroll(leftScroll)
@@ -144,14 +149,17 @@ internal fun SourceManagementPage(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .onFocusChanged { rightHasFocus = it.hasFocus }
+                    .onFocusChanged {
+                        rightHasFocus = it.hasFocus
+                        if (it.hasFocus) lastFocusRight = true
+                    }
                     .focusRestorer()
                     .focusGroup()
                     .verticalScroll(rightScroll)
                     .padding(vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                SourceSelectionCard(state, viewModel, onPickFolder)
+                SourceSelectionCard(state, viewModel, onPickFolder, initialFocus = rightFirstControl)
                 LocalSnapshotCard(state, viewModel)
                 RemoteSnapshotCard(state, viewModel)
             }

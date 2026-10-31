@@ -10,10 +10,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import com.jun9100.opensave.ui.input.BusyNotice
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.PreviewSurface
 
@@ -28,6 +37,16 @@ internal fun StatusStrip(
     modifier: Modifier = Modifier,
 ) {
     if (!busy) return
+    // A press refused while busy (whenIdle) swaps the progress for a short notice.
+    val blocked by BusyNotice.blockedCount.collectAsState()
+    val blockedOnShow = remember { blocked }
+    var showNotice by remember { mutableStateOf(false) }
+    LaunchedEffect(blocked) {
+        if (blocked == blockedOnShow) return@LaunchedEffect
+        showNotice = true
+        delay(BusyNotice.SHOW_MILLIS)
+        showNotice = false
+    }
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -39,9 +58,10 @@ internal fun StatusStrip(
         ) {
             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
             Text(
-                progress?.takeIf(String::isNotBlank) ?: "正在处理",
+                if (showNotice) BusyNotice.TEXT else progress?.takeIf(String::isNotBlank) ?: "正在处理",
                 modifier = Modifier.padding(start = 10.dp),
                 style = MaterialTheme.typography.bodySmall,
+                color = if (showNotice) MaterialTheme.colorScheme.primary else Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

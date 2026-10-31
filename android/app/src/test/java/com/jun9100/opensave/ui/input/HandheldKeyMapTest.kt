@@ -37,8 +37,6 @@ class HandheldKeyMapTest {
             KeyEvent.KEYCODE_BACK,
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_HOME,
-            KeyEvent.KEYCODE_BUTTON_THUMBL,
-            KeyEvent.KEYCODE_BUTTON_THUMBR,
         ).forEach { key ->
             assertNull(HandheldKeyMap.commandFor(key))
             assertEquals(KeyDecision.Pass, HandheldKeyMap.decide(key, isDown = true, repeatCount = 0))
@@ -92,5 +90,65 @@ class HandheldKeyMapTest {
         assertTrue(input.gamepadActive.value)
         input.onTouch()
         assertEquals(0f, input.rightStickY.value)
+    }
+
+    @Test
+    fun stickClicksAndSpareButtonsAreSwallowedDownAndUp() {
+        listOf(
+            KeyEvent.KEYCODE_BUTTON_THUMBL,
+            KeyEvent.KEYCODE_BUTTON_THUMBR,
+            KeyEvent.KEYCODE_BUTTON_C,
+            KeyEvent.KEYCODE_BUTTON_Z,
+            KeyEvent.KEYCODE_BUTTON_MODE,
+        ).forEach { key ->
+            // Unconsumed, Generic.kcm falls them back to DPAD_CENTER and clicks the focused control.
+            assertNull(HandheldKeyMap.commandFor(key))
+            assertTrue(HandheldKeyMap.isConsumed(key))
+            assertEquals(KeyDecision.Consume, HandheldKeyMap.decide(key, isDown = true, repeatCount = 0))
+            assertEquals(KeyDecision.Consume, HandheldKeyMap.decide(key, isDown = false, repeatCount = 0))
+        }
+        assertTrue(HandheldKeyMap.isConsumed(KeyEvent.KEYCODE_BUTTON_START))
+        assertFalse(HandheldKeyMap.isConsumed(KeyEvent.KEYCODE_BUTTON_A))
+        assertFalse(HandheldKeyMap.isConsumed(KeyEvent.KEYCODE_DPAD_DOWN))
+    }
+
+    @Test
+    fun onlyAFirstDpadDirectionOutsidePadModeWakesIt() {
+        val down = KeyEvent.KEYCODE_DPAD_DOWN
+        assertTrue(HandheldKeyMap.isWakeKey(down, isDown = true, repeatCount = 0, wasActive = false))
+        assertFalse(HandheldKeyMap.isWakeKey(down, isDown = true, repeatCount = 0, wasActive = true))
+        assertFalse(HandheldKeyMap.isWakeKey(down, isDown = false, repeatCount = 0, wasActive = false))
+        assertFalse(HandheldKeyMap.isWakeKey(KeyEvent.KEYCODE_DPAD_CENTER, isDown = true, repeatCount = 0, wasActive = false))
+        assertFalse(HandheldKeyMap.isWakeKey(KeyEvent.KEYCODE_BUTTON_A, isDown = true, repeatCount = 0, wasActive = false))
+    }
+
+    @Test
+    fun theWakingDpadPressIsSwallowedThenTheNextOneMovesFocus() {
+        val input = HandheldInput()
+        val down = KeyEvent.KEYCODE_DPAD_DOWN
+        // First press after start: pad mode on, the page places focus, Compose never sees it.
+        assertTrue(input.onKey(down, isDown = true, repeatCount = 0, fromGamepadSource = true))
+        assertTrue(input.gamepadActive.value)
+        assertTrue(input.onKey(down, isDown = true, repeatCount = 1, fromGamepadSource = true))
+        assertTrue(input.onKey(down, isDown = false, repeatCount = 0, fromGamepadSource = true))
+        // Second press: passed on to Compose's focus search.
+        assertFalse(input.onKey(down, isDown = true, repeatCount = 0, fromGamepadSource = true))
+        assertFalse(input.onKey(down, isDown = false, repeatCount = 0, fromGamepadSource = true))
+        // Touch drops pad mode, so the next press wakes it again.
+        input.onTouch()
+        assertTrue(input.onKey(KeyEvent.KEYCODE_DPAD_LEFT, isDown = true, repeatCount = 0, fromGamepadSource = true))
+        assertTrue(input.onKey(KeyEvent.KEYCODE_DPAD_LEFT, isDown = false, repeatCount = 0, fromGamepadSource = true))
+    }
+
+    @Test
+    fun refusedBusyPressesRaiseTheNotice() {
+        var ran = 0
+        val before = BusyNotice.blockedCount.value
+        whenIdle(busy = true) { ran++ }()
+        whenIdleWith<Boolean>(busy = true) { ran++ }(true)
+        assertEquals(before + 2, BusyNotice.blockedCount.value)
+        whenIdle(busy = false) { ran++ }()
+        assertEquals(1, ran)
+        assertEquals(before + 2, BusyNotice.blockedCount.value)
     }
 }

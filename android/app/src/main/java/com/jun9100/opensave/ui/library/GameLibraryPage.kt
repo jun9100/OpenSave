@@ -89,6 +89,7 @@ import com.jun9100.opensave.ui.input.RightStickScroll
 import com.jun9100.opensave.ui.input.handheldFocusRing
 import com.jun9100.opensave.ui.input.handheldNavigationActive
 import com.jun9100.opensave.ui.input.tryRequestFocus
+import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.input.whenIdleWith
 import com.jun9100.opensave.ui.libraryCommands
 import com.jun9100.opensave.ui.preview.ComponentPreviews
@@ -312,9 +313,11 @@ internal fun GameLibraryContent(
         when (action) {
             LibraryHandheldAction.None -> Unit
             is LibraryHandheldAction.OpenMenu -> menuKey = action.key
-            is LibraryHandheldAction.SetSelected -> if (!state.busy) actions.onBatchSelected(action.key, action.selected)
-            is LibraryHandheldAction.BackupSelected -> actions.onBackupSelected(action.keys)
-            is LibraryHandheldAction.BackupGame -> targetEntry?.let { actions.onBackupGame(presented(it)) }
+            is LibraryHandheldAction.SetSelected ->
+                whenIdle(state.busy) { actions.onBatchSelected(action.key, action.selected) }()
+            is LibraryHandheldAction.BackupSelected -> whenIdle(state.busy) { actions.onBackupSelected(action.keys) }()
+            is LibraryHandheldAction.BackupGame ->
+                whenIdle(state.busy) { targetEntry?.let { actions.onBackupGame(presented(it)) } }()
             is LibraryHandheldAction.Page -> scope.launch {
                 if (showingPortraitDetail) {
                     val step = detailScroll.viewportSize * PAGE_SCROLL_FRACTION

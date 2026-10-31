@@ -87,20 +87,47 @@ object HandheldKeyMap {
      * the focused button, Y -> BACK, Select -> MENU). Only the first down acts.
      */
     fun decide(keyCode: Int, isDown: Boolean, repeatCount: Int): KeyDecision {
+        if (keyCode in SWALLOWED_KEYS) return KeyDecision.Consume
         val command = commandFor(keyCode) ?: return KeyDecision.Pass
         return if (isDown && repeatCount == 0) KeyDecision.Dispatch(command) else KeyDecision.Consume
     }
+
+    /** Keys the app swallows without a command: mapped ones plus [SWALLOWED_KEYS]. Dialogs use it too. */
+    fun isConsumed(keyCode: Int): Boolean = commandFor(keyCode) != null || keyCode in SWALLOWED_KEYS
+
+    /**
+     * The first D-pad press after touch (or since start) only switches to pad
+     * mode: the page then puts focus on its preferred control (last row, first
+     * row, first setting). Passing it on would let Compose's own focus search
+     * land on whatever is topmost (a filter chip, a rail item) first.
+     */
+    fun isWakeKey(keyCode: Int, isDown: Boolean, repeatCount: Int, wasActive: Boolean): Boolean =
+        !wasActive && isDown && repeatCount == 0 && keyCode in DPAD_DIRECTION_KEYS
 
     /** Whether a key means the user is on the pad or D-pad rather than the touchscreen. */
     fun marksHandheld(keyCode: Int, fromGamepadSource: Boolean): Boolean =
         fromGamepadSource || keyCode in DPAD_KEYS || keyCode in GAMEPAD_BUTTONS
 
-    private val DPAD_KEYS = setOf(
+    private val DPAD_DIRECTION_KEYS = setOf(
         KeyEvent.KEYCODE_DPAD_UP,
         KeyEvent.KEYCODE_DPAD_DOWN,
         KeyEvent.KEYCODE_DPAD_LEFT,
         KeyEvent.KEYCODE_DPAD_RIGHT,
-        KeyEvent.KEYCODE_DPAD_CENTER,
+    )
+
+    private val DPAD_KEYS = DPAD_DIRECTION_KEYS + KeyEvent.KEYCODE_DPAD_CENTER
+
+    /**
+     * Unused pad buttons, swallowed down and up: Generic.kcm falls the stick
+     * clicks back to DPAD_CENTER, which would press the focused control while
+     * the user pushes the right stick to scroll. C/Z/MODE for other pads.
+     */
+    private val SWALLOWED_KEYS = setOf(
+        KeyEvent.KEYCODE_BUTTON_THUMBL,
+        KeyEvent.KEYCODE_BUTTON_THUMBR,
+        KeyEvent.KEYCODE_BUTTON_C,
+        KeyEvent.KEYCODE_BUTTON_Z,
+        KeyEvent.KEYCODE_BUTTON_MODE,
     )
 
     /** BUTTON_A .. BUTTON_MODE; spelled out because KeyEvent.isGamepadButton is not in JVM unit tests. */
@@ -215,8 +242,20 @@ class HandheldInput {
     val rightStickY: StateFlow<Float> = stick.asStateFlow()
 
     /** Returns true when the event is consumed. */
+    /** D-pad keys whose down woke pad mode; their repeats and up are swallowed as well. */
+    private val wakeKeys = mutableSetOf<Int>()
+
     fun onKey(keyCode: Int, isDown: Boolean, repeatCount: Int, fromGamepadSource: Boolean): Boolean {
+        val wasActive = active.value
         if (HandheldKeyMap.marksHandheld(keyCode, fromGamepadSource)) active.value = true
+        if (HandheldKeyMap.isWakeKey(keyCode, isDown, repeatCount, wasActive)) {
+            wakeKeys += keyCode
+            return true
+        }
+        if (keyCode in wakeKeys) {
+            if (!isDown) wakeKeys -= keyCode
+            return true
+        }
         return when (val decision = HandheldKeyMap.decide(keyCode, isDown, repeatCount)) {
             KeyDecision.Pass -> false
             KeyDecision.Consume -> true

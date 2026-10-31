@@ -29,6 +29,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -48,7 +50,12 @@ import com.jun9100.opensave.ui.input.whenIdleWith
 import com.jun9100.opensave.ui.sourceAccessLabel
 
 @Composable
-internal fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel, onPickFolder: () -> Unit) {
+internal fun SourceSelectionCard(
+    state: SourceUiState,
+    viewModel: SourceViewModel,
+    onPickFolder: () -> Unit,
+    initialFocus: FocusRequester? = null,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text("存档来源", style = MaterialTheme.typography.titleMedium)
@@ -58,7 +65,11 @@ internal fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewMode
                     selected = state.storageMode == StorageMode.SAF,
                     onClick = whenIdle(state.busy) { viewModel.selectStorageMode(StorageMode.SAF) },
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    modifier = Modifier.weight(1f).settingButtonFocus().busyDimmed(state.busy),
+                    modifier = Modifier
+                        .weight(1f)
+                        .let { if (initialFocus != null) it.focusRequester(initialFocus) else it }
+                        .settingButtonFocus()
+                        .busyDimmed(state.busy),
                 ) { Text("系统授权") }
                 SegmentedButton(
                     selected = state.storageMode == StorageMode.ROOT,
@@ -176,15 +187,16 @@ internal fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewMode
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
+                    // Never disabled: a button that disables itself on A would drop D-pad focus (plan R4).
+                    val canSelectAll = selectedCount < checkableCount
+                    val canSelectNone = selectedCount > 0
                     TextButton(
-                        onClick = whenIdle(state.busy) { viewModel.setAllSourcesEnabled(true) },
-                        enabled = selectedCount < checkableCount,
-                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy),
+                        onClick = whenIdle(state.busy) { if (canSelectAll) viewModel.setAllSourcesEnabled(true) },
+                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy || !canSelectAll),
                     ) { Text("全选") }
                     TextButton(
-                        onClick = whenIdle(state.busy) { viewModel.setAllSourcesEnabled(false) },
-                        enabled = selectedCount > 0,
-                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy),
+                        onClick = whenIdle(state.busy) { if (canSelectNone) viewModel.setAllSourcesEnabled(false) },
+                        modifier = Modifier.settingButtonFocus().busyDimmed(state.busy || !canSelectNone),
                     ) { Text("全不选") }
                 }
                 state.sourceOptions.forEach { option ->
