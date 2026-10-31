@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Computer
@@ -46,6 +47,8 @@ import androidx.compose.material.icons.outlined.SettingsBackupRestore
 import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -75,6 +78,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +86,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -147,6 +154,37 @@ private fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                         Text("包含候选")
                     }
                 }
+            },
+        )
+    }
+
+    state.pendingWriteBack?.let { request ->
+        AlertDialog(
+            onDismissRequest = sourceViewModel::cancelWorkspaceWriteBack,
+            title = { Text("把工作区写回来源目录？") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("目标：${request.label}")
+                    Text(
+                        if (request.source is SourceSelection.Root) {
+                            "私有工作区会替换该 Root 目录的全部内容。"
+                        } else {
+                            "私有工作区的文件会写入该系统授权目录，同名文件会被覆盖。"
+                        },
+                    )
+                    Text("写回前会先把来源目录当前的内容保存为安全快照，可在“本地快照”中恢复。")
+                }
+            },
+            confirmButton = {
+                Button(onClick = sourceViewModel::confirmWorkspaceWriteBack) { Text("确认写回") }
+            },
+            dismissButton = {
+                TextButton(onClick = sourceViewModel::cancelWorkspaceWriteBack) { Text("取消") }
             },
         )
     }
@@ -246,9 +284,10 @@ private fun GameLibraryPage(
 ) {
     val games = remember(state.sourceScans) { GameLibrary.sourceGames(state.sourceScans) }
     val batchEligibleKeys = GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey }
-    var selectedGameKeys by remember(state.scanRevision, batchEligibleKeys) {
-        mutableStateOf(batchEligibleKeys.toSet())
-    }
+    // Selection lives in the ViewModel: nothing is selected by default, and a
+    // rescan or rotation keeps what the user chose.
+    val selectedGameKeys = state.librarySelection
+    val messages = state.messages[OpenSavePage.LIBRARY]
     val typeOptions = remember(games) {
         listOf("all" to "全部") + games
             .map(SourceGameEntry::saveType)
@@ -263,7 +302,7 @@ private fun GameLibraryPage(
     val visibleEligibleKeys = remember(visibleGames) {
         GameLibrary.batchBackupEligibleEntries(visibleGames).map { it.libraryKey }
     }
-    val visibleSelectedKeys = selectedGameKeys.intersect(visibleEligibleKeys.toSet())
+    val visibleSelectedKeys = LibrarySelection.effective(selectedGameKeys, visibleEligibleKeys)
     var sourceDetailsExpanded by remember(state.scanRevision) { mutableStateOf(false) }
     val context = LocalContext.current
     val coverRepository = remember(context) { CoverRepository(context.applicationContext) }
@@ -289,7 +328,7 @@ private fun GameLibraryPage(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            if (state.sourceScans.isEmpty()) "游戏存档" else "${visibleGames.size} / ${games.size} 个存档条目 · ${batchEligibleKeys.size} 款默认勾选",
+                            if (state.sourceScans.isEmpty()) "游戏存档" else "${visibleGames.size} / ${games.size} 个存档条目 · ${batchEligibleKeys.size} 款可批量备份",
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -381,10 +420,10 @@ private fun GameLibraryPage(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text(state.action.orEmpty(), modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
+                        Text(state.progress.orEmpty(), modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                state.error?.let {
+                messages.error?.let {
                     Text(it, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error)
                 }
                 if (games.isNotEmpty()) {
@@ -400,19 +439,11 @@ private fun GameLibraryPage(
                         selectedCount = visibleSelectedKeys.size,
                         eligibleKeys = visibleEligibleKeys,
                         enabled = !state.busy,
-                        onToggleAll = {
-                            val allSelected = visibleEligibleKeys.isNotEmpty() &&
-                                selectedGameKeys.containsAll(visibleEligibleKeys)
-                            selectedGameKeys = if (allSelected) {
-                                selectedGameKeys - visibleEligibleKeys.toSet()
-                            } else {
-                                selectedGameKeys + visibleEligibleKeys
-                            }
-                        },
+                        onToggleAll = { viewModel.toggleLibrarySelection(visibleEligibleKeys) },
                         onBackup = { viewModel.requestBatchGameBackup(visibleSelectedKeys) },
                     )
                 }
-                state.action?.takeIf { !state.busy && !it.startsWith("扫描完成：") }?.let {
+                messages.action?.takeIf { !state.busy && !it.startsWith("扫描完成：") }?.let {
                     Text(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -440,13 +471,7 @@ private fun GameLibraryPage(
                     coverRepository = coverRepository,
                     metadataRepository = metadataRepository,
                     selected = entry.libraryKey in selectedGameKeys,
-                    onSelectedChange = { selected ->
-                        selectedGameKeys = if (selected) {
-                            selectedGameKeys + entry.libraryKey
-                        } else {
-                            selectedGameKeys - entry.libraryKey
-                        }
-                    },
+                    onSelectedChange = { selected -> viewModel.setLibrarySelected(entry.libraryKey, selected) },
                 )
             }
         }
@@ -569,6 +594,7 @@ private fun SourceManagementPage(
     onPickFolder: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val messages = state.messages[OpenSavePage.MANAGEMENT]
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -593,7 +619,7 @@ private fun SourceManagementPage(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = viewModel::restoreSource, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = viewModel::requestWorkspaceWriteBack, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.UploadFile, contentDescription = "写回")
                     Text("把工作区写回来源目录", modifier = Modifier.padding(start = 8.dp))
                 }
@@ -611,15 +637,15 @@ private fun SourceManagementPage(
                 if (state.busy) {
                     Row(modifier = Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text(state.action.orEmpty(), modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
+                        Text(state.progress.orEmpty(), modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
         }
         LocalSnapshotCard(state, viewModel)
         RemoteSnapshotCard(state, viewModel)
-        state.action?.takeIf { !state.busy }?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        messages.action?.takeIf { !state.busy }?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+        messages.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         state.report?.let { ReportCard(it) }
     }
 }
@@ -725,8 +751,19 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                 Spacer(Modifier.height(16.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(12.dp))
-                val selectedCount = state.sourceOptions.count(SaveSourceOption::selected)
                 val scanBySourceId = state.sourceScans.associateBy(SourceScanResult::sourceId)
+                val unreachableIds = state.sourceOptions.filter { option ->
+                    SourceOptionPolicy.unreachable(
+                        option = option,
+                        scannedAccess = scanBySourceId[option.sourceId]?.access,
+                        rootChecked = state.rootChecked,
+                        rootAvailable = state.rootAvailable,
+                    )
+                }.map(SaveSourceOption::id).toSet()
+                val selectedCount = state.sourceOptions.count { option ->
+                    SourceOptionPolicy.displayedChecked(option, option.id in unreachableIds)
+                }
+                val checkableCount = state.sourceOptions.count { it.id !in unreachableIds }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -741,7 +778,7 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                 ) {
                     TextButton(
                         onClick = { viewModel.setAllSourcesEnabled(true) },
-                        enabled = !state.busy && selectedCount < state.sourceOptions.size,
+                        enabled = !state.busy && selectedCount < checkableCount,
                     ) { Text("全选") }
                     TextButton(
                         onClick = { viewModel.setAllSourcesEnabled(false) },
@@ -751,14 +788,15 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                 state.sourceOptions.forEach { option ->
                     val access = scanBySourceId[option.sourceId]?.access
                         ?: plannedAccessStatus(option, state.rootChecked, state.rootAvailable)
+                    val unreachable = option.id in unreachableIds
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Checkbox(
-                            checked = option.selected,
+                            checked = SourceOptionPolicy.displayedChecked(option, unreachable),
                             onCheckedChange = { selected -> viewModel.setSourceEnabled(option.id, selected) },
-                            enabled = !state.busy,
+                            enabled = !state.busy && !unreachable,
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(option.label, style = MaterialTheme.typography.bodyMedium)
@@ -768,6 +806,7 @@ private fun SourceSelectionCard(state: SourceUiState, viewModel: SourceViewModel
                                     append(" · ")
                                     append(sourceAccessLabel(access))
                                     if (!option.enabledByDefault) append(" · 默认关闭，避免扫描非游戏数据")
+                                    if (unreachable) append(" · 不可勾选")
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (access.readable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
@@ -809,11 +848,22 @@ private fun GameSaveCard(state: SourceUiState, viewModel: SourceViewModel) {
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(8.dp))
+            var syncKeyVisible by rememberSaveable { mutableStateOf(false) }
             OutlinedTextField(
                 value = state.gameSaveSyncKey,
                 onValueChange = viewModel::updateGameSaveSyncKey,
                 label = { Text("同步密钥") },
                 singleLine = true,
+                visualTransformation = if (syncKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { syncKeyVisible = !syncKeyVisible }) {
+                        Icon(
+                            if (syncKeyVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                            contentDescription = if (syncKeyVisible) "隐藏同步密钥" else "显示同步密钥",
+                        )
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(

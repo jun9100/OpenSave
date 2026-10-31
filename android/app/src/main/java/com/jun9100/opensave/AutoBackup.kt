@@ -94,7 +94,7 @@ class AutoBackupWorker(
         val storage = SafStorage(applicationContext)
         val rootStorage = RootStorage(applicationContext)
         val installedGameCatalog = InstalledGameCatalog(applicationContext)
-        val repository = SnapshotRepository(File(applicationContext.filesDir, SNAPSHOT_DIRECTORY))
+        val repository = SnapshotRepository.forApp(applicationContext)
         val client = GameSaveClient(config, GameSaveDeviceStore(applicationContext).identity())
         // Do not publish a local current-save head until the latest remote
         // heads have been inspected. A failed read is retried rather than

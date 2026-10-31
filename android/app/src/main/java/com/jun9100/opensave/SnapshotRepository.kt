@@ -1,7 +1,13 @@
 package com.jun9100.opensave
 
+import android.content.Context
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
 
 data class SnapshotRecord(
     val id: String,
@@ -20,25 +26,32 @@ data class SnapshotRecord(
     val cloudGameId: String = "",
 )
 
-/** Small atomic catalog; the archives remain ordinary files and are never put in preferences. */
+/**
+ * Small atomic catalog; the archives remain ordinary files and are never put in preferences.
+ *
+ * The ViewModel and the auto-backup worker share one instance per directory
+ * ([shared]); every read-modify-write runs under a lock keyed by the canonical
+ * directory, so even separately constructed instances cannot interleave writes.
+ */
 class SnapshotRepository(private val root: File) {
-    private val indexFile = File(root, "index.tsv")
+    private val indexFile = File(root, INDEX_FILE_NAME)
+    private val lock: Any = locks.computeIfAbsent(root.absoluteFile.normalize().path) { Any() }
 
     init {
         require(root.exists() || root.mkdirs()) { "Could not create snapshot directory" }
+        synchronized(lock) { deleteAbandonedTemporaryIndexes() }
     }
 
-    @Synchronized
-    fun list(): List<SnapshotRecord> = readRecords().sortedByDescending { it.createdAtMillis }
+    fun list(): List<SnapshotRecord> = synchronized(lock) {
+        readRecords().sortedByDescending { it.createdAtMillis }
+    }
 
-    @Synchronized
-    fun add(record: SnapshotRecord) {
+    fun add(record: SnapshotRecord) = synchronized(lock) {
         val records = readRecords().filterNot { it.id == record.id } + record
         writeRecords(records)
     }
 
-    @Synchronized
-    fun markUploaded(id: String, uploaded: Boolean = true) {
+    fun markUploaded(id: String, uploaded: Boolean = true) = synchronized(lock) {
         val records = readRecords().map { record ->
             if (record.id == id) record.copy(uploaded = uploaded) else record
         }
@@ -57,18 +70,43 @@ class SnapshotRepository(private val root: File) {
         }
     }
 
+    /**
+     * Writes a complete temporary index, flushes it to disk and publishes it
+     * with one atomic rename over the old index. A process killed at any point
+     * leaves either the previous or the new index, never neither.
+     */
     private fun writeRecords(records: List<SnapshotRecord>) {
-        val temporary = File(root, ".index-${System.nanoTime()}.part")
-        temporary.bufferedWriter(Charsets.UTF_8).use { writer ->
-            records.sortedBy { it.createdAtMillis }.forEach { record ->
-                writer.appendLine(encode(record))
+        val temporary = File(root, "$TEMPORARY_PREFIX${System.nanoTime()}$TEMPORARY_SUFFIX")
+        try {
+            FileOutputStream(temporary).use { output ->
+                val writer = output.bufferedWriter(Charsets.UTF_8)
+                records.sortedBy { it.createdAtMillis }.forEach { record ->
+                    writer.appendLine(encode(record))
+                }
+                writer.flush()
+                output.fd.sync()
             }
-        }
-        if (indexFile.exists() && !indexFile.delete()) {
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    indexFile.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                // Same-directory renames are atomic on Android; this only guards
+                // unusual test filesystems. rename(2) still replaces in one step.
+                require(temporary.renameTo(indexFile)) { "Could not publish snapshot catalog" }
+            }
+        } finally {
             temporary.delete()
-            error("Could not replace snapshot catalog")
         }
-        require(temporary.renameTo(indexFile)) { "Could not publish snapshot catalog" }
+    }
+
+    private fun deleteAbandonedTemporaryIndexes() {
+        root.listFiles { file ->
+            file.isFile && file.name.startsWith(TEMPORARY_PREFIX) && file.name.endsWith(TEMPORARY_SUFFIX)
+        }?.forEach { it.delete() }
     }
 
     private fun encode(record: SnapshotRecord): String = listOf(
@@ -118,4 +156,21 @@ class SnapshotRepository(private val root: File) {
 
     private fun decodeField(value: String): String =
         String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8)
+
+    companion object {
+        const val DIRECTORY = "snapshots"
+        private const val INDEX_FILE_NAME = "index.tsv"
+        private const val TEMPORARY_PREFIX = ".index-"
+        private const val TEMPORARY_SUFFIX = ".part"
+
+        private val locks = ConcurrentHashMap<String, Any>()
+        private val instances = ConcurrentHashMap<String, SnapshotRepository>()
+
+        /** The process-wide catalog for [directory]; callers must not keep their own copies. */
+        fun shared(directory: File): SnapshotRepository =
+            instances.computeIfAbsent(directory.absoluteFile.normalize().path) { SnapshotRepository(File(it)) }
+
+        fun forApp(context: Context): SnapshotRepository =
+            shared(File(context.applicationContext.filesDir, DIRECTORY))
+    }
 }

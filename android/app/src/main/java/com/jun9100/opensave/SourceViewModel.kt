@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -26,6 +27,8 @@ data class RestoreRequest(
     val nativeHead: GameSaveNativeCandidate? = null,
     val game: DetectedGame? = null,
     val source: SourceSelection? = null,
+    /** The page whose control asked for the restore; its result is shown there. */
+    val page: OpenSavePage = OpenSavePage.LIBRARY,
 )
 
 /** A remote head that is deliberately waiting for a user-confirmed restore. */
@@ -71,8 +74,10 @@ data class SourceUiState(
     val rootAvailable: Boolean = false,
     val rootChecked: Boolean = false,
     val busy: Boolean = false,
-    val action: String? = null,
-    val error: String? = null,
+    /** What the running operation is doing; shown on every page while [busy]. */
+    val progress: String? = null,
+    /** Results and errors, each kept on the page whose control started the operation. */
+    val messages: PageMessages = PageMessages(),
     val report: CopyReport? = null,
     val scan: SaveScanReport? = null,
     val sourceScans: List<SourceScanResult> = emptyList(),
@@ -90,6 +95,9 @@ data class SourceUiState(
     val autoBackupEnabled: Boolean = false,
     val pendingRestore: RestoreRequest? = null,
     val pendingGameBackup: SourceGameEntry? = null,
+    val pendingWriteBack: WorkspaceWriteBackRequest? = null,
+    /** Library batch selection by libraryKey; empty until the user chooses. */
+    val librarySelection: Set<String> = LibrarySelection.initial,
 )
 
 class SourceViewModel(application: Application) : AndroidViewModel(application) {
@@ -99,11 +107,12 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     private val selectionStore = SourceSelectionStore(application)
     private val installedGameCatalog = InstalledGameCatalog(application)
     private val snapshotEngine = SnapshotEngine()
-    private val snapshotRepository = SnapshotRepository(File(application.filesDir, SNAPSHOT_DIRECTORY))
+    private val snapshotRepository = SnapshotRepository.forApp(application)
     private val gameSaveStore = GameSaveConfigStore(application)
     private val gameSaveDevice = GameSaveDeviceStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
     private val state = MutableStateFlow(SourceUiState())
+    private val sourceRescan = Debouncer(viewModelScope, SOURCE_RESCAN_DEBOUNCE_MILLIS)
     val uiState: StateFlow<SourceUiState> = state.asStateFlow()
 
     init {
@@ -122,8 +131,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     selectedUri = uri,
                     hasPersistedPermission = storage.hasReadPermission(uri),
                     authorizedTrees = trees,
-                    action = "已添加系统授权目录",
-                    error = null,
+                    messages = state.value.messages.with(OpenSavePage.MANAGEMENT, action = "已添加系统授权目录"),
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(uri.toString()),
                     sourceOptions = buildSourceOptions(trees, state.value.rootPath),
@@ -134,7 +142,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 state.value = state.value.copy(
                     selectedUri = uri,
                     hasPersistedPermission = false,
-                    error = "无法保存目录权限：${error.message ?: "provider refused persistent access"}",
+                    messages = state.value.messages.withError(
+                        OpenSavePage.MANAGEMENT,
+                        "无法保存目录权限：${error.message ?: "provider refused persistent access"}",
+                    ),
                 )
             }
     }
@@ -156,13 +167,12 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     authorizedTrees = trees,
                     activeSourceId = activeSourceId,
                     sourceOptions = buildSourceOptions(trees, state.value.rootPath),
-                    action = "已移除系统授权目录",
-                    error = null,
+                    messages = state.value.messages.with(OpenSavePage.MANAGEMENT, action = "已移除系统授权目录"),
                 )
                 scanSource()
             }
             .onFailure { error ->
-                updateState { copy(error = "移除系统授权目录失败：${error.message}") }
+                updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "移除系统授权目录失败：${error.message}")) }
             }
     }
 
@@ -201,8 +211,11 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             autoBackupEnabled = autoBackupScheduler.isEnabled(),
             scan = persistedScan,
             sourceOptions = sourceOptions,
-            error = null,
-            action = if (fullDiscoveryEnabled) "已启用全设备自动存档来源" else previous.action,
+            messages = if (fullDiscoveryEnabled) {
+                previous.messages.with(previous.page, action = "已启用全设备自动存档来源")
+            } else {
+                previous.messages.withError(previous.page, null)
+            },
         )
         viewModelScope.launch {
             val rootAvailable = withContext(Dispatchers.IO) { rootStorage.checkRootAccess().isSuccess }
@@ -227,8 +240,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                         SnapshotNaming.sourceId(SourceSelection.Root(it).idSeed)
                     }
                 },
-                action = if (mode == StorageMode.ROOT) "已切换到 Root 路径模式" else "已切换到系统授权模式",
-                error = null,
+                messages = messages.with(
+                    OpenSavePage.MANAGEMENT,
+                    action = if (mode == StorageMode.ROOT) "已切换到 Root 路径模式" else "已切换到系统授权模式",
+                ),
             )
         }
         if (mode == StorageMode.ROOT) {
@@ -247,8 +262,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 state.value = state.value.copy(
                     storageMode = StorageMode.ROOT,
                     rootPath = canonical,
-                    action = "已保存 Root 路径",
-                    error = null,
+                    messages = state.value.messages.with(OpenSavePage.MANAGEMENT, action = "已保存 Root 路径"),
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(SourceSelection.Root(canonical).idSeed),
                     sourceOptions = buildSourceOptions(state.value.authorizedTrees, canonical),
@@ -256,7 +270,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 refreshRootAccess()
             }
             .onFailure { error ->
-                state.value = state.value.copy(error = "Root 路径无效：${error.message}")
+                updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "Root 路径无效：${error.message}")) }
             }
     }
 
@@ -267,10 +281,13 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             state.value = state.value.copy(
                 rootAvailable = rootAvailable,
                 rootChecked = true,
-                error = if (!rootAvailable && state.value.storageMode == StorageMode.ROOT) {
-                    "Root 不可用：${result.exceptionOrNull()?.message ?: "su 未返回 uid 0"}"
+                messages = if (!rootAvailable && state.value.storageMode == StorageMode.ROOT) {
+                    state.value.messages.withError(
+                        OpenSavePage.MANAGEMENT,
+                        "Root 不可用：${result.exceptionOrNull()?.message ?: "su 未返回 uid 0"}",
+                    )
                 } else {
-                    state.value.error
+                    state.value.messages
                 },
             )
             if (rootAvailable && state.value.storageMode == StorageMode.ROOT) scanSource()
@@ -286,19 +303,17 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun saveGameSave() {
         val config = gameSaveConfigFromState()
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在加密保存 game-save 配置", error = null)
+            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在加密保存 game-save 配置")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveStore.save(config) }
             }
             result.onSuccess {
-                state.value = state.value.copy(
-                    busy = false,
-                    action = "game-save 配置已保存",
+                state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = "game-save 配置已保存").copy(
                     gameSaveUrl = GameSaveClient.normalizeServiceUrl(config.serviceUrl),
                     gameSaveSaved = true,
                 )
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "保存 game-save 配置失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "保存 game-save 配置失败：${error.message}")
             }
         }
     }
@@ -306,18 +321,18 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun testGameSave() {
         val config = gameSaveConfigFromState()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(error = "请先填写 game-save 服务地址和同步密钥") }
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写 game-save 服务地址和同步密钥")) }
             return
         }
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在测试 game-save 连接", error = null)
+            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在测试 game-save 连接")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveClient(config).testConnection().getOrThrow() }
             }
             result.onSuccess {
-                state.value = state.value.copy(busy = false, action = "game-save 连接成功")
+                state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = "game-save 连接成功")
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "game-save 连接失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "game-save 连接失败：${error.message}")
             }
         }
     }
@@ -331,8 +346,10 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun scanSource() {
         if (state.value.busy) return
+        // Scans start from either page; the summary stays on the one that asked.
+        val page = state.value.page
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在扫描已选存档来源", error = null)
+            state.value = state.value.started(page, "正在扫描已选存档来源")
             val (rootAvailable, options, scans) = withContext(Dispatchers.IO) {
                 val rootAvailable = rootStorage.checkRootAccess().isSuccess
                 val current = state.value
@@ -446,74 +463,140 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             val availableSourceCount = scans.count { it.access.readable }
             val skippedSourceCount = scans.size - availableSourceCount
             val activeScan = scans.firstOrNull { it.sourceId == state.value.activeSourceId }?.scan
-            state.value = state.value.copy(
-                busy = false,
+            val eligibleKeys = GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey }
+            state.value = state.value.finished(
+                page,
+                action = "扫描完成：${games.size} 个游戏条目，$availableSourceCount 个来源可读，跳过 $skippedSourceCount 个",
+            ).copy(
                 rootAvailable = rootAvailable,
                 rootChecked = true,
-                action = "扫描完成：${games.size} 个游戏条目，$availableSourceCount 个来源可读，跳过 $skippedSourceCount 个",
                 sourceScans = scans,
                 sourceOptions = options,
                 scanRevision = state.value.scanRevision + 1,
                 scan = activeScan,
-                error = null,
+                librarySelection = LibrarySelection.effective(state.value.librarySelection, eligibleKeys),
             )
         }
     }
 
-    fun setSourceEnabled(sourceId: String, enabled: Boolean) {
+    /** [optionId] is [SaveSourceOption.id]. The choice is stored at once; the rescan is debounced. */
+    fun setSourceEnabled(optionId: String, enabled: Boolean) {
         if (state.value.busy) return
-        selectionStore.setSourcesEnabled(listOf(sourceId), enabled)
         val current = state.value
+        val option = current.sourceOptions.firstOrNull { it.id == optionId }
+        if (enabled && option != null && sourceUnreachable(current, option)) {
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "该来源目录不存在或不可访问，不能勾选")) }
+            return
+        }
+        selectionStore.setSourcesEnabled(listOf(optionId), enabled)
         state.value = current.copy(
             sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
-            action = if (enabled) "已启用存档来源" else "已停用存档来源",
-            error = null,
+            messages = current.messages.with(
+                OpenSavePage.MANAGEMENT,
+                action = if (enabled) "已启用存档来源" else "已停用存档来源",
+            ),
         )
-        scanSource()
+        requestSourceRescan()
     }
 
     fun setAllSourcesEnabled(enabled: Boolean) {
         if (state.value.busy) return
         val current = state.value
-        val sourceIds = buildSourceOptions(current.authorizedTrees, current.rootPath).map(SaveSourceOption::id)
+        // "全选" never enables a source the last scan proved missing or unreachable.
+        val sourceIds = buildSourceOptions(current.authorizedTrees, current.rootPath)
+            .filter { option -> !enabled || !sourceUnreachable(current, option) }
+            .map(SaveSourceOption::id)
         selectionStore.setSourcesEnabled(sourceIds, enabled)
         state.value = current.copy(
             sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
-            action = if (enabled) "已启用全部存档来源" else "已停用全部存档来源",
-            error = null,
+            messages = current.messages.with(
+                OpenSavePage.MANAGEMENT,
+                action = if (enabled) "已启用全部存档来源" else "已停用全部存档来源",
+            ),
         )
-        scanSource()
+        requestSourceRescan()
     }
 
-    fun restoreSource() {
-        val source = requiredSource() ?: return
-        if (!canWriteTo(source)) {
-            updateState { copy(error = "当前系统授权目录为只读，不能恢复；请重新授予读写权限") }
+    private fun sourceUnreachable(current: SourceUiState, option: SaveSourceOption): Boolean =
+        SourceOptionPolicy.unreachable(
+            option = option,
+            scannedAccess = current.sourceScans.firstOrNull { it.sourceId == option.sourceId }?.access,
+            rootChecked = current.rootChecked,
+            rootAvailable = current.rootAvailable,
+        )
+
+    /**
+     * Rapid source toggles (a gamepad repeating A) trigger one rescan after the
+     * last toggle. A rescan that falls due during another operation waits for it.
+     */
+    private fun requestSourceRescan() {
+        sourceRescan.submit {
+            state.first { !it.busy }
+            scanSource()
+        }
+    }
+
+    fun setLibrarySelected(libraryKey: String, selected: Boolean) =
+        updateState { copy(librarySelection = LibrarySelection.set(librarySelection, libraryKey, selected)) }
+
+    fun toggleLibrarySelection(visibleEligibleKeys: Collection<String>) =
+        updateState { copy(librarySelection = LibrarySelection.toggleAll(librarySelection, visibleEligibleKeys)) }
+
+    /** Asks for confirmation before the private workspace replaces the saved source directory. */
+    fun requestWorkspaceWriteBack() {
+        if (state.value.busy) return
+        val request = runCatching {
+            WorkspaceWriteBackPolicy.requireWorkspace(storage.workspaceDirectory())
+            persistedWriteTarget().getOrThrow()
+        }.getOrElse { error ->
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, error.message ?: "无法写回工作区")) }
             return
         }
-        runSourceOperation("正在把工作区写回授权目录") {
-            restoreSelection(source)
+        updateState { copy(pendingWriteBack = request, messages = messages.withError(OpenSavePage.MANAGEMENT, null)) }
+    }
+
+    fun cancelWorkspaceWriteBack() = updateState { copy(pendingWriteBack = null) }
+
+    fun confirmWorkspaceWriteBack() {
+        val request = state.value.pendingWriteBack ?: return
+        updateState { copy(pendingWriteBack = null) }
+        if (state.value.busy) return
+        // Re-resolve the target: the dialog must never write to a source other than the one it named.
+        val target = persistedWriteTarget().getOrElse { error ->
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, error.message ?: "无法写回工作区")) }
+            return
+        }
+        if (target.source.idSeed != request.source.idSeed) {
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "来源目录已变更，请重新确认写回")) }
+            return
+        }
+        runSourceOperation(
+            action = "正在保存安全快照并把工作区写回来源目录",
+            done = { report -> "已写回 ${request.label}：${report.fileCount} 个文件；写回前的内容已保存为安全快照" },
+        ) {
+            writeBackWorkspaceLocked(request.source)
         }
     }
 
     fun backupNow() {
         val source = requiredSource() ?: return
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在检查并创建快照", error = null)
+            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在检查并创建快照")
             val outcome = withContext(Dispatchers.IO) {
                 runCatching { captureSnapshot(source, upload = true) }
             }
             outcome.onSuccess { captured ->
                 val uploadSuffix = captured.uploadError?.let { "；$it" }.orEmpty()
-                state.value = state.value.copy(
-                    busy = false,
+                state.value = state.value.finished(
+                    OpenSavePage.MANAGEMENT,
                     action = "快照已保存：${captured.record.remoteName}$uploadSuffix",
+                    error = captured.uploadError,
+                ).copy(
                     report = captured.report,
                     snapshots = currentSnapshots(),
-                    error = captured.uploadError,
                 )
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "创建快照失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "创建快照失败：${error.message}")
             }
         }
     }
@@ -522,7 +605,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         if (state.value.busy) return
         val game = entry.game
         if (game.candidateCount > 0) {
-            updateState { copy(pendingGameBackup = entry, error = null) }
+            updateState { copy(pendingGameBackup = entry, messages = messages.withError(OpenSavePage.LIBRARY, null)) }
         } else {
             createGameBackup(entry, includeCandidates = false)
         }
@@ -542,7 +625,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             GameLibrary.sourceGames(state.value.sourceScans),
         ).filter { it.libraryKey in gameKeys }
         if (selectedEntries.isEmpty()) {
-            updateState { copy(error = "请选择至少一款含有已识别存档位置的游戏") }
+            updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "请选择至少一款含有已识别存档位置的游戏")) }
             return
         }
 
@@ -554,10 +637,9 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             val cloudUpdates = mutableListOf<GameSaveCloudUpdate>()
             selectedEntries.forEachIndexed { index, entry ->
                 val game = entry.game
-                state.value = state.value.copy(
-                    busy = true,
-                    action = "批量备份 ${index + 1}/${selectedEntries.size}：${entry.sourceLabel} · ${game.presentation.primaryName}",
-                    error = null,
+                state.value = state.value.started(
+                    OpenSavePage.LIBRARY,
+                    "批量备份 ${index + 1}/${selectedEntries.size}：${entry.sourceLabel} · ${game.presentation.primaryName}",
                 )
                 val manifest = runCatching {
                     GameSnapshotManifest.from(game, GameLibrary.batchBackupLocations(game))
@@ -583,12 +665,13 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            state.value = state.value.copy(
-                busy = false,
+            state.value = state.value.finished(
+                OpenSavePage.LIBRARY,
                 action = "批量备份完成：本地快照 $completed 款，失败 ${failures.size} 款，云端上传失败 ${uploadFailures.size} 款，跨设备待处理 ${cloudUpdates.size} 款",
+                error = (failures + uploadFailures + syncNotices).take(6).takeIf { it.isNotEmpty() }?.joinToString("\n"),
+            ).copy(
                 snapshots = currentSnapshots(),
                 cloudUpdates = mergeCloudUpdates(state.value.cloudUpdates, cloudUpdates),
-                error = (failures + uploadFailures + syncNotices).take(6).takeIf { it.isNotEmpty() }?.joinToString("\n"),
             )
         }
     }
@@ -597,17 +680,17 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         val game = entry.game
         val selectedSaves = game.saves.filter { includeCandidates || !it.candidate }
         if (selectedSaves.isEmpty()) {
-            updateState { copy(error = "该游戏只有候选存档位置；确认后才能备份") }
+            updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "该游戏只有候选存档位置；确认后才能备份")) }
             return
         }
         val manifest = runCatching { GameSnapshotManifest.from(game, selectedSaves) }
             .getOrElse { error ->
-                updateState { copy(error = "无法创建游戏快照：${error.message}") }
+                updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "无法创建游戏快照：${error.message}")) }
                 return
             }
 
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在备份 ${manifest.gameName}", error = null)
+            state.value = state.value.started(OpenSavePage.LIBRARY, "正在备份 ${manifest.gameName}")
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     StorageOperationLock.withLock { captureGameSnapshotLocked(entry, manifest) }
@@ -616,15 +699,16 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             result.onSuccess { captured ->
                 val notice = listOfNotNull(captured.uploadError, captured.syncNotice).joinToString("；")
                 val uploadSuffix = notice.takeIf { it.isNotBlank() }?.let { "；$it" }.orEmpty()
-                state.value = state.value.copy(
-                    busy = false,
+                state.value = state.value.finished(
+                    OpenSavePage.LIBRARY,
                     action = "已备份 ${manifest.gameName}：${captured.record.remoteName}$uploadSuffix",
+                    error = captured.uploadError,
+                ).copy(
                     snapshots = currentSnapshots(),
                     cloudUpdates = mergeCloudUpdates(state.value.cloudUpdates, listOfNotNull(captured.cloudUpdate)),
-                    error = captured.uploadError,
                 )
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "备份 ${manifest.gameName} 失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.LIBRARY, error = "备份 ${manifest.gameName} 失败：${error.message}")
             }
         }
     }
@@ -801,18 +885,19 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun listCloud() {
         val config = gameSaveConfigFromState()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(error = "请先填写并保存 game-save 服务地址和同步密钥") }
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写并保存 game-save 服务地址和同步密钥")) }
             return
         }
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在列举云端快照", error = null)
+            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在列举云端快照")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveClient(config).list().getOrThrow() }
             }
             result.onSuccess { files ->
-                state.value = state.value.copy(busy = false, action = "找到 ${files.size} 个云端快照", remoteSnapshots = files)
+                state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = "找到 ${files.size} 个云端快照")
+                    .copy(remoteSnapshots = files)
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "列举云端快照失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "列举云端快照失败：${error.message}")
             }
         }
     }
@@ -822,17 +907,17 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         if (state.value.busy) return
         val config = gameSaveConfigFromState()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(error = "请先填写 game-save 服务地址和同步密钥") }
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写 game-save 服务地址和同步密钥")) }
             return
         }
         val entries = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(state.value.sourceScans))
         if (entries.isEmpty()) {
-            updateState { copy(error = "请先扫描含有已识别存档位置的来源") }
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先扫描含有已识别存档位置的来源")) }
             return
         }
 
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = "正在检查跨设备存档更新", error = null)
+            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在检查跨设备存档更新")
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     StorageOperationLock.withLock {
@@ -855,17 +940,17 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             result.onSuccess { checked ->
-                state.value = state.value.copy(
-                    busy = false,
+                state.value = state.value.finished(
+                    OpenSavePage.MANAGEMENT,
                     action = "跨设备检查完成：${checked.updates.size} 项待处理",
+                    error = checked.failures.take(5).takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                ).copy(
                     remoteSnapshots = checked.remoteSnapshots,
                     cloudUpdates = checked.updates,
-                    error = checked.failures.take(5).takeIf { it.isNotEmpty() }?.joinToString("\n"),
                 )
             }.onFailure { error ->
-                state.value = state.value.copy(
-                    busy = false,
-                    action = null,
+                state.value = state.value.finished(
+                    OpenSavePage.MANAGEMENT,
                     error = "检查跨设备更新失败：${error.message ?: "未知错误"}",
                 )
             }
@@ -874,7 +959,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun requestCloudUpdateRestore(update: GameSaveCloudUpdate) {
         val remote = update.remote ?: run {
-            updateState { copy(error = update.message.ifBlank { "远端快照尚未就绪" }) }
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, update.message.ifBlank { "远端快照尚未就绪" })) }
             return
         }
         updateState {
@@ -885,32 +970,46 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     nativeHead = update.nativeHead,
                     game = update.entry.game,
                     source = update.entry.source,
+                    page = OpenSavePage.MANAGEMENT,
                 ),
-                error = null,
+                messages = messages.withError(OpenSavePage.MANAGEMENT, null),
             )
         }
     }
 
     fun requestLocalRestore(record: SnapshotRecord) {
         if (record.gameKey != null) {
-            updateState { copy(error = "请从对应游戏的历史记录中恢复此快照") }
+            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请从对应游戏的历史记录中恢复此快照")) }
             return
         }
-        updateState { copy(pendingRestore = RestoreRequest(local = record), error = null) }
+        updateState {
+            copy(
+                pendingRestore = RestoreRequest(local = record, page = OpenSavePage.MANAGEMENT),
+                messages = messages.withError(OpenSavePage.MANAGEMENT, null),
+            )
+        }
     }
 
     fun requestRemoteRestore(remote: RemoteSnapshot) {
-        updateState { copy(pendingRestore = RestoreRequest(remote = remote), error = null) }
+        updateState {
+            copy(
+                pendingRestore = RestoreRequest(remote = remote, page = OpenSavePage.MANAGEMENT),
+                messages = messages.withError(OpenSavePage.MANAGEMENT, null),
+            )
+        }
     }
 
     fun requestLocalGameRestore(entry: SourceGameEntry, record: SnapshotRecord) {
         val game = entry.game
         if (record.gameKey != game.gameKey || record.sourceId != entry.sourceId) {
-            updateState { copy(error = "快照不属于当前游戏或存档来源") }
+            updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "快照不属于当前游戏或存档来源")) }
             return
         }
         updateState {
-            copy(pendingRestore = RestoreRequest(local = record, game = game, source = entry.source), error = null)
+            copy(
+                pendingRestore = RestoreRequest(local = record, game = game, source = entry.source, page = OpenSavePage.LIBRARY),
+                messages = messages.withError(OpenSavePage.LIBRARY, null),
+            )
         }
     }
 
@@ -918,11 +1017,14 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         val game = entry.game
         val identity = GameCloudNaming.identity(entry.source, entry.sourceId, game)
         if (remote.type != identity.saveType.id || !remote.name.startsWith(GameCloudNaming.remotePrefix(identity))) {
-            updateState { copy(error = "云端快照不属于当前游戏或存档来源") }
+            updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "云端快照不属于当前游戏或存档来源")) }
             return
         }
         updateState {
-            copy(pendingRestore = RestoreRequest(remote = remote, game = game, source = entry.source), error = null)
+            copy(
+                pendingRestore = RestoreRequest(remote = remote, game = game, source = entry.source, page = OpenSavePage.LIBRARY),
+                messages = messages.withError(OpenSavePage.LIBRARY, null),
+            )
         }
     }
 
@@ -930,13 +1032,19 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
     fun confirmRestore() {
         val request = state.value.pendingRestore ?: return
-        val source = request.source ?: requiredSource() ?: return
+        val page = request.page
+        // A whole-source restore replaces the source directory, so it may only
+        // target the saved source, never an unsaved Root path draft.
+        val source = request.source ?: persistedWriteTarget().getOrElse { error ->
+            updateState { copy(pendingRestore = null, messages = messages.withError(page, error.message ?: "无法恢复快照")) }
+            return
+        }.source
         if (!canWriteTo(source)) {
-            updateState { copy(pendingRestore = null, error = "当前系统授权目录为只读，不能恢复；请重新授予读写权限") }
+            updateState { copy(pendingRestore = null, messages = messages.withError(page, "当前系统授权目录为只读，不能恢复；请重新授予读写权限")) }
             return
         }
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, pendingRestore = null, action = "正在下载并安全恢复快照", error = null)
+            state.value = state.value.started(page, "正在下载并安全恢复快照").copy(pendingRestore = null)
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     request.game?.let { game ->
@@ -948,9 +1056,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             result.onSuccess { outcome ->
-                state.value = state.value.copy(
-                    busy = false,
-                    action = outcome.message,
+                state.value = state.value.finished(page, action = outcome.message).copy(
                     report = outcome.report ?: state.value.report,
                     snapshots = currentSnapshots(),
                     cloudUpdates = state.value.cloudUpdates.filterNot { update ->
@@ -960,7 +1066,8 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                     },
                 )
             }.onFailure { error ->
-                state.value = state.value.copy(busy = false, action = null, error = "恢复快照失败：${error.message}")
+                state.value = state.value.finished(page, error = "恢复快照失败：${error.message}")
+                    .copy(snapshots = currentSnapshots())
             }
         }
     }
@@ -1116,9 +1223,19 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     fun setAutoBackupEnabled(enabled: Boolean) {
         runCatching { autoBackupScheduler.setEnabled(enabled) }
             .onSuccess {
-                updateState { copy(autoBackupEnabled = enabled, action = if (enabled) "已启用 Wi-Fi 自动备份" else "已关闭自动备份") }
+                updateState {
+                    copy(
+                        autoBackupEnabled = enabled,
+                        messages = messages.with(
+                            OpenSavePage.MANAGEMENT,
+                            action = if (enabled) "已启用 Wi-Fi 自动备份" else "已关闭自动备份",
+                        ),
+                    )
+                }
             }
-            .onFailure { error -> updateState { copy(error = "设置自动备份失败：${error.message}") } }
+            .onFailure { error ->
+                updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "设置自动备份失败：${error.message}")) }
+            }
     }
 
     private suspend fun captureSnapshot(source: SourceSelection, upload: Boolean): CaptureOutcome =
@@ -1206,44 +1323,102 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
 
         val workspace = storage.workspaceDirectory()
         if (workspace.isDirectory) {
-            val timestamp = System.currentTimeMillis()
-            val safetyName = SnapshotNaming.remoteName(sourceId, timestamp)
-            val safetyArchive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$safetyName")
-            val safetyBuild = snapshotEngine.createSnapshot(workspace, safetyArchive).getOrThrow()
-            snapshotRepository.add(
-                SnapshotRecord(
-                    id = "snap_$timestamp",
-                    sourceId = sourceId,
-                    remoteName = safetyName,
-                    localPath = safetyName,
-                    createdAtMillis = timestamp,
-                    sizeBytes = safetyBuild.archive.length(),
-                    sha256 = safetyBuild.archiveSha256,
-                    manifestHash = "safety",
-                    comment = "恢复前安全副本",
-                ),
-            )
+            addSafetySnapshot(sourceId, workspace, "恢复前安全副本")
         }
         snapshotEngine.restoreSnapshot(archive, workspace).getOrThrow()
         return restoreSelection(source).getOrThrow()
     }
 
-    private fun runSourceOperation(action: String, operation: suspend () -> Result<CopyReport>) {
-        if (requiredSource() == null) return
+    /** Saves [contents] as a local whole-source snapshot before something overwrites it. */
+    private fun addSafetySnapshot(sourceId: String, contents: File, comment: String) {
+        val timestamp = System.currentTimeMillis()
+        val safetyName = SnapshotNaming.remoteName(sourceId, timestamp)
+        val safetyArchive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$safetyName")
+        val safetyBuild = snapshotEngine.createSnapshot(contents, safetyArchive).getOrThrow()
+        snapshotRepository.add(
+            SnapshotRecord(
+                id = "snap_$timestamp",
+                sourceId = sourceId,
+                remoteName = safetyName,
+                localPath = safetyName,
+                createdAtMillis = timestamp,
+                sizeBytes = safetyBuild.archive.length(),
+                sha256 = safetyBuild.archiveSha256,
+                manifestHash = "safety",
+                comment = comment,
+            ),
+        )
+    }
+
+    /**
+     * Copies the source's current content into a safety snapshot, then writes
+     * the private workspace back. The workspace is set aside by a same-directory
+     * rename while the source is imported, so its files are never re-encoded.
+     */
+    private suspend fun writeBackWorkspaceLocked(source: SourceSelection): Result<CopyReport> = withContext(Dispatchers.IO) {
+        runCatching {
+            val workspace = storage.workspaceDirectory()
+            WorkspaceWriteBackPolicy.requireWorkspace(workspace)
+            val parent = workspace.absoluteFile.parentFile ?: error("工作区没有上级目录")
+            // Only this function creates these names, and it runs under the storage lock.
+            parent.listFiles { file -> file.name.startsWith(WRITE_BACK_TEMPORARY_PREFIX) }
+                ?.forEach { runCatching { it.deleteRecursively() } }
+            val held = File(parent, "$WRITE_BACK_TEMPORARY_PREFIX${UUID.randomUUID()}")
+            require(workspace.renameTo(held)) { "无法暂存工作区" }
+            try {
+                importSelection(source).getOrThrow()
+                addSafetySnapshot(SnapshotNaming.sourceId(source.idSeed), workspace, "写回前安全副本")
+            } finally {
+                val discarded = File(parent, "$WRITE_BACK_TEMPORARY_PREFIX${UUID.randomUUID()}")
+                if (workspace.exists()) require(workspace.renameTo(discarded)) { "无法清理来源副本" }
+                require(held.renameTo(workspace)) { "无法还原工作区" }
+                runCatching { discarded.deleteRecursively() }
+            }
+            restoreSelection(source).getOrThrow()
+        }
+    }
+
+    private fun runSourceOperation(
+        action: String,
+        done: (CopyReport) -> String = { report -> "完成：${report.fileCount} 个文件，${report.byteCount} 字节" },
+        operation: suspend () -> Result<CopyReport>,
+    ) {
         viewModelScope.launch {
-            state.value = state.value.copy(busy = true, action = action, error = null)
+            state.value = state.value.started(OpenSavePage.MANAGEMENT, action)
             StorageOperationLock.withLock { operation() }
                 .onSuccess { report ->
-                    state.value = state.value.copy(
-                        busy = false,
-                        action = "完成：${report.fileCount} 个文件，${report.byteCount} 字节",
+                    state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = done(report)).copy(
                         report = report,
+                        snapshots = currentSnapshots(),
                     )
                 }
                 .onFailure { error ->
-                    state.value = state.value.copy(busy = false, action = null, error = error.message ?: "操作失败")
+                    state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = error.message ?: "操作失败")
+                        .copy(snapshots = currentSnapshots())
                 }
         }
+    }
+
+    /**
+     * The saved source that destructive whole-source writes may target: the
+     * persisted SAF tree or the persisted Root path, never an unsaved draft.
+     */
+    private fun persistedWriteTarget(): Result<WorkspaceWriteBackRequest> = runCatching {
+        val current = state.value
+        val target = when (current.storageMode) {
+            StorageMode.SAF -> {
+                val tree = current.authorizedTrees.firstOrNull { it.uri == current.selectedUri }
+                    ?: error("请先添加并授权一个系统目录")
+                require(storage.hasReadPermission(tree.uri)) { "系统授权目录的权限已失效，请重新授权" }
+                WorkspaceWriteBackRequest(SourceSelection.Saf(tree.uri), tree.label)
+            }
+            StorageMode.ROOT -> {
+                val path = WorkspaceWriteBackPolicy.rootTarget(current.rootPath, rootStorage.persistedRootPath()).getOrThrow()
+                WorkspaceWriteBackRequest(SourceSelection.Root(path), path)
+            }
+        }
+        require(canWriteTo(target.source)) { "当前系统授权目录为只读，不能写回；请重新授予读写权限" }
+        target
     }
 
     private fun requiredSource(): SourceSelection? {
@@ -1251,7 +1426,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
             StorageMode.SAF -> {
                 val uri = state.value.selectedUri
                 if (uri == null || !storage.hasReadPermission(uri)) {
-                    updateState { copy(error = "请先添加并授权一个可读取目录") }
+                    updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先添加并授权一个可读取目录")) }
                     null
                 } else {
                     SourceSelection.Saf(uri)
@@ -1263,7 +1438,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
                 result.fold(
                     onSuccess = { SourceSelection.Root(it) },
                     onFailure = {
-                        updateState { copy(error = "请先填写有效的 Root 绝对路径：${it.message}") }
+                        updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写有效的 Root 绝对路径：${it.message}")) }
                         null
                     },
                 )
@@ -1325,6 +1500,13 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         state.value = state.value.update()
     }
 
+    /** Marks an operation started from [page]: clears that page's lines and shows [progress]. */
+    private fun SourceUiState.started(page: OpenSavePage, progress: String) =
+        copy(busy = true, progress = progress, messages = messages.with(page))
+
+    private fun SourceUiState.finished(page: OpenSavePage, action: String? = null, error: String? = null) =
+        copy(busy = false, progress = null, messages = messages.with(page, action, error))
+
     private data class CaptureOutcome(
         val report: CopyReport,
         val record: SnapshotRecord,
@@ -1354,5 +1536,7 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         const val SNAPSHOT_DIRECTORY = "snapshots"
         const val GAME_WORKSPACE_DIRECTORY = "game-workspace"
         const val MAX_HISTORY = 40
+        const val SOURCE_RESCAN_DEBOUNCE_MILLIS = 300L
+        const val WRITE_BACK_TEMPORARY_PREFIX = ".source-workspace-write-back-"
     }
 }

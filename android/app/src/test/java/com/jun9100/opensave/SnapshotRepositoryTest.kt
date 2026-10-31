@@ -1,7 +1,11 @@
 package com.jun9100.opensave
 
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -68,4 +72,70 @@ class SnapshotRepositoryTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun oneProcessWideInstancePerDirectory() {
+        val root = createTempDir(prefix = "opensave-index-shared-")
+        try {
+            val first = SnapshotRepository.shared(root)
+            val second = SnapshotRepository.shared(File(root, "../${root.name}"))
+            assertSame(first, second)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun writesLeaveOnlyTheIndexAndRemoveAbandonedTemporaryFiles() {
+        val root = createTempDir(prefix = "opensave-index-atomic-")
+        try {
+            // A temporary index from a process killed mid-write must never be read or kept.
+            File(root, ".index-123.part").writeText("partial")
+            val repository = SnapshotRepository(root)
+            repository.add(record("snap_1", createdAt = 1))
+            repository.add(record("snap_2", createdAt = 2))
+            repository.markUploaded("snap_1")
+
+            assertEquals(listOf("index.tsv"), root.list()!!.sorted())
+            assertEquals(listOf("snap_2", "snap_1"), repository.list().map(SnapshotRecord::id))
+            assertTrue(repository.list().single { it.id == "snap_1" }.uploaded)
+            assertFalse(File(root, ".index-123.part").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun separateInstancesForTheSameDirectoryNeverLoseWrites() {
+        val root = createTempDir(prefix = "opensave-index-concurrent-")
+        try {
+            val repositories = listOf(SnapshotRepository(root), SnapshotRepository(File(root.absolutePath)))
+            val start = CountDownLatch(1)
+            val writers = repositories.mapIndexed { index, repository ->
+                thread {
+                    start.await()
+                    repeat(25) { item ->
+                        repository.add(record("snap_${index}_$item", createdAt = (index * 100 + item).toLong()))
+                    }
+                }
+            }
+            start.countDown()
+            writers.forEach(Thread::join)
+
+            assertEquals(50, SnapshotRepository(root).list().size)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun record(id: String, createdAt: Long) = SnapshotRecord(
+        id = id,
+        sourceId = "source",
+        remoteName = "$id.zip",
+        localPath = "$id.zip",
+        createdAtMillis = createdAt,
+        sizeBytes = 1,
+        sha256 = "a",
+        manifestHash = "b",
+    )
 }
