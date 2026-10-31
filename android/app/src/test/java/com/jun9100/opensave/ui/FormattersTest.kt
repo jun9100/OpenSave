@@ -40,4 +40,9 @@ class FormattersTest {
         assertTrue(formatBytes(1024).endsWith(" KiB"))
         assertTrue(formatBytes(1024L * 1024).endsWith(" MiB"))
     }
+
+    @Test
+    fun shortTimeFitsACompactRow() {
+        assertTrue(Regex("""\d\d-\d\d \d\d:\d\d""").matches(formatShortTime(1_793_000_000_000)))
+    }
 }

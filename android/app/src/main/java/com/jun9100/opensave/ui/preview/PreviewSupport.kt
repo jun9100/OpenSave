@@ -14,12 +14,17 @@ import com.jun9100.opensave.DetectedGame
 import com.jun9100.opensave.DetectedSave
 import com.jun9100.opensave.FileRecord
 import com.jun9100.opensave.GameIconKey
+import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.GamePresentation
 import com.jun9100.opensave.OpenSaveTheme
+import com.jun9100.opensave.SaveScanReport
+import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SnapshotNaming
 import com.jun9100.opensave.SourceAccessStatus
 import com.jun9100.opensave.SourceGameEntry
+import com.jun9100.opensave.SourceScanResult
 import com.jun9100.opensave.SourceSelection
+import com.jun9100.opensave.SourceUiState
 
 /**
  * Odin2 window sizes measured in android/docs/odin2-input.md (833x444dp
@@ -106,6 +111,53 @@ internal object PreviewData {
             FileRecord("nand/user/save/0100F2C0115B6000/caption.jpg", 522_240, "c3"),
         ),
         detected = switchGame.saves,
+    )
+
+    val snapshots = listOf(
+        snapshot(id = "a", createdAtMillis = 1_793_000_000_000, uploaded = true),
+        snapshot(id = "b", createdAtMillis = 1_792_900_000_000, uploaded = false, comment = "恢复前安全副本"),
+    )
+
+    /** A library large enough to count rows: the Switch game, Hollow Knight and a dozen more titles. */
+    val libraryState: SourceUiState
+        get() {
+            val extra = (1..12).map { index ->
+                DetectedSave(
+                    kind = "yuzu-switch",
+                    relativePath = "nand/user/save/0000000000000000/0123456789ABCDEF/01000000000${"%05X".format(index)}",
+                    titleId = "01000000000${"%05X".format(index)}",
+                    note = "Yuzu/Eden 用户存档",
+                    displayName = "示例游戏 $index：名字很长的副标题用于检查单行省略",
+                )
+            }
+            val scan = SaveScanReport(
+                rootPath = rootSource.path,
+                scannedDirectoryCount = 120,
+                detected = switchGame.saves + pcGame.saves + extra,
+            )
+            val scans = listOf(SourceScanResult(source = rootSource, label = "Eden 模拟器", scan = scan))
+            val first = GameLibrary.sourceGames(scans).first()
+            return SourceUiState(
+                sourceScans = scans,
+                snapshots = snapshots.map { it.copy(sourceId = first.sourceId, gameKey = first.game.gameKey) },
+                librarySelection = setOf(first.libraryKey),
+            )
+        }
+
+    private fun snapshot(id: String, createdAtMillis: Long, uploaded: Boolean, comment: String = "") = SnapshotRecord(
+        id = id,
+        sourceId = switchEntry.sourceId,
+        remoteName = "",
+        localPath = "",
+        createdAtMillis = createdAtMillis,
+        sizeBytes = 1_572_864,
+        sha256 = "",
+        manifestHash = "",
+        uploaded = uploaded,
+        comment = comment,
+        gameKey = switchGame.gameKey,
+        gameName = "塞尔达传说 王国之泪",
+        saveType = "switch",
     )
 
     private fun entry(

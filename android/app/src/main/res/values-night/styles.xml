@@ -1,0 +1,11 @@
+<resources>
+    <!-- Dark counterpart of values/styles.xml: no light status bar over the dark UI. -->
+    <style name="Theme.OpenSave" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#67D5EE</item>
+        <item name="android:windowBackground">#141218</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

@@ -3,6 +3,7 @@ package com.jun9100.opensave
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -98,9 +99,19 @@ data class SourceUiState(
     val pendingWriteBack: WorkspaceWriteBackRequest? = null,
     /** Library batch selection by libraryKey; empty until the user chooses. */
     val librarySelection: Set<String> = LibrarySelection.initial,
+    /** The game the detail pane or page shows, by libraryKey. */
+    val selectedGameKey: String? = null,
+    /** Portrait only: the full-screen game detail is on top of the list. */
+    val gameDetailOpen: Boolean = false,
+    /** Save type id of the library filter chip, or [LibraryView.ALL_TYPES]. */
+    val libraryTypeFilter: String = LibraryView.ALL_TYPES,
+    val sourceDetailsExpanded: Boolean = false,
 )
 
-class SourceViewModel(application: Application) : AndroidViewModel(application) {
+class SourceViewModel(
+    application: Application,
+    private val savedState: SavedStateHandle,
+) : AndroidViewModel(application) {
     private val app = application
     private val storage = SafStorage(application)
     private val rootStorage = RootStorage(application)
@@ -111,12 +122,15 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     private val gameSaveStore = GameSaveConfigStore(application)
     private val gameSaveDevice = GameSaveDeviceStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
-    private val state = MutableStateFlow(SourceUiState())
+    private val state = MutableStateFlow(restoreUiState(SourceUiState()))
     private val sourceRescan = Debouncer(viewModelScope, SOURCE_RESCAN_DEBOUNCE_MILLIS)
     val uiState: StateFlow<SourceUiState> = state.asStateFlow()
 
     init {
         autoBackupScheduler.ensureScheduled()
+        // Navigation, filter and selections survive rotation through the ViewModel
+        // and process death through SavedStateHandle (plan S8).
+        viewModelScope.launch { state.collect(::saveUiState) }
         refreshPersistedSource()
     }
 
@@ -228,6 +242,56 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun showPage(page: OpenSavePage) = updateState { copy(page = page) }
+
+    /** Shows [libraryKey] in the detail pane; in portrait this opens the full-screen detail. */
+    fun openGame(libraryKey: String) = updateState { copy(selectedGameKey = libraryKey, gameDetailOpen = true) }
+
+    /** Selects the game for the landscape detail pane without opening the portrait page. */
+    fun selectGame(libraryKey: String) = updateState { copy(selectedGameKey = libraryKey) }
+
+    fun closeGameDetail() = updateState { copy(gameDetailOpen = false) }
+
+    fun setLibraryTypeFilter(typeId: String) = updateState { copy(libraryTypeFilter = typeId) }
+
+    fun setSourceDetailsExpanded(expanded: Boolean) = updateState { copy(sourceDetailsExpanded = expanded) }
+
+    /** Handles the back key; false means the system should handle it. */
+    fun navigateBack(landscape: Boolean): Boolean {
+        val current = state.value
+        return when (LibraryView.backTarget(current.page, current.gameDetailOpen, landscape)) {
+            BackTarget.CLOSE_DETAIL -> {
+                closeGameDetail()
+                true
+            }
+            BackTarget.LIBRARY -> {
+                showPage(OpenSavePage.LIBRARY)
+                true
+            }
+            BackTarget.SYSTEM -> false
+        }
+    }
+
+    private fun restoreUiState(initial: SourceUiState): SourceUiState = initial.copy(
+        page = savedState.get<String>(KEY_PAGE)
+            ?.let { name -> OpenSavePage.entries.firstOrNull { it.name == name } }
+            ?: initial.page,
+        selectedGameKey = savedState.get<String>(KEY_SELECTED_GAME),
+        gameDetailOpen = savedState.get<Boolean>(KEY_DETAIL_OPEN) ?: false,
+        libraryTypeFilter = savedState.get<String>(KEY_TYPE_FILTER) ?: initial.libraryTypeFilter,
+        sourceDetailsExpanded = savedState.get<Boolean>(KEY_SOURCE_DETAILS) ?: false,
+        librarySelection = savedState.get<ArrayList<String>>(KEY_SELECTION)?.toSet() ?: initial.librarySelection,
+    )
+
+    private fun saveUiState(current: SourceUiState) {
+        savedState[KEY_PAGE] = current.page.name
+        savedState[KEY_SELECTED_GAME] = current.selectedGameKey
+        savedState[KEY_DETAIL_OPEN] = current.gameDetailOpen
+        savedState[KEY_TYPE_FILTER] = current.libraryTypeFilter
+        savedState[KEY_SOURCE_DETAILS] = current.sourceDetailsExpanded
+        if (savedState.get<ArrayList<String>>(KEY_SELECTION)?.toSet() != current.librarySelection) {
+            savedState[KEY_SELECTION] = ArrayList(current.librarySelection)
+        }
+    }
 
     fun selectStorageMode(mode: StorageMode) {
         selectionStore.saveMode(mode)
@@ -1538,5 +1602,11 @@ class SourceViewModel(application: Application) : AndroidViewModel(application) 
         const val MAX_HISTORY = 40
         const val SOURCE_RESCAN_DEBOUNCE_MILLIS = 300L
         const val WRITE_BACK_TEMPORARY_PREFIX = ".source-workspace-write-back-"
+        const val KEY_PAGE = "ui.page"
+        const val KEY_SELECTED_GAME = "ui.selectedGameKey"
+        const val KEY_DETAIL_OPEN = "ui.gameDetailOpen"
+        const val KEY_TYPE_FILTER = "ui.libraryTypeFilter"
+        const val KEY_SOURCE_DETAILS = "ui.sourceDetailsExpanded"
+        const val KEY_SELECTION = "ui.librarySelection"
     }
 }
