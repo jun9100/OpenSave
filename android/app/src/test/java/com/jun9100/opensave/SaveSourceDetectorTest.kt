@@ -378,4 +378,29 @@ class SaveSourceDetectorTest {
         assertTrue(report.detected.none { it.titleId == "0100000000010000" })
         assertTrue(report.detected.none { it.relativePath.contains("Eden-migration-final") || it.relativePath.contains("OpenSaveIntegrationTest") })
     }
+
+    @Test
+    fun splitsPpssppSavedataIntoOneGamePerProductCode() {
+        val root = "/storage/emulated/0/PSP"
+        val report = SaveSourceDetector.scanDirectories(
+            root,
+            listOf(
+                root,
+                "$root/SAVEDATA",
+                "$root/SAVEDATA/ULUS10041DATA00",
+                "$root/SAVEDATA/ULUS10041DATA01",
+                "$root/SAVEDATA/NPJH50465SYSTEM",
+                "$root/SAVEDATA/TEST_GAME",
+            ),
+        )
+        val games = GameLibrary.group(report.detected)
+
+        val perGame = games.filterNot { it.isCandidateOnly }.associateBy { it.gameKey }
+        assertEquals(setOf("ppsspp:ULUS10041", "ppsspp:NPJH50465", "ppsspp:TEST_GAME"), perGame.keys)
+        assertEquals(2, perGame.getValue("ppsspp:ULUS10041").locationCount)
+        // The whole folder remains reachable for archives made before the split, but is not backed up by default.
+        val whole = report.detected.single { it.relativePath == "SAVEDATA" }
+        assertTrue(whole.candidate)
+        assertEquals("path:ppsspp::PPSSPP:SAVEDATA", whole.gameKey)
+    }
 }

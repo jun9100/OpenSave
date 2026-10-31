@@ -70,8 +70,10 @@ object LibraryView {
         }
 
     /**
-     * Second line of a compact row: source, last backup time and
-     * `本地 N · 已上传/未上传`. Rows that batch backup skips say why.
+     * Second line of a compact row: last backup time, `本地 N · 已上传/未上传`,
+     * then the source. The status comes first because the landscape list
+     * column is narrow and the ellipsis should cut the long source label.
+     * Rows that batch backup skips say why.
      */
     fun rowSecondary(
         sourceLabel: String,
@@ -79,17 +81,21 @@ object LibraryView {
         batchEligible: Boolean,
         formatTime: (Long) -> String,
     ): String = buildString {
-        append(sourceLabel)
-        if (!batchEligible) append(" · 仅待确认位置")
+        if (!batchEligible) append("仅待确认位置 · ")
         val lastBackup = history?.takeIf { it.localCount > 0 }?.lastBackupAtMillis
         if (history == null || lastBackup == null) {
-            append(" · 从未备份")
+            append("从未备份")
         } else {
-            append(" · ").append(formatTime(lastBackup))
+            append(formatTime(lastBackup))
             append(" · 本地 ").append(history.localCount)
             append(if (history.latestUploaded == true) " · 已上传" else " · 未上传")
         }
+        append(" · ").append(sourceLabel)
     }
+
+    /** No root and no granted folder: nothing beyond built-in shared paths can be scanned. */
+    fun needsFolderGrant(state: SourceUiState): Boolean =
+        state.rootChecked && !state.rootAvailable && !state.hasPersistedPermission
 
     fun backTarget(page: OpenSavePage, gameDetailOpen: Boolean, landscape: Boolean): BackTarget = when {
         page != OpenSavePage.LIBRARY -> BackTarget.LIBRARY

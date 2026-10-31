@@ -82,15 +82,23 @@ class LibraryViewTest {
     @Test
     fun rowSecondaryShowsSourceLastBackupAndUploadState() {
         val time: (Long) -> String = { "T$it" }
-        assertEquals("Eden · 从未备份", LibraryView.rowSecondary("Eden", null, batchEligible = true, formatTime = time))
+        assertEquals("从未备份 · Eden", LibraryView.rowSecondary("Eden", null, batchEligible = true, formatTime = time))
         assertEquals(
-            "Eden · T300 · 本地 2 · 未上传",
+            "T300 · 本地 2 · 未上传 · Eden",
             LibraryView.rowSecondary("Eden", LibraryRowHistory(2, 300, false), batchEligible = true, formatTime = time),
         )
         assertEquals(
-            "Eden · 仅待确认位置 · T5 · 本地 1 · 已上传",
+            "仅待确认位置 · T5 · 本地 1 · 已上传 · Eden",
             LibraryView.rowSecondary("Eden", LibraryRowHistory(1, 5, true), batchEligible = false, formatTime = time),
         )
+    }
+
+    @Test
+    fun folderGrantGuideOnlyWithoutRootAndWithoutGrantedFolder() {
+        assertEquals(false, LibraryView.needsFolderGrant(SourceUiState()))
+        assertEquals(true, LibraryView.needsFolderGrant(SourceUiState(rootChecked = true)))
+        assertEquals(false, LibraryView.needsFolderGrant(SourceUiState(rootChecked = true, rootAvailable = true)))
+        assertEquals(false, LibraryView.needsFolderGrant(SourceUiState(rootChecked = true, hasPersistedPermission = true)))
     }
 
     @Test

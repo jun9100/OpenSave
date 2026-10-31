@@ -58,6 +58,8 @@ object SaveSourceDetector {
         "remote",
     )
     private val broadPcSaveDirectoryNames = setOf("saved", "userdata")
+    // PSP product codes such as ULUS10041 or NPJH50465 prefix every save folder name.
+    private val pspGameIdPattern = Regex("^[A-Z]{4}[0-9]{5}")
     private val androidPersistentDirectoryNames = setOf(
         "files",
         "databases",
@@ -361,9 +363,31 @@ object SaveSourceDetector {
             pair[0].equals("user", ignoreCase = true) && pair[1].equals("save", ignoreCase = true)
         }
         if (isSwitchSaveRoot) return
+        val isPpssppPath = lowerPath.contains("ppsspp") || fullParts.any { it.equals("psp", ignoreCase = true) }
         when {
-            lowerPath.contains("ppsspp") && last == "savedata" ->
-                simpleDetection("ppsspp", relative, "PPSSPP 存档目录", "PPSSPP", found)?.let { found += it }
+            // Each SAVEDATA child is one save slot named <GameID><slot>; slots of
+            // one game are grouped so it can be backed up and restored alone.
+            isPpssppPath && lowerParts.getOrNull(lowerParts.size - 2) == "savedata" -> {
+                val folder = relativeParts.last()
+                val gameId = pspGameIdPattern.find(folder.uppercase())?.value ?: folder
+                if (found.none { it.kind == "ppsspp" && it.relativePath == relative }) {
+                    found += DetectedSave(
+                        kind = "ppsspp",
+                        relativePath = relative,
+                        note = "PPSSPP 游戏存档：$folder",
+                        displayName = "PSP $gameId",
+                        gameKey = "ppsspp:$gameId",
+                    )
+                }
+            }
+
+            // The whole SAVEDATA folder stays available as a candidate so archives
+            // made before per-game detection can still be found and restored.
+            isPpssppPath && last == "savedata" ->
+                simpleDetection("ppsspp", relative, "PPSSPP 整个存档目录（旧版整目录备份）", "PPSSPP 全部存档", found)
+                    // Keep the key the whole folder had before the split so its old archives stay attached.
+                    ?.copy(candidate = true, gameKey = "path:ppsspp::PPSSPP:$relative")
+                    ?.let { found += it }
 
             lowerPath.contains("retroarch") && last in setOf("saves", "states") ->
                 simpleDetection("retroarch", relative, "RetroArch 存档目录", "RetroArch", found)?.let { found += it }

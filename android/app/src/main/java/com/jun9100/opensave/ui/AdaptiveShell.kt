@@ -113,6 +113,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                     listState = libraryListState,
                     modifier = contentModifier,
                     onOpenManagement = { sourceViewModel.showPage(OpenSavePage.MANAGEMENT) },
+                    onPickFolder = { folderPicker.launch(null) },
                 )
                 OpenSavePage.MANAGEMENT -> SourceManagementPage(
                     state = state,

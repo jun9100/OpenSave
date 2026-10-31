@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -83,6 +84,8 @@ internal class LibraryActions(
     val onRestoreRemote: (SourceGameEntry, RemoteSnapshot) -> Unit = { _, _ -> },
     val onSourceDetailsExpanded: (Boolean) -> Unit = {},
     val onOpenManagement: () -> Unit = {},
+    /** Opens the system folder picker to grant a save directory. */
+    val onPickFolder: () -> Unit = {},
 )
 
 @Composable
@@ -92,6 +95,7 @@ internal fun GameLibraryPage(
     listState: LazyListState,
     modifier: Modifier = Modifier,
     onOpenManagement: () -> Unit,
+    onPickFolder: () -> Unit,
 ) {
     val context = LocalContext.current
     val coverRepository = remember(context) { CoverRepository(context.applicationContext) }
@@ -110,6 +114,7 @@ internal fun GameLibraryPage(
             onRestoreRemote = viewModel::requestRemoteGameRestore,
             onSourceDetailsExpanded = viewModel::setSourceDetailsExpanded,
             onOpenManagement = onOpenManagement,
+            onPickFolder = onPickFolder,
         )
     }
     GameLibraryContent(
@@ -293,6 +298,15 @@ private fun GameList(
                     message = "正在扫描已知的游戏与模拟器存档来源。",
                     modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
                     onOpenManagement = actions.onOpenManagement,
+                    onPickFolder = actions.onPickFolder,
+                )
+            }
+            games.isEmpty() && LibraryView.needsFolderGrant(state) -> item(key = "empty") {
+                EmptyGameLibrary(
+                    message = NO_ROOT_GUIDE,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
+                    onOpenManagement = actions.onOpenManagement,
+                    onPickFolder = actions.onPickFolder,
                 )
             }
             games.isEmpty() -> item(key = "empty") {
@@ -300,6 +314,7 @@ private fun GameList(
                     message = "已扫描所有可用来源，但没有发现明确的游戏存档位置。候选目录不会默认纳入备份。",
                     modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
                     onOpenManagement = actions.onOpenManagement,
+                    onPickFolder = actions.onPickFolder,
                 )
             }
             else -> items(visibleGames, key = { it.libraryKey }) { entry ->
@@ -467,11 +482,16 @@ private fun LibrarySummary(
     }
 }
 
+private const val NO_ROOT_GUIDE =
+    "没有 Root 时，OpenSave 只能读取你授权的目录。请添加模拟器的存档目录，" +
+        "例如 PPSSPP 的 PSP 文件夹、RetroArch 或 Dolphin 的存档文件夹，添加后会自动扫描。"
+
 @Composable
 private fun EmptyGameLibrary(
     message: String,
     modifier: Modifier = Modifier,
     onOpenManagement: () -> Unit,
+    onPickFolder: () -> Unit,
 ) {
     Column(
         modifier = modifier.fillMaxWidth().padding(28.dp),
@@ -482,9 +502,14 @@ private fun EmptyGameLibrary(
         Spacer(Modifier.height(14.dp))
         Text(message, style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onOpenManagement) {
-            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-            Text("存档来源", modifier = Modifier.padding(start = 8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onPickFolder) {
+                Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                Text("添加存档目录", modifier = Modifier.padding(start = 8.dp))
+            }
+            OutlinedButton(onClick = onOpenManagement) {
+                Text("全部来源")
+            }
         }
     }
 }
@@ -494,8 +519,9 @@ private fun EmptyGameLibrary(
 private fun EmptyGameLibraryPreview() {
     PreviewSurface {
         EmptyGameLibrary(
-            message = "已扫描所有可用来源，但没有发现明确的游戏存档位置。候选目录不会默认纳入备份。",
+            message = NO_ROOT_GUIDE,
             onOpenManagement = {},
+            onPickFolder = {},
         )
     }
 }

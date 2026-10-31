@@ -776,7 +776,7 @@ class SourceViewModel(
                 val action = if (captured.reused) {
                     "${manifest.gameName}：$UNCHANGED_SKIPPED${reusedUploadSuffix(captured)}$uploadSuffix"
                 } else {
-                    "已备份 ${manifest.gameName}：${captured.record.remoteName}$uploadSuffix"
+                    "已备份 ${manifest.gameName}$uploadSuffix"
                 }
                 state.value = state.value.finished(
                     OpenSavePage.LIBRARY,

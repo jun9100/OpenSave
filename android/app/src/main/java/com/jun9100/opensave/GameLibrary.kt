@@ -79,8 +79,10 @@ object GameLibrary {
                 }
             }.orEmpty()
         }
+        // Candidate-only entries are not games yet; keep them after the real ones.
         .sortedWith(
-            compareBy<SourceGameEntry> { it.game.presentation.primaryName.lowercase(Locale.ROOT) }
+            compareBy<SourceGameEntry> { it.game.isCandidateOnly }
+                .thenBy { it.game.presentation.primaryName.lowercase(Locale.ROOT) }
                 .thenBy { it.sourceLabel.lowercase(Locale.ROOT) }
                 .thenBy { it.game.gameKey },
         )
