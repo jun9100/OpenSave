@@ -65,3 +65,24 @@ fun SourceSelection.requiredAccessCapability(): SourceAccessCapability = when (t
     is SourceSelection.Saf -> SourceAccessCapability.SAF
     is SourceSelection.Root -> SourceAccessCapability.ROOT
 }
+
+/**
+ * A source the last scan proved missing or unreachable (or a Root source after
+ * su was refused) is shown unchecked and cannot be checked. Its stored choice
+ * is kept, so it is picked up again once the directory appears.
+ */
+object SourceOptionPolicy {
+    fun unreachable(
+        option: SaveSourceOption,
+        scannedAccess: SourceAccessStatus?,
+        rootChecked: Boolean,
+        rootAvailable: Boolean,
+    ): Boolean = when {
+        scannedAccess != null -> !scannedAccess.readable
+        else -> option.requiredAccess == SourceAccessCapability.ROOT && rootChecked && !rootAvailable
+    }
+
+    /** Whether the row shows a check mark. */
+    fun displayedChecked(option: SaveSourceOption, unreachable: Boolean): Boolean =
+        option.selected && !unreachable
+}

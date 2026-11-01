@@ -71,7 +71,12 @@ data class GameSaveDeviceIdentity(
     val version: String = "",
 )
 
-open class GameSaveException(message: String, val retryable: Boolean = false) : Exception(message)
+open class GameSaveException(
+    message: String,
+    val retryable: Boolean = false,
+    /** HTTP status of a refused request; 0 when the failure was not an HTTP response. */
+    val httpStatus: Int = 0,
+) : Exception(message)
 
 /** Only a route-level GET 404 permits the old ZIP-head compatibility path. */
 class GameSaveScopesUnsupportedException : GameSaveException(
@@ -80,7 +85,7 @@ class GameSaveScopesUnsupportedException : GameSaveException(
 
 /** A CAS write lost its race; the caller must retain a conflict copy. */
 class GameSaveScopeConflictException(val head: String) : GameSaveException(
-    if (head.isBlank()) "云端当前存档已变化" else "云端当前存档已变化：$head",
+    if (head.isBlank()) "云端当前版本已变化" else "云端当前版本已变化：$head",
 )
 
 /** Native game-save API client. Every request is bearer-authenticated and type-scoped. */
@@ -340,6 +345,7 @@ class GameSaveClient(
         throw GameSaveException(
             "${operation}失败：HTTP ${response.code}${if (body.isBlank()) "" else " - $body"}",
             response.code >= 500 || response.code == 408 || response.code == 429,
+            response.code,
         )
     }
 

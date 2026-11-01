@@ -3,6 +3,7 @@ package com.jun9100.opensave
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -134,6 +135,83 @@ class SafStorage(private val context: Context) {
             )
         }
     }
+
+    /**
+     * [SaveSignature] of each of [relativePaths] (save locations below the tree
+     * [uri]), null for one that is missing or unreadable. Each directory costs
+     * one DocumentsContract children query asking only for id, name, type,
+     * size and time (plan §5.2), instead of a ContentResolver call per file.
+     */
+    suspend fun saveSignatures(uri: Uri, relativePaths: List<String>): Map<String, SaveSignature?> =
+        withContext(Dispatchers.IO) {
+            // Many locations share parents (one SAVEDATA folder per emulator): list each parent once.
+            val listed = mutableMapOf<String, List<ChildDocument>>()
+            val rootId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+            relativePaths.distinct().associateWith { path ->
+                runCatching {
+                    val documentId = resolveDocumentId(uri, rootId ?: return@runCatching null, path, listed)
+                        ?: return@runCatching null
+                    signatureOf(uri, documentId, depth = 0)
+                }.getOrNull()
+            }
+        }
+
+    private fun resolveDocumentId(
+        treeUri: Uri,
+        rootId: String,
+        rawRelativePath: String,
+        listed: MutableMap<String, List<ChildDocument>>,
+    ): String? {
+        var parentId = rootId
+        for (name in GameSnapshotManifest.safeRelativePath(rawRelativePath).split('/')) {
+            val siblings = listed.getOrPut(parentId) { children(treeUri, parentId) }
+            parentId = siblings.firstOrNull { it.name == name && it.isDirectory }?.documentId ?: return null
+        }
+        return parentId
+    }
+
+    private fun signatureOf(treeUri: Uri, documentId: String, depth: Int): SaveSignature {
+        require(depth <= MAX_SIGNATURE_DEPTH) { "存档目录层级过深" }
+        return SaveSignature.combine(
+            children(treeUri, documentId).map { child ->
+                if (child.isDirectory) {
+                    signatureOf(treeUri, child.documentId, depth + 1)
+                } else {
+                    SaveSignature.ofFile(child.sizeBytes, child.modifiedMillis)
+                }
+            },
+        )
+    }
+
+    private fun children(treeUri: Uri, parentDocumentId: String): List<ChildDocument> {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
+        val cursor = context.contentResolver.query(childrenUri, CHILD_COLUMNS, null, null, null)
+            ?: error("目录无法读取")
+        return cursor.use {
+            buildList {
+                while (it.moveToNext()) {
+                    val id = it.getString(0) ?: continue
+                    add(
+                        ChildDocument(
+                            documentId = id,
+                            name = it.getString(1).orEmpty(),
+                            isDirectory = it.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR,
+                            sizeBytes = if (it.isNull(3)) 0L else it.getLong(3),
+                            modifiedMillis = if (it.isNull(4)) 0L else it.getLong(4),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private data class ChildDocument(
+        val documentId: String,
+        val name: String,
+        val isDirectory: Boolean,
+        val sizeBytes: Long,
+        val modifiedMillis: Long,
+    )
 
     suspend fun copyGameLocations(
         uri: Uri,
@@ -466,5 +544,13 @@ class SafStorage(private val context: Context) {
         const val WORKSPACE_DIRECTORY = "source-workspace"
         const val BUFFER_SIZE = 1024 * 1024
         const val MAX_SCAN_DIRECTORIES = 50_000
+        const val MAX_SIGNATURE_DEPTH = 64
+        val CHILD_COLUMNS = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
     }
 }

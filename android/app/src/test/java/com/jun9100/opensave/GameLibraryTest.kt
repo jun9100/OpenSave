@@ -162,4 +162,21 @@ class GameLibraryTest {
         assertTrue(entries.isNotEmpty())
         assertTrue(GameLibrary.batchBackupEligibleEntries(entries).isEmpty())
     }
+
+    @Test
+    fun backupLocationsShareOneDefaultAcrossPaths() {
+        val saves = listOf(
+            DetectedSave(kind = "gamehub-pc", relativePath = "Games/A/Save", note = "save", gameKey = "pc:a"),
+            DetectedSave(kind = "gamehub-pc", relativePath = "Games/A/Maybe", note = "candidate", gameKey = "pc:a", candidate = true),
+            DetectedSave(kind = "android-app", relativePath = "Android/data/com.a", note = "app", gameKey = "pc:a"),
+            DetectedSave(kind = "gamehub-pc", relativePath = ".", note = "root", gameKey = "pc:a"),
+        )
+        val game = DetectedGame("pc:a", GameCatalog.present(saves.first()), saves)
+
+        assertEquals(listOf("Games/A/Save"), GameLibrary.batchBackupLocations(game).map { it.relativePath })
+        assertEquals(
+            listOf("Games/A/Save", "Games/A/Maybe", "Android/data/com.a"),
+            GameLibrary.backupLocations(game, includeCandidates = true, includeAndroidApp = true).map { it.relativePath },
+        )
+    }
 }

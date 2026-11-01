@@ -79,8 +79,10 @@ object GameLibrary {
                 }
             }.orEmpty()
         }
+        // Candidate-only entries are not games yet; keep them after the real ones.
         .sortedWith(
-            compareBy<SourceGameEntry> { it.game.presentation.primaryName.lowercase(Locale.ROOT) }
+            compareBy<SourceGameEntry> { it.game.isCandidateOnly }
+                .thenBy { it.game.presentation.primaryName.lowercase(Locale.ROOT) }
                 .thenBy { it.sourceLabel.lowercase(Locale.ROOT) }
                 .thenBy { it.game.gameKey },
         )
@@ -90,8 +92,22 @@ object GameLibrary {
 
     fun canBatchBackup(game: DetectedGame): Boolean = batchBackupLocations(game).isNotEmpty()
 
-    fun batchBackupLocations(game: DetectedGame): List<DetectedSave> =
-        game.saves.filter { !it.candidate && it.kind != "android-app" }
+    fun batchBackupLocations(game: DetectedGame): List<DetectedSave> = backupLocations(game)
+
+    /**
+     * The one location set shared by single-game, batch and automatic backup
+     * (plan §5.3), so unchanged saves hash the same on every path. Candidates
+     * and Android app data are opt-in; the scan root itself is never a game location.
+     */
+    fun backupLocations(
+        game: DetectedGame,
+        includeCandidates: Boolean = false,
+        includeAndroidApp: Boolean = false,
+    ): List<DetectedSave> = game.saves.filter { save ->
+        (includeCandidates || !save.candidate) &&
+            (includeAndroidApp || save.kind != "android-app") &&
+            save.relativePath != "."
+    }
 
     private fun representative(saves: List<DetectedSave>): DetectedSave = saves.maxWithOrNull(
         compareBy<DetectedSave> { !it.candidate }
