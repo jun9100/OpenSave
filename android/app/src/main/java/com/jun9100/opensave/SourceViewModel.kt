@@ -22,7 +22,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -110,6 +113,8 @@ data class SourceUiState(
     val snapshots: List<SnapshotRecord> = emptyList(),
     val remoteSnapshots: List<RemoteSnapshot> = emptyList(),
     val cloudUpdates: List<GameSaveCloudUpdate> = emptyList(),
+    /** Verdicts of earlier sessions' cloud checks; see [GameStatusResolver.effectiveCloudActions]. */
+    val rememberedCloudVerdicts: Map<String, CloudVerdict> = emptyMap(),
     val activeSourceId: String? = null,
     val page: OpenSavePage = OpenSavePage.LIBRARY,
     val gameSaveEnabled: Boolean = false,
@@ -166,6 +171,7 @@ class SourceViewModel(
     private val autoBackupExclusions = AutoBackupExclusions(application)
     private val operations = GameOperations(application, storage, rootStorage)
     private val reportStore = BatchReportStore.forApp(application)
+    private val cloudVerdictStore = CloudVerdictStore(application)
     private var appliedFindingsId: String? = null
     private val signatureReader = SaveSignatureReader(storage, rootStorage)
     private var signatureJob: Job? = null
@@ -200,7 +206,19 @@ class SourceViewModel(
             copy(
                 lastBatchReport = runCatching { reportStore.latest() }.getOrNull(),
                 autoBackupExcluded = autoBackupExclusions.excluded(),
+                rememberedCloudVerdicts = runCatching { cloudVerdictStore.load() }.getOrDefault(emptyMap()),
             )
+        }
+        // Remember what cloud checks concluded so conflicts survive a restart.
+        // Only a change of the live verdicts is written: a later backup or
+        // restore makes the remembered one stale through its record id instead.
+        viewModelScope.launch {
+            state.map { it.cloudUpdates }.distinctUntilChanged().drop(1).collect { live ->
+                val verdicts = GameStatusResolver.verdictsToRemember(live, state.value.snapshots)
+                if (verdicts.isEmpty()) return@collect
+                withContext(Dispatchers.IO) { runCatching { cloudVerdictStore.update(verdicts = verdicts) } }
+                updateState { copy(rememberedCloudVerdicts = rememberedCloudVerdicts + verdicts) }
+            }
         }
         viewModelScope.launch {
             BatchCenter.running.collect { progress ->
@@ -218,8 +236,11 @@ class SourceViewModel(
             BatchCenter.cloudFindings.collect { findings ->
                 if (findings == null || findings.batchId == appliedFindingsId) return@collect
                 appliedFindingsId = findings.batchId
+                // A checked game's old verdict is replaced, or dropped when it is now up to date.
+                withContext(Dispatchers.IO) { runCatching { cloudVerdictStore.update(removedKeys = findings.checkedKeys) } }
                 updateState {
                     copy(
+                        rememberedCloudVerdicts = rememberedCloudVerdicts - findings.checkedKeys,
                         cloudUpdates = mergeCloudUpdates(
                             cloudUpdates.filterNot { it.entry.libraryKey in findings.checkedKeys },
                             findings.updates,
@@ -1013,7 +1034,7 @@ class SourceViewModel(
         entries = GameLibrary.sourceGames(current.sourceScans),
         snapshots = current.snapshots,
         signatures = current.saveSignatures,
-        cloudActions = GameStatusResolver.cloudActions(current.cloudUpdates),
+        cloudActions = GameStatusResolver.effectiveCloudActions(current.cloudUpdates, current.rememberedCloudVerdicts, current.snapshots),
         cloudEnabled = current.gameSaveEnabled,
     )
 

@@ -98,6 +98,39 @@ object GameStatusResolver {
         .groupBy { it.entry.libraryKey }
         .mapValues { (_, forGame) -> forGame.map(GameSaveCloudUpdate::action).minBy(::cloudPriority) }
 
+    /**
+     * Cloud actions for the status: the live verdicts of this session, plus the
+     * remembered ones from earlier sessions that still describe the newest
+     * local snapshot. Live verdicts win.
+     */
+    fun effectiveCloudActions(
+        live: List<GameSaveCloudUpdate>,
+        remembered: Map<String, CloudVerdict>,
+        snapshots: List<SnapshotRecord>,
+    ): Map<String, GameSaveRemoteAction> {
+        val latest = latestRecordIds(snapshots)
+        val stillValid = remembered
+            .filter { (key, verdict) -> verdict.action != GameSaveRemoteAction.UP_TO_DATE && latest[key].orEmpty() == verdict.recordId }
+            .mapValues { it.value.action }
+        return stillValid + cloudActions(live)
+    }
+
+    /** Verdicts worth remembering from [live]: everything but "up to date", tied to the newest local snapshot. */
+    fun verdictsToRemember(
+        live: List<GameSaveCloudUpdate>,
+        snapshots: List<SnapshotRecord>,
+    ): Map<String, CloudVerdict> {
+        val latest = latestRecordIds(snapshots)
+        return cloudActions(live)
+            .filterValues { it != GameSaveRemoteAction.UP_TO_DATE }
+            .mapValues { (key, action) -> CloudVerdict(action, latest[key].orEmpty()) }
+    }
+
+    private fun latestRecordIds(snapshots: List<SnapshotRecord>): Map<String, String> = snapshots
+        .filter { it.gameKey != null && !it.isSafetyCopy }
+        .groupBy { "${it.sourceId}::${it.gameKey}" }
+        .mapValues { (_, records) -> records.maxBy(SnapshotRecord::createdAtMillis).id }
+
     private fun cloudPriority(action: GameSaveRemoteAction): Int = when (action) {
         GameSaveRemoteAction.REVIEW_REQUIRED -> 0
         GameSaveRemoteAction.AUTO_RESTORE -> 1

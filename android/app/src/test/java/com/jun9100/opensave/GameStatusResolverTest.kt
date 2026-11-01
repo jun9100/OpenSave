@@ -116,6 +116,51 @@ class GameStatusResolverTest {
         cloudEnabled: Boolean = true,
     ) = GameStatusResolver.resolve(latest, current, cloud, cloudEnabled)
 
+    @Test
+    fun rememberedVerdictHoldsUntilANewerSnapshotAndLiveOnesWin() {
+        val key = "$sourceId::pc:a"
+        val first = record(uploaded = true, signature = "s1:1:1:1", createdAt = 1)
+        val remembered = mapOf(key to CloudVerdict(GameSaveRemoteAction.REVIEW_REQUIRED, first.id))
+
+        assertEquals(
+            mapOf(key to GameSaveRemoteAction.REVIEW_REQUIRED),
+            GameStatusResolver.effectiveCloudActions(emptyList(), remembered, listOf(first)),
+        )
+        // A later backup or restore describes different local saves: the verdict is stale.
+        val second = record(uploaded = true, signature = "s1:1:2:1", createdAt = 2)
+        assertTrue(GameStatusResolver.effectiveCloudActions(emptyList(), remembered, listOf(first, second)).isEmpty())
+        // A safety copy is not a newer description of the saves.
+        val safety = record(uploaded = false, signature = "", createdAt = 3, comment = "恢复前安全副本")
+        assertEquals(
+            mapOf(key to GameSaveRemoteAction.REVIEW_REQUIRED),
+            GameStatusResolver.effectiveCloudActions(emptyList(), remembered, listOf(first, safety)),
+        )
+        // "Up to date" is never kept, and a game never backed up keys on an empty record id.
+        val neverBackedUp = mapOf("$sourceId::pc:b" to CloudVerdict(GameSaveRemoteAction.AUTO_RESTORE, ""))
+        assertEquals(
+            mapOf("$sourceId::pc:b" to GameSaveRemoteAction.AUTO_RESTORE),
+            GameStatusResolver.effectiveCloudActions(
+                emptyList(),
+                neverBackedUp + (key to CloudVerdict(GameSaveRemoteAction.UP_TO_DATE, first.id)),
+                listOf(first),
+            ),
+        )
+    }
+
+    @Test
+    fun verdictStoreRoundTripsAndSkipsUnknownActions() {
+        val verdicts = mapOf(
+            "a::x" to CloudVerdict(GameSaveRemoteAction.REVIEW_REQUIRED, "r1"),
+            "b::y" to CloudVerdict(GameSaveRemoteAction.AUTO_RESTORE, ""),
+        )
+        assertEquals(verdicts, CloudVerdictStore.decode(CloudVerdictStore.encode(verdicts)))
+        assertEquals(
+            mapOf("a::x" to CloudVerdict(GameSaveRemoteAction.WAIT_FOR_REMOTE, "r")),
+            CloudVerdictStore.decode("""{"a::x":{"action":"WAIT_FOR_REMOTE","record":"r"},"b::y":{"action":"GONE"}}"""),
+        )
+        assertTrue(CloudVerdictStore.decode("not json").isEmpty())
+    }
+
     private fun record(
         uploaded: Boolean,
         signature: String,

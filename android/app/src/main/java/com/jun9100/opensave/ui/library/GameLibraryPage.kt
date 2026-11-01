@@ -234,12 +234,12 @@ internal fun GameLibraryContent(
     val games = remember(state.sourceScans) { GameLibrary.sourceGames(state.sourceScans) }
     val typeOptions = remember(games) { LibraryView.typeOptions(games) }
     val typeId = LibraryView.effectiveTypeId(state.libraryTypeFilter, typeOptions)
-    val statuses = remember(games, state.snapshots, state.saveSignatures, state.cloudUpdates, state.gameSaveEnabled) {
+    val statuses = remember(games, state.snapshots, state.saveSignatures, state.cloudUpdates, state.rememberedCloudVerdicts, state.gameSaveEnabled) {
         GameStatusResolver.resolveAll(
             entries = games,
             snapshots = state.snapshots,
             signatures = state.saveSignatures,
-            cloudActions = GameStatusResolver.cloudActions(state.cloudUpdates),
+            cloudActions = GameStatusResolver.effectiveCloudActions(state.cloudUpdates, state.rememberedCloudVerdicts, state.snapshots),
             cloudEnabled = state.gameSaveEnabled,
         )
     }
