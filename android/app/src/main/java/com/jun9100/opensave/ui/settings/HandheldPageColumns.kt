@@ -67,6 +67,7 @@ internal fun HandheldPageColumns(
     val leftScroll = rememberScrollState()
     val rightScroll = rememberScrollState()
     var rightHasFocus by remember { mutableStateOf(false) }
+    var pageHasFocus by remember { mutableStateOf(false) }
     var commandsOpen by rememberSaveable { mutableStateOf(false) }
     val activeScroll = if (landscape && rightHasFocus) rightScroll else leftScroll
 
@@ -76,12 +77,13 @@ internal fun HandheldPageColumns(
         val restored = landscape && lastFocusRight && rightFirstControl.tryRequestFocus()
         if (!restored && !firstControl.tryRequestFocus()) rightFirstControl.tryRequestFocus()
     }
-    // Entering the page with the pad (L1/R1, rail) starts on its first control:
-    // focus left over on the rail would otherwise keep the effect above idle.
-    LaunchedEffect(Unit) {
-        if (!handheld) return@LaunchedEffect
+    // Entering the page with the pad (L1/R1, rail), or waking pad mode after
+    // touch, starts on the page's control: the system may already have put
+    // focus on the rail, which would otherwise keep the effect above idle.
+    LaunchedEffect(handheld) {
+        if (!handheld || pageHasFocus || commandsOpen || dialogOpen) return@LaunchedEffect
         withFrameNanos { }
-        val onRight = landscape && startOnRight && rightFirstControl.tryRequestFocus()
+        val onRight = landscape && (startOnRight || lastFocusRight) && rightFirstControl.tryRequestFocus()
         if (!onRight && !firstControl.tryRequestFocus()) rightFirstControl.tryRequestFocus()
     }
     HandheldCommandEffect { command ->
@@ -106,7 +108,7 @@ internal fun HandheldPageColumns(
 
     if (landscape) {
         Row(
-            modifier = modifier.padding(horizontal = 12.dp),
+            modifier = modifier.onFocusChanged { pageHasFocus = it.hasFocus }.padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(
@@ -137,7 +139,10 @@ internal fun HandheldPageColumns(
         }
     } else {
         Column(
-            modifier = modifier.verticalScroll(leftScroll).padding(horizontal = 20.dp, vertical = 16.dp),
+            modifier = modifier
+                .onFocusChanged { pageHasFocus = it.hasFocus }
+                .verticalScroll(leftScroll)
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             left(firstControl)
