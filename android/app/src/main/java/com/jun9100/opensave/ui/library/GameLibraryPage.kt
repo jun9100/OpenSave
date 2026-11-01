@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FilterAltOff
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.Button
@@ -62,6 +63,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,12 +73,14 @@ import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.GamePresentation
 import com.jun9100.opensave.GameStatusResolver
 import com.jun9100.opensave.GameSyncStatus
+import com.jun9100.opensave.LibraryEmptyState
 import com.jun9100.opensave.LibraryStatusFilter
 import com.jun9100.opensave.LibraryRowHistory
 import com.jun9100.opensave.LibrarySelection
 import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.OpenSavePage
 import com.jun9100.opensave.PageMessage
+import com.jun9100.opensave.R
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SourceGameEntry
@@ -150,6 +154,9 @@ internal class LibraryActions(
     val onCancelBatch: () -> Unit = {},
     val onOpenBatchReport: () -> Unit = {},
     val onSetAutoBackup: (String, Boolean) -> Unit = { _, _ -> },
+    /** "清除筛选" of the empty state: back to every type and status. */
+    val onClearFilters: () -> Unit = {},
+    val onOpenWizard: () -> Unit = {},
 )
 
 /**
@@ -207,6 +214,8 @@ internal fun GameLibraryPage(
             onCancelBatch = viewModel::cancelBatch,
             onOpenBatchReport = viewModel::openBatchReport,
             onSetAutoBackup = viewModel::setGameAutoBackup,
+            onClearFilters = viewModel::clearLibraryFilters,
+            onOpenWizard = viewModel::openWizard,
         )
     }
     GameLibraryContent(
@@ -732,40 +741,30 @@ private fun GameList(
                 )
             }
         }
-        when {
-            state.sourceScans.isEmpty() -> item(key = "empty") {
+        val emptyState = LibraryView.emptyState(
+            scanned = state.scanRevision > 0,
+            readableSources = state.sourceScans.count { it.access.readable },
+            gameCount = games.size,
+            visibleCount = visibleGames.size,
+        )
+        when (emptyState) {
+            LibraryEmptyState.SCANNING, LibraryEmptyState.NO_ACCESS, LibraryEmptyState.NOTHING_FOUND -> item(key = "empty") {
                 EmptyGameLibrary(
-                    message = "正在扫描已知的游戏与模拟器存档来源。",
+                    state = emptyState,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
                     onOpenSources = actions.onOpenSources,
                     onPickFolder = actions.onPickFolder,
+                    onOpenWizard = actions.onOpenWizard,
                 )
             }
-            games.isEmpty() && LibraryView.needsFolderGrant(state) -> item(key = "empty") {
-                EmptyGameLibrary(
-                    message = NO_ROOT_GUIDE,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
-                    onOpenSources = actions.onOpenSources,
-                    onPickFolder = actions.onPickFolder,
+            LibraryEmptyState.FILTERED_OUT -> item(key = "empty") {
+                val typeLabel = games.firstOrNull { it.saveType.id == state.libraryTypeFilter }?.saveType?.label ?: "全部类型"
+                FilteredOutLibrary(
+                    filterSummary = "$typeLabel · ${state.libraryStatusFilter.label}",
+                    onClearFilters = actions.onClearFilters,
                 )
             }
-            games.isEmpty() -> item(key = "empty") {
-                EmptyGameLibrary(
-                    message = "已扫描所有可用来源，但没有发现明确的游戏存档位置。候选目录不会默认纳入备份。",
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
-                    onOpenSources = actions.onOpenSources,
-                    onPickFolder = actions.onPickFolder,
-                )
-            }
-            visibleGames.isEmpty() -> item(key = "empty") {
-                Text(
-                    "当前筛选下没有游戏。",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            else -> items(visibleGames, key = { it.libraryKey }) { entry ->
+            null -> items(visibleGames, key = { it.libraryKey }) { entry ->
                 val key = entry.libraryKey
                 if (metadataRepository != null) {
                     LaunchedEffect(key) {
@@ -973,7 +972,7 @@ private fun LibrarySummary(
                     append("$availableSources 个来源已扫描")
                     if (skippedSources.isNotEmpty()) append(" · 跳过 ${skippedSources.size} 个")
                     if (gameHubLocations > 0) append(" · PC 容器 $gameHubLocations 个位置")
-                    if (candidateLocations > 0) append(" · 候选 $candidateLocations 个")
+                    if (candidateLocations > 0) append(" · 待确认位置 $candidateLocations 个")
                 },
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
@@ -998,7 +997,7 @@ private fun LibrarySummary(
             ) {
                 state.sourceScans.forEach { source ->
                     val detail = source.scan?.let { scan ->
-                        "${scan.gameCount} 款已识别 · ${scan.detected.size} 个位置"
+                        "${scan.gameCount} 款游戏 · ${scan.detected.size} 个存档位置"
                     } ?: "跳过 · ${source.skippedReason}"
                     Text(
                         "${source.label} · ${sourceAccessLabel(source.access)} · $detail",
@@ -1034,17 +1033,22 @@ private fun LibrarySummary(
     }
 }
 
-private const val NO_ROOT_GUIDE =
-    "没有 Root 时，OpenSave 只能读取你授权的目录。请添加模拟器的存档目录，" +
-        "例如 PPSSPP 的 PSP 文件夹、RetroArch 或 Dolphin 的存档文件夹，添加后会自动扫描。"
-
+/** No games at all, by [state]: scanning, nothing readable yet, or nothing found. */
 @Composable
 private fun EmptyGameLibrary(
-    message: String,
+    state: LibraryEmptyState,
     modifier: Modifier = Modifier,
     onOpenSources: () -> Unit,
     onPickFolder: () -> Unit,
+    onOpenWizard: () -> Unit,
 ) {
+    val message = stringResource(
+        when (state) {
+            LibraryEmptyState.SCANNING -> R.string.library_empty_scanning
+            LibraryEmptyState.NO_ACCESS -> R.string.library_empty_no_access
+            else -> R.string.library_empty_nothing_found
+        },
+    )
     Column(
         modifier = modifier.fillMaxWidth().padding(28.dp),
         verticalArrangement = Arrangement.Center,
@@ -1057,11 +1061,36 @@ private fun EmptyGameLibrary(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = onPickFolder, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
                 Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                Text("添加存档目录", modifier = Modifier.padding(start = 8.dp))
+                Text(stringResource(R.string.library_empty_add_folder), modifier = Modifier.padding(start = 8.dp))
             }
             OutlinedButton(onClick = onOpenSources, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
-                Text("全部来源")
+                Text(stringResource(R.string.library_empty_sources))
             }
+            if (state == LibraryEmptyState.NO_ACCESS) {
+                OutlinedButton(onClick = onOpenWizard, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
+                    Text(stringResource(R.string.library_empty_wizard))
+                }
+            }
+        }
+    }
+}
+
+/** Games exist, but the filters hide them all. */
+@Composable
+private fun FilteredOutLibrary(filterSummary: String, onClearFilters: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            stringResource(R.string.library_empty_filtered, filterSummary),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = onClearFilters, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
+            Icon(Icons.Outlined.FilterAltOff, contentDescription = null)
+            Text(stringResource(R.string.library_empty_clear_filters), modifier = Modifier.padding(start = 8.dp))
         }
     }
 }
@@ -1071,9 +1100,10 @@ private fun EmptyGameLibrary(
 private fun EmptyGameLibraryPreview() {
     PreviewSurface {
         EmptyGameLibrary(
-            message = NO_ROOT_GUIDE,
+            state = LibraryEmptyState.NO_ACCESS,
             onOpenSources = {},
             onPickFolder = {},
+            onOpenWizard = {},
         )
     }
 }

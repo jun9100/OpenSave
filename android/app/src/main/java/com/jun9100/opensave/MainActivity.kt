@@ -1,18 +1,24 @@
 package com.jun9100.opensave
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.jun9100.opensave.activity.ActivityNotifications
 import com.jun9100.opensave.ui.OpenSaveScreen
 import com.jun9100.opensave.ui.input.HandheldInput
 import com.jun9100.opensave.ui.input.ProvideHandheldInput
 
 class MainActivity : ComponentActivity() {
     private val handheld = HandheldInput()
+
+    /** The same instance OpenSaveScreen gets from viewModel(): this activity is the owner of both. */
+    private val sourceViewModel: SourceViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Draw behind the status and gesture bars; Compose pads with the insets.
@@ -21,9 +27,23 @@ class MainActivity : ComponentActivity() {
         setContent {
             OpenSaveTheme {
                 ProvideHandheldInput(handheld) {
-                    OpenSaveScreen()
+                    OpenSaveScreen(sourceViewModel)
                 }
             }
+        }
+        if (savedInstanceState == null) openRequestedPage(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openRequestedPage(intent)
+    }
+
+    /** A "需要处理" notification opens "同步与任务". */
+    private fun openRequestedPage(intent: Intent?) {
+        if (intent?.getStringExtra(ActivityNotifications.EXTRA_OPEN_PAGE) == ActivityNotifications.PAGE_SYNC) {
+            intent.removeExtra(ActivityNotifications.EXTRA_OPEN_PAGE)
+            sourceViewModel.openSyncTasks()
         }
     }
 

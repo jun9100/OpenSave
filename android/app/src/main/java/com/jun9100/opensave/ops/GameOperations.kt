@@ -282,7 +282,7 @@ internal class GameOperations(
                 cloudUpdate = decision
                     ?.takeUnless { it.action == GameSaveRemoteAction.UP_TO_DATE }
                     ?.let { GameSaveCloudUpdate(entry, nativeDecision = it) }
-                syncNotice = "本机版本已保留为云端冲突副本，当前存档没有被覆盖"
+                syncNotice = "本机版本已保留为冲突副本，云端当前版本没有被覆盖"
             }
         }.onFailure { error ->
             if (error !is GameSaveScopesUnsupportedException) {
@@ -329,7 +329,7 @@ internal class GameOperations(
                 else -> {
                     cloudUpdate = GameSaveCloudUpdate(entry, legacyDecision = decision)
                     val device = decision.candidate?.head?.deviceName?.let { "$it 的" }.orEmpty()
-                    syncNotice = "检测到${device}跨设备版本，当前快照已上传但未更新云端当前存档"
+                    syncNotice = "检测到${device}的跨设备更新：本次版本已上传，但没有成为云端当前版本"
                 }
             }
         }
@@ -348,7 +348,7 @@ internal class GameOperations(
         require(config.ready) { "未启用 game-save 云端同步" }
         require(expectedHead.isNotBlank()) { "没有可替换的云端当前版本" }
         val saves = GameLibrary.batchBackupLocations(entry.game)
-        require(saves.isNotEmpty()) { "这款游戏没有已识别的存档位置" }
+        require(saves.isNotEmpty()) { "这款游戏没有已确认的存档位置" }
         val manifest = GameSnapshotManifest.from(entry.game, saves)
         val cloudIdentity = GameCloudNaming.identity(entry.source, entry.sourceId, entry.game.copy(saves = saves))
         val captured = captureLocked(entry, manifest, publish = false, forceNew = true)
@@ -544,7 +544,7 @@ internal class GameOperations(
                 val identity = GameCloudNaming.identity(source, sourceId, requestedGame)
                 require(identity.desktopCompatible) { "此云端快照不是可跨端恢复的 Switch 单存档快照" }
                 val save = GameLibrary.batchBackupLocations(requestedGame).singleOrNull()
-                    ?: error("当前 Switch 游戏没有唯一的已识别存档位置")
+                    ?: error("当前 Switch 游戏没有唯一的已确认存档位置")
                 val portable = File(workingRoot, "portable-switch-save")
                 require(extractedRoot.renameTo(portable)) { "无法准备 Switch 存档恢复目录" }
                 require(extractedRoot.mkdirs()) { "无法创建 Switch 存档恢复目录" }
@@ -588,7 +588,7 @@ internal class GameOperations(
                     sizeBytes = safetyArchive.length(),
                     sha256 = safetyBuild.archiveSha256,
                     manifestHash = safetyFingerprint.manifestHash,
-                    comment = "恢复前安全副本",
+                    comment = "恢复前安全快照",
                     gameKey = manifest.gameKey,
                     gameName = manifest.gameName,
                     saveType = safetyIdentity.saveType.id,

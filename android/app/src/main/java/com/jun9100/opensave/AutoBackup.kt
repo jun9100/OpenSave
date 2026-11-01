@@ -8,6 +8,10 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.jun9100.opensave.activity.ActivityEntry
+import com.jun9100.opensave.activity.ActivityKind
+import com.jun9100.opensave.activity.ActivityLevel
+import com.jun9100.opensave.activity.ActivityRecorder
 import com.jun9100.opensave.batch.BatchCenter
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -78,6 +82,20 @@ internal data class AutoBackupFingerprint(
     val contentHash: String = "",
 )
 
+/** What one auto-backup run did, game by game. */
+internal data class AutoBackupTally(
+    val games: Int = 0,
+    val uploaded: Int = 0,
+    val restored: Int = 0,
+    val unchanged: Int = 0,
+    /** (game, reason) of games waiting for a decision in "同步与任务". */
+    val deferred: List<Pair<String, String>> = emptyList(),
+    /** (game, reason) of games whose backup or upload failed. */
+    val failed: List<Pair<String, String>> = emptyList(),
+    /** "来源：原因" of sources that could not be scanned. */
+    val scanFailures: List<String> = emptyList(),
+)
+
 internal object AutoBackupPolicy {
     /**
      * Same games and, through [GameLibrary.batchBackupLocations], the same
@@ -98,6 +116,50 @@ internal object AutoBackupPolicy {
      * not retry, whose backoff would spend the retry budget) while one runs.
      */
     fun shouldYield(batchRunning: Boolean): Boolean = batchRunning
+
+    /** The 动态 line of one worker run (plan §7 阶段 4: every run can be found in the log). */
+    fun runEntry(tally: AutoBackupTally, atMillis: Long = System.currentTimeMillis()): ActivityEntry {
+        val counts = BatchSummary.counts(
+            listOf(
+                "已上传" to tally.uploaded,
+                "跨设备恢复" to tally.restored,
+                "无变化" to tally.unchanged,
+                "待确认" to tally.deferred.size,
+                "失败" to tally.failed.size,
+            ),
+        )
+        val text = when {
+            tally.games == 0 && tally.scanFailures.isEmpty() -> "自动备份：没有可备份的游戏"
+            counts.isEmpty() -> "自动备份：没有处理任何游戏"
+            else -> "自动备份：$counts"
+        }
+        val level = when {
+            tally.failed.isNotEmpty() || tally.scanFailures.isNotEmpty() -> ActivityLevel.WARNING
+            tally.deferred.isNotEmpty() -> ActivityLevel.WARNING
+            tally.uploaded > 0 || tally.restored > 0 -> ActivityLevel.SUCCESS
+            else -> ActivityLevel.INFO
+        }
+        val detail = (tally.failed.map { (name, reason) -> "$name：$reason" } + tally.scanFailures)
+            .take(MAX_DETAIL_LINES)
+            .joinToString("；")
+        return ActivityEntry.create(ActivityKind.AUTO_BACKUP, level, text, detail, atMillis = atMillis)
+    }
+
+    /** A worker round that did not run its games, with why. */
+    fun skippedEntry(reason: String, atMillis: Long = System.currentTimeMillis()): ActivityEntry =
+        ActivityEntry.create(ActivityKind.AUTO_BACKUP, ActivityLevel.INFO, "自动备份已跳过：$reason", atMillis = atMillis)
+
+    /** A worker round that stopped before its games, with why. */
+    fun failedEntry(reason: String, retrying: Boolean, atMillis: Long = System.currentTimeMillis()): ActivityEntry =
+        ActivityEntry.create(
+            ActivityKind.AUTO_BACKUP,
+            ActivityLevel.ERROR,
+            if (retrying) "自动备份失败，稍后重试" else "自动备份失败",
+            reason,
+            atMillis = atMillis,
+        )
+
+    private const val MAX_DETAIL_LINES = 5
 
     fun fingerprint(workspace: File): AutoBackupFingerprint {
         require(workspace.isDirectory) { "自动备份工作区不存在" }
@@ -129,9 +191,19 @@ class AutoBackupWorker(
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParameters) {
     override suspend fun doWork(): Result {
-        if (AutoBackupPolicy.shouldYield(BatchCenter.isRunning)) return Result.success()
-        return backUpChangedGames()
+        if (AutoBackupPolicy.shouldYield(BatchCenter.isRunning)) {
+            record(AutoBackupPolicy.skippedEntry("有批量任务正在运行"))
+            return Result.success()
+        }
+        // An unexpected error still fails the run as before; it is only written down first.
+        return runCatching { backUpChangedGames() }.getOrElse { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            record(AutoBackupPolicy.failedEntry(error.message ?: error.javaClass.simpleName, retrying = false))
+            Result.failure()
+        }
     }
+
+    private fun record(entry: ActivityEntry) = ActivityRecorder.record(applicationContext, entry, notify = true)
 
     /**
      * Each game takes the storage lock on its own (plan §5.5), so a user
@@ -140,7 +212,10 @@ class AutoBackupWorker(
      */
     private suspend fun backUpChangedGames(): Result {
         val config = GameSaveConfigStore(applicationContext).load()
-        if (!config.enabled || config.serviceUrl.isBlank() || config.syncKey.isBlank()) return Result.success()
+        if (!config.enabled || config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
+            record(AutoBackupPolicy.skippedEntry("game-save 未配置或未开启“新版本自动上传”"))
+            return Result.success()
+        }
 
         val storage = SafStorage(applicationContext)
         val rootStorage = RootStorage(applicationContext)
@@ -152,27 +227,38 @@ class AutoBackupWorker(
         // turning an offline device's progress into the new cloud current.
         val remoteSnapshots = client.list().getOrElse { error ->
             val retryable = (error as? GameSaveException)?.retryable ?: true
-            return if (retryable && runAttemptCount < MAX_RETRIES) Result.retry() else Result.success()
+            val retrying = retryable && runAttemptCount < MAX_RETRIES
+            record(AutoBackupPolicy.failedEntry("无法读取云端：${error.message ?: "未知错误"}", retrying))
+            return if (retrying) Result.retry() else Result.success()
         }
         val headReader = GameSaveHeadReader(applicationContext, config, client)
         var retryableFailure = false
+        var tally = AutoBackupTally()
+        val verdicts = mutableMapOf<String, CloudVerdict>()
 
         val androidGames = installedGameCatalog.allApps()
         val excluded = AutoBackupExclusions(applicationContext).excluded()
-        for (source in backupSources(storage, rootStorage, installedGameCatalog)) {
-            val scan = scanSource(source, storage, rootStorage, androidGames)
+        val sources = backupSources(storage, rootStorage, installedGameCatalog)
+        for (source in sources) {
+            val scan = scanSource(source.source, storage, rootStorage, androidGames)
             if (scan.isFailure) {
                 retryableFailure = true
+                tally = tally.copy(scanFailures = tally.scanFailures + "${source.label}：${scan.exceptionOrNull()?.message ?: "扫描失败"}")
                 continue
             }
-            val sourceId = SnapshotNaming.sourceId(source.idSeed)
+            val sourceId = SnapshotNaming.sourceId(source.source.idSeed)
             val games = AutoBackupPolicy.includedGames(sourceId, AutoBackupPolicy.eligibleGames(scan.getOrThrow()), excluded)
             for (game in games) {
-                if (AutoBackupPolicy.shouldYield(BatchCenter.isRunning)) return Result.success()
+                if (AutoBackupPolicy.shouldYield(BatchCenter.isRunning)) {
+                    finishRun(tally, verdicts, repository)
+                    return Result.success()
+                }
+                tally = tally.copy(games = tally.games + 1)
+                val name = game.presentation.primaryName
                 when (val outcome = runCatching {
                     StorageOperationLock.withLock(StorageOperationLock.AUTO_BACKUP) {
                         backupGame(
-                            source = source,
+                            source = source.source,
                             sourceId = sourceId,
                             game = game,
                             repository = repository,
@@ -185,13 +271,57 @@ class AutoBackupWorker(
                         )
                     }
                 }.getOrElse { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) }) {
-                    GameBackupOutcome.Skipped, GameBackupOutcome.Uploaded, GameBackupOutcome.Restored -> Unit
-                    is GameBackupOutcome.UploadFailed -> retryableFailure = retryableFailure || outcome.error.retryable
-                    is GameBackupOutcome.Deferred -> retryableFailure = retryableFailure || outcome.retryable
+                    GameBackupOutcome.Skipped -> tally = tally.copy(unchanged = tally.unchanged + 1)
+                    GameBackupOutcome.Uploaded -> tally = tally.copy(uploaded = tally.uploaded + 1)
+                    GameBackupOutcome.Restored -> {
+                        tally = tally.copy(restored = tally.restored + 1)
+                        record(
+                            ActivityEntry.create(
+                                ActivityKind.RESTORE,
+                                ActivityLevel.SUCCESS,
+                                "已在后台恢复 $name 的跨设备更新",
+                                "恢复前的存档已保存为安全快照",
+                            ),
+                        )
+                    }
+                    is GameBackupOutcome.UploadFailed -> {
+                        retryableFailure = retryableFailure || outcome.error.retryable
+                        tally = tally.copy(failed = tally.failed + (name to (outcome.error.message ?: "上传失败")))
+                    }
+                    is GameBackupOutcome.Deferred -> {
+                        retryableFailure = retryableFailure || outcome.retryable
+                        tally = tally.copy(deferred = tally.deferred + (name to outcome.reason))
+                        // Conflicts and newer cloud versions wait for the user (plan Q7): remember the
+                        // verdict so "同步与任务" lists the game, and tell the user once.
+                        outcome.action?.let { action ->
+                            verdicts["$sourceId::${game.gameKey}"] = CloudVerdict(action, "")
+                            record(
+                                ActivityEntry.create(
+                                    ActivityKind.CLOUD_CHECK,
+                                    ActivityLevel.WARNING,
+                                    if (action == GameSaveRemoteAction.REVIEW_REQUIRED) "$name：云端有冲突，需要你确认" else "$name：云端有较新的版本，等待恢复",
+                                    "${outcome.reason}。在“同步与任务”中选择用云端覆盖或保留本机。",
+                                    needsAction = true,
+                                ),
+                            )
+                        }
+                    }
                 }
             }
         }
+        finishRun(tally, verdicts, repository)
         return if (retryableFailure && runAttemptCount < MAX_RETRIES) Result.retry() else Result.success()
+    }
+
+    /** Writes the run's 动态 line and the cloud verdicts it found. */
+    private fun finishRun(tally: AutoBackupTally, verdicts: Map<String, CloudVerdict>, repository: SnapshotRepository) {
+        if (verdicts.isNotEmpty()) {
+            // Tied to each game's newest ordinary snapshot, like the verdicts of a check in the app.
+            val records = runCatching { repository.list() }.getOrDefault(emptyList())
+            val tied = verdicts.mapValues { (key, verdict) -> verdict.copy(recordId = GameStatusResolver.latestRecordId(records, key)) }
+            runCatching { CloudVerdictStore(applicationContext).update(verdicts = tied) }
+        }
+        record(AutoBackupPolicy.runEntry(tally))
     }
 
     /** Includes every selected source OpenSave can read; a missing preset is simply skipped. */
@@ -199,8 +329,34 @@ class AutoBackupWorker(
         storage: SafStorage,
         rootStorage: RootStorage,
         installedGameCatalog: InstalledGameCatalog,
-    ): List<SourceSelection> =
-        ScheduledSources.readableSources(applicationContext, storage, rootStorage, installedGameCatalog).map { it.source }
+    ): List<SaveSourceOption> = ScheduledSources.readableSources(
+        applicationContext,
+        storage,
+        rootStorage,
+        installedGameCatalog,
+        onRootUnavailable = { reason ->
+            record(
+                ActivityEntry.create(
+                    ActivityKind.PERMISSION,
+                    ActivityLevel.WARNING,
+                    "后台没有获得 Root 权限，本次只备份了授权目录",
+                    "请在 Magisk 中把 OpenSave 的超级用户授权设为“永久”：后台任务无法弹出授权提示。（$reason）",
+                    needsAction = true,
+                ),
+            )
+        },
+        onFoldersLost = { labels ->
+            record(
+                ActivityEntry.create(
+                    ActivityKind.PERMISSION,
+                    ActivityLevel.WARNING,
+                    "${labels.size} 个授权目录的权限已失效，已跳过",
+                    labels.joinToString("、") + "；请在“来源”页重新添加授权目录。",
+                    needsAction = true,
+                ),
+            )
+        },
+    )
 
     private suspend fun scanSource(
         source: SourceSelection,
@@ -257,11 +413,16 @@ class AutoBackupWorker(
                         return GameBackupOutcome.Deferred(
                             "检测到连续的云端更新，已等待在应用中确认恢复",
                             retryable = false,
+                            action = GameSaveRemoteAction.AUTO_RESTORE,
                         )
                     }
 
                     GameSaveRemoteAction.REVIEW_REQUIRED -> {
-                        return GameBackupOutcome.Deferred(nativeDecision.message, retryable = false)
+                        return GameBackupOutcome.Deferred(
+                            nativeDecision.message,
+                            retryable = false,
+                            action = GameSaveRemoteAction.REVIEW_REQUIRED,
+                        )
                     }
 
                     GameSaveRemoteAction.WAIT_FOR_REMOTE -> {
@@ -298,7 +459,11 @@ class AutoBackupWorker(
                     }
 
                     GameSaveRemoteAction.REVIEW_REQUIRED -> {
-                        return GameBackupOutcome.Deferred(decision.message, retryable = false)
+                        return GameBackupOutcome.Deferred(
+                            decision.message,
+                            retryable = false,
+                            action = GameSaveRemoteAction.REVIEW_REQUIRED,
+                        )
                     }
 
                     GameSaveRemoteAction.WAIT_FOR_REMOTE -> {
@@ -375,9 +540,9 @@ class AutoBackupWorker(
         candidate: GameSaveRemoteHead,
     ): GameBackupOutcome {
         val rootSource = source as? SourceSelection.Root
-            ?: return GameBackupOutcome.Deferred("当前存档来源不支持安全自动恢复", retryable = false)
+            ?: return GameBackupOutcome.Deferred("当前存档来源不支持安全自动恢复", retryable = false, action = GameSaveRemoteAction.AUTO_RESTORE)
         val location = manifest.locations.singleOrNull()
-            ?: return GameBackupOutcome.Deferred("Switch 存档位置不是唯一目录，已等待确认", retryable = false)
+            ?: return GameBackupOutcome.Deferred("Switch 存档位置不是唯一目录，已等待确认", retryable = false, action = GameSaveRemoteAction.AUTO_RESTORE)
         val remoteArchive = remoteCacheFile(candidate.archive)
         client.download(candidate.archive, remoteArchive).getOrThrow()
 
@@ -440,7 +605,7 @@ class AutoBackupWorker(
                 sizeBytes = build.archive.length(),
                 sha256 = build.archiveSha256,
                 manifestHash = fingerprint.manifestHash,
-                comment = "跨设备恢复前安全副本",
+                comment = "跨设备恢复前安全快照",
                 gameKey = game.gameKey,
                 gameName = game.presentation.primaryName,
                 saveType = identity.saveType.id,
@@ -519,8 +684,9 @@ class AutoBackupWorker(
             repository.markUploaded(record.id, asCloudHead = result is GameSaveNativePublishResult.Confirmed)
             when (result) {
                 is GameSaveNativePublishResult.Confirmed -> GameBackupOutcome.Uploaded
+                // The local newest is now a 冲突副本; "同步与任务" lists such games from the snapshots.
                 is GameSaveNativePublishResult.Conflict -> GameBackupOutcome.Deferred(
-                    "本机版本已保留为云端冲突副本，当前存档没有被覆盖",
+                    "本机版本已保留为冲突副本，云端当前版本没有被覆盖",
                     retryable = false,
                 )
             }
@@ -538,7 +704,12 @@ class AutoBackupWorker(
         data object Uploaded : GameBackupOutcome
         data object Restored : GameBackupOutcome
         data class UploadFailed(val error: GameSaveException) : GameBackupOutcome
-        data class Deferred(val reason: String, val retryable: Boolean) : GameBackupOutcome
+        /** [action] is the cloud verdict the user must decide on; null for waits that resolve themselves. */
+        data class Deferred(
+            val reason: String,
+            val retryable: Boolean,
+            val action: GameSaveRemoteAction? = null,
+        ) : GameBackupOutcome
     }
 
     private companion object {

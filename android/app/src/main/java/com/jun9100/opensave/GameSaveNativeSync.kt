@@ -224,7 +224,7 @@ class GameSaveNativeSync(
 
         scope.head?.takeIf { it.id == remoteSnapshotId }?.let { head ->
             require(head.archive == remoteArchiveName && head.contentDigest.equals(digest, ignoreCase = true)) {
-                "云端当前存档与本机不可变快照不一致"
+                "云端当前版本与本机版本不一致"
             }
             states.save(identity, provisional.copy(nativeHead = head.id))
             return@runCatching GameSaveNativePublishResult.Confirmed(head)
@@ -232,7 +232,7 @@ class GameSaveNativeSync(
         client.upload(archiveFile, identity.saveType, remoteArchiveName).getOrThrow()
 
         if (scope.head == null && previous?.nativeHead?.isNotBlank() == true) {
-            error("云端当前存档丢失，已拒绝自动创建替代版本")
+            error("云端当前版本丢失，已拒绝自动创建替代版本")
         }
         if (scope.head != null && previous?.nativeHead != scope.head.id) {
             client.putScopeConflict(identity.saveType, identity.gameId, candidate(remoteSnapshotId, remoteArchiveName, previous?.nativeHead.orEmpty(), digest, record))

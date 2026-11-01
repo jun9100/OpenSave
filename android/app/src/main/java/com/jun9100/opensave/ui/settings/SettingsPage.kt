@@ -14,6 +14,8 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
@@ -38,13 +40,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.OpenSavePage
+import com.jun9100.opensave.R
 import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.StorageMode
 import com.jun9100.opensave.SyncInbox
+import com.jun9100.opensave.ui.NotificationAccess
 import com.jun9100.opensave.ui.input.busyDimmed
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.input.whenIdleWith
@@ -59,6 +64,7 @@ import com.jun9100.opensave.ui.settingsCommands
 internal fun SettingsPage(
     state: SourceUiState,
     viewModel: SourceViewModel,
+    notifications: NotificationAccess,
     modifier: Modifier = Modifier,
 ) {
     val messages = state.messages[OpenSavePage.SETTINGS]
@@ -85,11 +91,13 @@ internal fun SettingsPage(
                 onImportFromClipboard = { viewModel.importGameSaveConfig(readClipboardText(context)) },
                 onRefresh = viewModel::refreshPersistedSource,
                 onOpenBatchReport = viewModel::openBatchReport.takeIf { state.lastBatchReport != null },
+                onOpenWizard = viewModel::openWizard,
             )
         },
         busy = state.busy,
         modifier = modifier,
-        dialogOpen = state.gameSaveEditor != null || state.gameSaveTestFailure != null || state.pendingConfigImport != null,
+        dialogOpen = state.gameSaveEditor != null || state.gameSaveTestFailure != null || state.pendingConfigImport != null ||
+            state.wizardStep != null,
         left = { firstControl ->
             messages.action?.takeIf { !state.busy }?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
             messages.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -97,7 +105,7 @@ internal fun SettingsPage(
         },
         right = { firstControl ->
             SyncTasksCard(attention = attention, onOpen = viewModel::openSyncTasks, focusRequester = firstControl)
-            AutomationCard(state, viewModel)
+            AutomationCard(state, viewModel, notifications)
             DisplayCard(state, viewModel)
             AdvancedCard(
                 state = state,
@@ -105,7 +113,7 @@ internal fun SettingsPage(
                 expanded = advancedOpen,
                 onExpandedChange = { advancedOpen = it },
             )
-            AboutCard()
+            AboutCard(onOpenWizard = viewModel::openWizard)
         },
     )
 }
@@ -138,7 +146,7 @@ private fun SyncTasksCard(attention: Int, onOpen: () -> Unit, focusRequester: Fo
 
 /** Automatic backup and upload, each with what it depends on. */
 @Composable
-private fun AutomationCard(state: SourceUiState, viewModel: SourceViewModel) {
+private fun AutomationCard(state: SourceUiState, viewModel: SourceViewModel, notifications: NotificationAccess) {
     val cloudConfigured = state.gameSaveUrl.isNotBlank() && state.gameSaveSyncKey.isNotBlank()
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp)) {
@@ -156,13 +164,13 @@ private fun AutomationCard(state: SourceUiState, viewModel: SourceViewModel) {
                 if (uploadReady) {
                     "连接 Wi-Fi 时定期备份有变化的游戏并上传；只扫描“来源”页已启用的来源，冲突只记录，不会自动覆盖。"
                 } else {
-                    "依赖下面的“新快照自动上传”：game-save 配置好并开启上传之前，自动备份不会运行。"
+                    "依赖下面的“新版本自动上传”：game-save 配置好并开启上传之前，自动备份不会运行。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (uploadReady || !state.autoBackupEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
             )
             SwitchSettingRow(
-                label = "新快照自动上传",
+                label = "新版本自动上传",
                 checked = state.gameSaveEnabled && cloudConfigured,
                 onCheckedChange = whenIdleWith(state.busy, viewModel::setAutoUploadEnabled),
                 modifier = Modifier.padding(top = 8.dp).busyDimmed(state.busy || !cloudConfigured),
@@ -177,7 +185,43 @@ private fun AutomationCard(state: SourceUiState, viewModel: SourceViewModel) {
                 style = MaterialTheme.typography.bodySmall,
                 color = if (cloudConfigured) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
             )
+            NotificationRow(notifications)
         }
+    }
+}
+
+/** "需要处理时通知": the permission is asked at most once; afterwards only the system settings. */
+@Composable
+private fun NotificationRow(notifications: NotificationAccess) {
+    val request = notifications.request
+    OutlinedButton(
+        onClick = when {
+            notifications.allowed -> notifications.openSettings
+            request != null -> request
+            else -> notifications.openSettings
+        },
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).settingButtonFocus(),
+    ) {
+        Icon(Icons.Outlined.Notifications, contentDescription = null)
+        Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+            Text(stringResource(R.string.wizard_notifications_title))
+            Text(
+                when {
+                    notifications.allowed -> stringResource(R.string.notifications_allowed)
+                    request != null -> stringResource(R.string.wizard_notifications_body)
+                    else -> stringResource(R.string.notifications_denied)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (notifications.allowed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
+            )
+        }
+        Text(
+            when {
+                request != null && !notifications.allowed -> stringResource(R.string.wizard_notifications_allow)
+                else -> "设置"
+            },
+            style = MaterialTheme.typography.labelMedium,
+        )
     }
 }
 
@@ -203,9 +247,9 @@ private fun DisplayCard(state: SourceUiState, viewModel: SourceViewModel) {
     }
 }
 
-/** 关于: the installed version. */
+/** 关于: the installed version and the first-run wizard. */
 @Composable
-private fun AboutCard() {
+private fun AboutCard(onOpenWizard: () -> Unit) {
     val context = LocalContext.current
     val version = remember(context) {
         runCatching {
@@ -222,6 +266,20 @@ private fun AboutCard() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            OutlinedButton(
+                onClick = onOpenWizard,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).settingButtonFocus(),
+            ) {
+                Icon(Icons.Outlined.School, contentDescription = null)
+                Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(stringResource(R.string.about_open_wizard))
+                    Text(
+                        stringResource(R.string.about_open_wizard_detail),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
@@ -281,7 +339,7 @@ private fun WholeSourceSnapshotSection(state: SourceUiState, viewModel: SourceVi
     Text("整来源快照", style = MaterialTheme.typography.titleSmall)
     Spacer(Modifier.height(6.dp))
     Text(
-        "把整个目录做成一份 OpenSave ZIP 快照；游戏库里的单游戏备份只包含识别出的存档位置。",
+        "把整个目录做成一份 OpenSave ZIP 快照；游戏库里的备份只包含已确认的存档位置。",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

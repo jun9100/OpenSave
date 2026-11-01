@@ -145,7 +145,7 @@ internal fun GameDetailPane(
                     buildString {
                         append(game.saves.map { kindLabel(it.kind) }.distinct().joinToString("、"))
                         append(" · ${game.locationCount} 个位置")
-                        if (game.candidateCount > 0) append(" · 候选 ${game.candidateCount}")
+                        if (game.candidateCount > 0) append(" · 待确认 ${game.candidateCount}")
                         presentation.identity?.let { append(" · $it") }
                     },
                     style = MaterialTheme.typography.labelSmall,
@@ -268,10 +268,10 @@ private fun VersionsTab(
         )
     }
     if (localHistory.isNotEmpty()) {
-        Text("本地快照", modifier = Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge)
+        Text("本地版本", modifier = Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge)
         localHistory.take(MAX_GAME_HISTORY_ROWS).forEach { snapshot ->
             SnapshotHistoryRow(
-                title = snapshot.comment.ifBlank { formatTime(snapshot.createdAtMillis) },
+                title = snapshot.comment.replace("安全副本", "安全快照").ifBlank { formatTime(snapshot.createdAtMillis) },
                 detail = "${formatBytes(snapshot.sizeBytes)} · ${if (snapshot.uploaded) "已上传" else "仅本地"}",
                 enabled = !busy,
                 onRestore = { onRestoreLocal(snapshot) },
@@ -280,7 +280,7 @@ private fun VersionsTab(
     }
     if (remoteHistory.isNotEmpty()) {
         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
-        Text("云端快照", style = MaterialTheme.typography.labelLarge)
+        Text("云端版本", style = MaterialTheme.typography.labelLarge)
         remoteHistory.take(MAX_GAME_HISTORY_ROWS).forEach { snapshot ->
             SnapshotHistoryRow(
                 title = snapshot.modified.ifBlank { snapshot.name },
@@ -292,7 +292,7 @@ private fun VersionsTab(
     }
     if (gameSaveEnabled && remoteHistory.isEmpty()) {
         Text(
-            "云端记录为空时，可在“设置 › 高级”中列举 game-save 快照。",
+            "云端记录为空时，可在“设置 › 高级”中列举云端版本。",
             modifier = Modifier.padding(top = 8.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -306,7 +306,7 @@ private fun LocationsTab(entry: SourceGameEntry) {
     Spacer(Modifier.height(6.dp))
     game.saves.take(MAX_VISIBLE_LOCATIONS_PER_GAME).forEach { save ->
         Text(
-            "${if (save.candidate) "候选" else "已识别"} · ${save.relativePath}",
+            "${if (save.candidate) "待确认" else "已确认"} · ${save.relativePath}",
             modifier = Modifier.padding(top = 5.dp),
             style = MaterialTheme.typography.bodySmall,
             color = if (save.candidate) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -342,7 +342,7 @@ private fun SnapshotHistoryRow(
             onClick = whenIdle(!enabled, onRestore),
             modifier = Modifier.handheldFocusRing(CircleShape).busyDimmed(!enabled),
         ) {
-            Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "恢复此游戏快照")
+            Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "恢复此版本")
         }
     }
 }

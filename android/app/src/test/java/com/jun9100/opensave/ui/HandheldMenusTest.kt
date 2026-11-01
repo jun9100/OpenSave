@@ -254,6 +254,26 @@ class HandheldMenusTest {
     }
 
     @Test
+    fun settingsOfferTheWizardEvenWhileBusy() {
+        var opened = false
+        val entries = settingsCommands(
+            busy = true,
+            syncAttention = 0,
+            onOpenSyncTasks = {},
+            onCheckCloudUpdates = {},
+            onEditCloud = {},
+            onImportFromClipboard = {},
+            onRefresh = {},
+            onOpenWizard = { opened = true },
+        )
+        val wizard = entries.last()
+        assertEquals(WIZARD_LABEL, wizard.label)
+        assertTrue(wizard.enabled)
+        wizard.onClick()
+        assertTrue(opened)
+    }
+
+    @Test
     fun textSummaryNeverShowsTheSecret() {
         assertEquals("未设置 · 例如 http://nas:8788", TextSettingSummary.display("", "http://nas:8788", secret = false))
         assertEquals("未设置", TextSettingSummary.display(" ", "", secret = true))

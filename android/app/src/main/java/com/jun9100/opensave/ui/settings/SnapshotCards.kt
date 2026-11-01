@@ -40,7 +40,7 @@ internal fun LocalSnapshotCard(state: SourceUiState, viewModel: SourceViewModel)
     if (snapshots.isEmpty()) return
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Text("本地历史", style = MaterialTheme.typography.titleMedium)
+            Text("本地整来源快照", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             snapshots.take(12).forEach { snapshot ->
                 Row(
@@ -76,7 +76,7 @@ internal fun RemoteSnapshotCard(state: SourceUiState, viewModel: SourceViewModel
     if (snapshots.isEmpty()) return
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Text("云端快照", style = MaterialTheme.typography.titleMedium)
+            Text("云端整来源快照", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             snapshots.take(20).forEach { remote ->
                 Row(

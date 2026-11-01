@@ -72,4 +72,33 @@ class AutoBackupTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun everyAutoBackupRunLeavesOneActivityLine() {
+        val quiet = AutoBackupPolicy.runEntry(AutoBackupTally(games = 4, unchanged = 4), atMillis = 1)
+        assertEquals("自动备份：无变化 4 款", quiet.text)
+        assertEquals(com.jun9100.opensave.activity.ActivityLevel.INFO, quiet.level)
+
+        val busy = AutoBackupPolicy.runEntry(
+            AutoBackupTally(
+                games = 5,
+                uploaded = 2,
+                unchanged = 1,
+                deferred = listOf("塞尔达" to "云端有冲突"),
+                failed = listOf("马力欧" to "HTTP 502"),
+                scanFailures = listOf("PPSSPP：目录授权已失效"),
+            ),
+            atMillis = 2,
+        )
+        assertEquals("自动备份：已上传 2 款，无变化 1 款，待确认 1 款，失败 1 款", busy.text)
+        assertEquals(com.jun9100.opensave.activity.ActivityLevel.WARNING, busy.level)
+        assertEquals("马力欧：HTTP 502；PPSSPP：目录授权已失效", busy.detail)
+
+        assertEquals("自动备份：没有可备份的游戏", AutoBackupPolicy.runEntry(AutoBackupTally()).text)
+        assertEquals(
+            "自动备份已跳过：有批量任务正在运行",
+            AutoBackupPolicy.skippedEntry("有批量任务正在运行").text,
+        )
+        assertEquals(com.jun9100.opensave.activity.ActivityLevel.ERROR, AutoBackupPolicy.failedEntry("超时", retrying = true).level)
+    }
 }

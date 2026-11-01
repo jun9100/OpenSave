@@ -115,7 +115,7 @@ internal object PreviewData {
 
     val snapshots = listOf(
         snapshot(id = "a", createdAtMillis = 1_793_000_000_000, uploaded = true),
-        snapshot(id = "b", createdAtMillis = 1_792_900_000_000, uploaded = false, comment = "恢复前安全副本"),
+        snapshot(id = "b", createdAtMillis = 1_792_900_000_000, uploaded = false, comment = "恢复前安全快照"),
     )
 
     /** A library large enough to count rows: the Switch game, Hollow Knight and a dozen more titles. */

@@ -13,11 +13,19 @@ internal object ScheduledSources {
         storage: SafStorage,
         rootStorage: RootStorage,
         installedGameCatalog: InstalledGameCatalog,
+        /** Called with the reason when Root is expected but su did not grant uid 0. */
+        onRootUnavailable: ((String) -> Unit)? = null,
+        /** Called with the labels of selected granted folders whose permission is gone. */
+        onFoldersLost: ((List<String>) -> Unit)? = null,
     ): List<SaveSourceOption> {
         val sources = linkedMapOf<String, SaveSourceOption>()
         val selectionStore = SourceSelectionStore(context)
         val disabled = selectionStore.disabledSourceIds()
-        storage.persistedTrees().filter { storage.hasReadPermission(it.uri) }.forEach { tree ->
+        val (readable, lost) = storage.persistedTrees().partition { storage.hasReadPermission(it.uri) }
+        lost.filter { SourceSelection.Saf(it.uri).idSeed !in disabled }.map { it.label }
+            .takeIf { it.isNotEmpty() }
+            ?.let { onFoldersLost?.invoke(it) }
+        readable.forEach { tree ->
             val source = SourceSelection.Saf(tree.uri)
             if (source.idSeed !in disabled) {
                 sources[source.idSeed] = SaveSourceOption(
@@ -30,7 +38,16 @@ internal object ScheduledSources {
             }
         }
 
-        if (rootStorage.checkRootAccess().isFailure) return sources.values.toList()
+        // su is never called before the user chose Root (first-run wizard).
+        val onboarding = OnboardingStore(context)
+        if (!onboarding.rootAllowed()) return sources.values.toList()
+        val rootCheck = rootStorage.checkRootAccess()
+        if (rootCheck.isFailure) {
+            if (Onboarding.reportBackgroundRootFailure(rootAllowed = true, rootConfirmed = onboarding.rootConfirmed())) {
+                onRootUnavailable?.invoke(rootCheck.exceptionOrNull()?.message ?: "su 未返回 uid 0")
+            }
+            return sources.values.toList()
+        }
         val rootOptions = SaveSourceOptions.build(
             authorizedTrees = emptyList(),
             rootPath = rootStorage.persistedRootPath(),

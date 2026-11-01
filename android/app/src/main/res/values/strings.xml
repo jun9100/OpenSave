@@ -1,3 +1,62 @@
 <resources>
     <string name="app_name">OpenSave</string>
+
+    <!-- 首次使用向导 -->
+    <string name="wizard_title">欢迎使用 OpenSave</string>
+    <string name="wizard_step_counter">第 %1$d / %2$d 步</string>
+    <string name="wizard_back">上一步</string>
+    <string name="wizard_next">下一步</string>
+    <string name="wizard_finish">完成</string>
+    <string name="wizard_skip">跳过向导</string>
+    <string name="wizard_welcome_body">OpenSave 会找到模拟器和游戏的存档位置，把每款游戏的存档备份成可恢复的版本。连接 game-save 后，版本还会同步到你的其他设备（例如 PC）。</string>
+    <string name="wizard_welcome_point_versions">• 每次备份生成一个版本，内容没变就跳过；恢复前会先保存安全快照，可以撤销。</string>
+    <string name="wizard_welcome_point_sources">• 来源是模拟器、启动器或你授权的目录；只备份已确认的存档位置，待确认位置默认不备份。</string>
+    <string name="wizard_welcome_point_conflicts">• 两台设备都改过同一款游戏时不会自动覆盖，而是在“同步与任务”里等你选择。</string>
+    <string name="wizard_welcome_point_pad">• 全程可以用手柄：A 确认、B 返回、L1/R1 切换页面、Y 打开命令面板。</string>
+    <string name="wizard_access_body_saf">没有 Root 时，OpenSave 只能读取你通过系统选择器授权的目录。请添加模拟器的存档目录，例如：</string>
+    <string name="wizard_access_examples">• PPSSPP 的 PSP 文件夹\n• RetroArch 的 saves 和 states 文件夹\n• Dolphin 的 GC 和 Wii 文件夹\n• Eden 的公开目录（用户数据放在共享存储时）</string>
+    <string name="wizard_access_add_folder">添加授权目录</string>
+    <string name="wizard_access_folders_none">还没有授权目录。</string>
+    <string name="wizard_access_folders">已授权：%1$s</string>
+    <string name="wizard_access_root_title">检测到 Root</string>
+    <string name="wizard_access_root_body">有 Root 时还能读取 Android/data 等受保护的目录（例如 Switch 模拟器的存档）。选择后 Magisk 会弹出授权：请选“永久”，因为后台自动备份无法弹出授权提示。</string>
+    <string name="wizard_access_use_root">使用 Root</string>
+    <string name="wizard_access_saf_only">只用授权目录</string>
+    <string name="wizard_access_root_absent">没有检测到 su，将只使用授权目录。以后获得 Root 时，可以在 设置 → 关于 中重新打开本向导。</string>
+    <string name="wizard_access_current_root">当前：使用 Root</string>
+    <string name="wizard_access_current_saf">当前：只用授权目录</string>
+    <string name="wizard_cloud_body">game-save 是自建的存档同步服务。连接后，备份产生的新版本会上传，其他设备的更新会出现在“同步与任务”里。也可以先跳过，以后在 设置 → 云端 中配置。</string>
+    <string name="wizard_cloud_edit">填写服务地址和同步密钥…</string>
+    <string name="wizard_cloud_import">从剪贴板导入配置</string>
+    <string name="wizard_cloud_connected">已保存：%1$s</string>
+    <string name="wizard_cloud_not_connected">尚未连接 game-save。</string>
+    <string name="wizard_notifications_title">需要处理时通知</string>
+    <string name="wizard_notifications_body">后台发现冲突或权限问题时发通知提醒；只会询问这一次。</string>
+    <string name="wizard_notifications_allow">允许通知</string>
+    <string name="notifications_allowed">通知已允许</string>
+    <string name="notifications_denied">通知未允许；可以在系统设置中打开</string>
+    <string name="notifications_open_settings">打开系统通知设置</string>
+
+    <!-- 游戏库空状态 -->
+    <string name="library_empty_scanning">正在扫描已知的游戏与模拟器存档来源。</string>
+    <string name="library_empty_no_access">还没有可读取的来源。没有 Root 时，OpenSave 只能读取你授权的目录：请添加模拟器的存档目录，例如 PPSSPP 的 PSP 文件夹、RetroArch 或 Dolphin 的存档文件夹，添加后会自动扫描。</string>
+    <string name="library_empty_nothing_found">已扫描所有可用来源，但没有发现已确认的存档位置。待确认位置不会默认备份；可以在“来源”页查看扫描结果。</string>
+    <string name="library_empty_filtered">当前筛选（%1$s）下没有游戏。</string>
+    <string name="library_empty_add_folder">添加授权目录</string>
+    <string name="library_empty_sources">查看来源</string>
+    <string name="library_empty_clear_filters">清除筛选</string>
+    <string name="library_empty_wizard">首次使用向导</string>
+
+    <!-- 动态 -->
+    <string name="activity_title">动态</string>
+    <string name="activity_empty">还没有动态。扫描、备份、恢复、云端检查和后台自动备份都会记录在这里。</string>
+    <string name="activity_needs_action">需要处理</string>
+    <string name="activity_show_more">显示更早的 %1$d 条</string>
+    <string name="activity_repeats">（%1$d 次）</string>
+    <string name="notification_channel_attention">需要处理</string>
+    <string name="notification_attention_title">OpenSave · %1$s需要处理</string>
+
+    <!-- 设置 → 关于 -->
+    <string name="about_open_wizard">首次使用向导…</string>
+    <string name="about_open_wizard_detail">重新选择访问方式、添加授权目录或连接 game-save</string>
 </resources>

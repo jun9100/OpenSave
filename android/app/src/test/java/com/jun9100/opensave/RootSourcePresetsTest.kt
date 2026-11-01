@@ -91,7 +91,7 @@ class RootSourcePresetsTest {
     @Test
     fun unclassifiedApplicationSourceRequiresExplicitEnablement() {
         val preset = RootSourcePreset(
-            label = "未归类应用（候选）：Example Game",
+            label = "未归类应用（待确认）：Example Game",
             path = "/data/user/0/example.game",
             enabledByDefault = false,
         )

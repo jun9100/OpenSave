@@ -54,11 +54,11 @@ internal fun GameBackupConfirmDialog(
             ) {
                 Text("来源：${entry.sourceLabel}")
                 Text("访问：${sourceAccessLabel(entry.sourceAccess)}")
-                Text("已识别位置 ${game.saves.count { !it.candidate }} 个；候选位置 ${game.candidateCount} 个。")
-                Text("候选位置只有在你明确确认后才会写入快照。")
+                Text("已确认位置 ${game.saves.count { !it.candidate }} 个；待确认位置 ${game.candidateCount} 个。")
+                Text("待确认位置只有在你确认后才会加入这次的版本。")
                 game.saves.forEach { save ->
                     Text(
-                        "${if (save.candidate) "候选" else "已识别"} · ${save.relativePath}",
+                        "${if (save.candidate) "待确认" else "已确认"} · ${save.relativePath}",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (save.candidate) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -77,12 +77,12 @@ internal fun GameBackupConfirmDialog(
                     onClick = { onConfirm(false) },
                     enabled = hasConfirmed,
                     modifier = Modifier.let { if (hasConfirmed) it.focusRequester(initialFocus) else it }.dialogButtonFocus(),
-                ) { Text("只备份已识别") }
+                ) { Text("只备份已确认位置") }
                 Button(
                     onClick = { onConfirm(true) },
                     modifier = Modifier.let { if (!hasConfirmed) it.focusRequester(initialFocus) else it }.dialogButtonFocus(),
                 ) {
-                    Text("包含候选")
+                    Text("包含待确认位置")
                 }
             }
         },
@@ -116,7 +116,7 @@ internal fun WorkspaceWriteBackDialog(
                         "私有工作区的文件会写入该系统授权目录，同名文件会被覆盖。"
                     },
                 )
-                Text("写回前会先把来源目录当前的内容保存为安全快照，可在“本地快照”中恢复。")
+                Text("写回前会先把来源目录当前的内容保存为安全快照，可在“设置 › 高级”的本地整来源快照中恢复。")
             }
         },
         confirmButton = {

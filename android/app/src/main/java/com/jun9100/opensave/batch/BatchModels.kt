@@ -11,7 +11,7 @@ enum class BatchOperation(
     val successLabel: String,
     val unchangedLabel: String,
 ) {
-    BACKUP("批量备份", usesNetwork = false, successLabel = "新建快照", unchangedLabel = "无变化"),
+    BACKUP("批量备份", usesNetwork = false, successLabel = "新建版本", unchangedLabel = "无变化"),
     UPLOAD_PENDING("上传待传", usesNetwork = true, successLabel = "已上传", unchangedLabel = "无需上传"),
     CHECK_CLOUD("检查云端更新", usesNetwork = true, successLabel = "云端较新", unchangedLabel = "已是最新"),
     RESTORE_CLOUD_NEWER("安全恢复云端较新", usesNetwork = true, successLabel = "已恢复", unchangedLabel = "已是最新"),

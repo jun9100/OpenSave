@@ -1,6 +1,7 @@
 package com.jun9100.opensave.ui.sync
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,20 +19,28 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.OpenSavePage
+import com.jun9100.opensave.R
 import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.SyncInbox
 import com.jun9100.opensave.SyncInboxItem
 import com.jun9100.opensave.SyncItemKind
+import com.jun9100.opensave.activity.ActivityEntry
+import com.jun9100.opensave.activity.ActivityLevel
 import com.jun9100.opensave.batch.BatchReport
 import com.jun9100.opensave.ui.formatTime
 import com.jun9100.opensave.ui.input.busyDimmed
@@ -126,6 +135,10 @@ internal fun SyncTasksPage(
                     }
                 }
             }
+            ActivitySection(
+                entries = state.activity,
+                firstControl = firstControl.takeIf { running == null },
+            )
             Text(
                 "最近的批量报告",
                 style = MaterialTheme.typography.titleSmall,
@@ -142,7 +155,7 @@ internal fun SyncTasksPage(
                 ReportRow(
                     report = report,
                     onOpen = { viewModel.openStoredBatchReport(report) },
-                    focusRequester = firstControl.takeIf { index == 0 && running == null },
+                    focusRequester = firstControl.takeIf { index == 0 && running == null && state.activity.isEmpty() },
                 )
             }
         },
@@ -228,6 +241,83 @@ private fun ReportRow(report: BatchReport, onOpen: () -> Unit, focusRequester: F
         )
     }
 }
+
+/**
+ * 动态: what scans, backups, restores, cloud checks, batches and the
+ * auto-backup worker did, newest first. Each line is one D-pad stop, so the
+ * pad scrolls through them; the older ones come in pages.
+ */
+@Composable
+private fun ActivitySection(entries: List<ActivityEntry>, firstControl: FocusRequester?) {
+    var shown by rememberSaveable { mutableIntStateOf(ACTIVITY_FIRST_PAGE) }
+    Text(stringResource(R.string.activity_title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
+    if (entries.isEmpty()) {
+        Text(
+            stringResource(R.string.activity_empty),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    entries.take(shown).forEachIndexed { index, entry ->
+        ActivityRow(entry, focusRequester = firstControl.takeIf { index == 0 })
+    }
+    val hidden = entries.size - shown
+    if (hidden > 0) {
+        TextButton(
+            onClick = { shown += ACTIVITY_PAGE },
+            modifier = Modifier.settingButtonFocus(),
+        ) { Text(stringResource(R.string.activity_show_more, minOf(hidden, ACTIVITY_PAGE))) }
+    }
+}
+
+@Composable
+private fun ActivityRow(entry: ActivityEntry, focusRequester: FocusRequester?) {
+    val color = when (entry.level) {
+        ActivityLevel.ERROR -> MaterialTheme.colorScheme.error
+        ActivityLevel.WARNING -> MaterialTheme.colorScheme.tertiary
+        ActivityLevel.SUCCESS -> MaterialTheme.colorScheme.primary
+        ActivityLevel.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 40.dp)
+            .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
+            .handheldFocusRing(RoundedCornerShape(12.dp))
+            .focusable()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(
+            buildString {
+                append(formatTime(entry.atMillis))
+                append(" · ")
+                append(entry.kind.label)
+                if (entry.needsAction) append(" · ⚠ ")
+            } + if (entry.needsAction) stringResource(R.string.activity_needs_action) else "",
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+        )
+        Text(
+            entry.text + if (entry.repeats > 1) stringResource(R.string.activity_repeats, entry.repeats) else "",
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        entry.detail.takeIf(String::isNotBlank)?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private const val ACTIVITY_FIRST_PAGE = 10
+private const val ACTIVITY_PAGE = 30
 
 private val ITEM_BUTTON_PADDING = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
 

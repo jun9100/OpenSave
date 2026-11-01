@@ -221,6 +221,7 @@ private fun SourceActionsCard(
                 when {
                     !state.rootChecked -> "正在检测 Root 权限…"
                     state.rootAvailable -> "Root 可用 · 内置来源可直接扫描，也可添加授权目录"
+                    !state.rootAllowed -> "只用授权目录 · 要使用 Root，请在 设置 → 关于 → 首次使用向导 中选择"
                     else -> "未检测到 Root · 通过系统授权读取你选择的目录"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -452,7 +453,7 @@ private fun SourceRowItem(
 }
 
 private fun sourceRowDetail(row: SourceRow, tree: AuthorizedSafTree?, access: SourceAccessStatus): String = buildString {
-    append(if (row.option.enabledByDefault) row.option.saveType.label else "未归类应用候选")
+    append(if (row.option.enabledByDefault) row.option.saveType.label else "未归类应用（待确认）")
     append(" · ")
     when {
         tree != null && !tree.readable -> append("目录授权已失效，请移除后重新添加")
@@ -476,7 +477,11 @@ private fun groupNote(group: SourceGroup, state: SourceUiState): String? = when 
     } else {
         null
     }
-    SourceGroup.NEEDS_ROOT -> "这些来源在其他应用的私有目录里，需要 Root（在 Magisk 中授权 OpenSave）才能读取；没有 Root 时请改用授权目录。"
+    SourceGroup.NEEDS_ROOT -> if (state.rootAllowed) {
+        "这些来源在其他应用的私有目录里，需要 Root（在 Magisk 中永久授权 OpenSave）才能读取；没有 Root 时请改用授权目录。"
+    } else {
+        "这些来源在其他应用的私有目录里，需要 Root 才能读取。当前只用授权目录；要使用 Root，请在 设置 → 关于 → 首次使用向导 中选择。"
+    }
     SourceGroup.MISSING -> "上次扫描时这些目录不存在或无法读取；目录出现后重新扫描即可。"
     SourceGroup.AVAILABLE -> null
 }

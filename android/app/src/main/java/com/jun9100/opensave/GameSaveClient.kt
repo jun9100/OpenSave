@@ -85,7 +85,7 @@ class GameSaveScopesUnsupportedException : GameSaveException(
 
 /** A CAS write lost its race; the caller must retain a conflict copy. */
 class GameSaveScopeConflictException(val head: String) : GameSaveException(
-    if (head.isBlank()) "云端当前存档已变化" else "云端当前存档已变化：$head",
+    if (head.isBlank()) "云端当前版本已变化" else "云端当前版本已变化：$head",
 )
 
 /** Native game-save API client. Every request is bearer-authenticated and type-scoped. */

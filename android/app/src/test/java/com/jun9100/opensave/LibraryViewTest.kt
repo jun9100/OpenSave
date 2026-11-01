@@ -216,4 +216,14 @@ class LibraryViewTest {
         comment = comment,
         gameKey = gameKey,
     )
+
+    @Test
+    fun emptyLibrarySaysWhy() {
+        assertEquals(LibraryEmptyState.SCANNING, LibraryView.emptyState(scanned = false, readableSources = 0, gameCount = 0, visibleCount = 0))
+        assertEquals(LibraryEmptyState.NO_ACCESS, LibraryView.emptyState(scanned = true, readableSources = 0, gameCount = 0, visibleCount = 0))
+        assertEquals(LibraryEmptyState.NOTHING_FOUND, LibraryView.emptyState(scanned = true, readableSources = 2, gameCount = 0, visibleCount = 0))
+        assertEquals(LibraryEmptyState.FILTERED_OUT, LibraryView.emptyState(scanned = true, readableSources = 2, gameCount = 3, visibleCount = 0))
+        // A rescan that is still running keeps the games it already shows.
+        assertNull(LibraryView.emptyState(scanned = false, readableSources = 1, gameCount = 3, visibleCount = 3))
+    }
 }

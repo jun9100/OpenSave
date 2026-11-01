@@ -141,7 +141,7 @@ class BatchRunnerTest {
                 BatchItemResult("d", "D", BatchItemStatus.FAILED, "复制失败"),
             ),
         )
-        assertEquals("批量备份完成：新建快照 2 款，无变化 1 款，失败 1 款", report.summary)
+        assertEquals("批量备份完成：新建版本 2 款，无变化 1 款，失败 1 款", report.summary)
         assertEquals(
             "上传待传已停止：已上传 1 款，未执行 1 款（已取消）",
             BatchReport(

@@ -70,7 +70,7 @@ class SyncInboxTest {
         assertEquals("上次检查发现需要确认的云端版本；处理前会重新检查云端", items.getValue(alpha.libraryKey).reason)
         assertEquals("上次检查发现云端有延续当前存档的更新", items.getValue(beta.libraryKey).reason)
         // No verdict at all: the newest local version is a conflict copy.
-        assertEquals("本机最新版本已保留为云端冲突副本，云端当前版本不是它", items.getValue(gamma.libraryKey).reason)
+        assertEquals("本机最新版本是冲突副本，云端当前版本不是它", items.getValue(gamma.libraryKey).reason)
     }
 
     @Test

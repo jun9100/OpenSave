@@ -5,6 +5,11 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.jun9100.opensave.activity.ActivityEntry
+import com.jun9100.opensave.activity.ActivityKind
+import com.jun9100.opensave.activity.ActivityLevel
+import com.jun9100.opensave.activity.ActivityLogStore
+import com.jun9100.opensave.activity.ActivityRecorder
 import com.jun9100.opensave.batch.BatchCenter
 import com.jun9100.opensave.batch.BatchEligibility
 import com.jun9100.opensave.batch.BatchJobs
@@ -211,6 +216,23 @@ data class SourceUiState(
     val pendingConfigImport: ImportedGameSaveConfig? = null,
     /** Hide the status and gesture bars in landscape (plan Q2: off by default). */
     val immersiveLandscape: Boolean = false,
+    /** The step the first-run wizard shows; null while it is closed. */
+    val wizardStep: WizardStep? = null,
+    /** The wizard opened by itself on the first run, not from 设置. */
+    val wizardFirstRun: Boolean = false,
+    /** The access the user picked in the open wizard; null until a pick. */
+    val wizardAccess: AccessChoice? = null,
+    /** What the wizard's last Root request found; an error when su was refused. */
+    val wizardNotice: String? = null,
+    val wizardError: String? = null,
+    /** su may be called ([Onboarding.rootAllowed]); false keeps OpenSave to granted folders. */
+    val rootAllowed: Boolean = false,
+    /** An su binary is installed (checked without running it); the wizard offers Root then. */
+    val rootLikelyPresent: Boolean = false,
+    /** 动态, newest first ([ActivityLogStore]). */
+    val activity: List<ActivityEntry> = emptyList(),
+    /** The notification permission was asked once already. */
+    val notificationsAsked: Boolean = false,
 ) {
     /** The rail and bottom bar item to highlight, and where L1/R1 cycle from. */
     val navigationPage: OpenSavePage get() = if (page.topLevel) page else syncReturnPage
@@ -235,6 +257,8 @@ class SourceViewModel(
     private val operations = GameOperations(application, storage, rootStorage)
     private val reportStore = BatchReportStore.forApp(application)
     private val cloudVerdictStore = CloudVerdictStore(application)
+    private val onboarding = OnboardingStore(application)
+    private val activityStore = ActivityLogStore.forApp(application)
     private var appliedFindingsId: String? = null
     private val signatureReader = SaveSignatureReader(storage, rootStorage)
     private var signatureJob: Job? = null
@@ -255,7 +279,154 @@ class SourceViewModel(
             }
         }
         observeBatches()
+        observeActivity()
+        startOnboarding()
         refreshPersistedSource()
+    }
+
+    /**
+     * Opens the first-run wizard once. A device set up before the wizard
+     * existed is marked done and keeps checking Root as it did.
+     */
+    private fun startOnboarding() {
+        if (!onboarding.wizardDone()) {
+            val config = runCatching { gameSaveStore.load() }.getOrDefault(GameSaveConfig())
+            val existing = storage.persistedTrees().isNotEmpty() ||
+                !rootStorage.persistedRootPath().isNullOrBlank() ||
+                (config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) ||
+                runCatching { snapshotRepository.list().isNotEmpty() }.getOrDefault(false)
+            if (existing) onboarding.setWizardDone()
+            if (Onboarding.shouldShowWizard(onboarding.wizardDone(), existing)) {
+                updateState {
+                    copy(
+                        wizardStep = WizardStep.WELCOME,
+                        wizardFirstRun = true,
+                        rootLikelyPresent = RootDetection.suLikelyPresent(),
+                    )
+                }
+            }
+        }
+        updateState { copy(rootAllowed = onboarding.rootAllowed(), notificationsAsked = onboarding.notificationsAsked()) }
+    }
+
+    /** 动态 from this ViewModel and the workers; a worker's line may also bring cloud verdicts it found. */
+    private fun observeActivity() {
+        viewModelScope.launch {
+            ActivityLogStore.revision.collect {
+                val entries = withContext(Dispatchers.IO) { runCatching { activityStore.list() }.getOrDefault(emptyList()) }
+                val verdicts = withContext(Dispatchers.IO) { runCatching { cloudVerdictStore.load() }.getOrNull() }
+                updateState { copy(activity = entries, rememberedCloudVerdicts = verdicts ?: rememberedCloudVerdicts) }
+            }
+        }
+    }
+
+    /** Writes one 动态 line; the user is in the app, so nothing is notified. */
+    private fun log(kind: ActivityKind, level: ActivityLevel, text: String, detail: String = "") {
+        val entry = ActivityEntry.create(kind, level, text, detail)
+        viewModelScope.launch(Dispatchers.IO) { ActivityRecorder.record(app, entry) }
+    }
+
+    /** "首次使用向导" in 设置 → 关于: the same three steps; leaving it keeps the stored access unless the user picks. */
+    fun openWizard() = updateState {
+        copy(
+            wizardStep = WizardStep.WELCOME,
+            wizardFirstRun = false,
+            wizardAccess = null,
+            wizardNotice = null,
+            wizardError = null,
+            rootLikelyPresent = RootDetection.suLikelyPresent(),
+        )
+    }
+
+    fun wizardNext() {
+        val step = state.value.wizardStep ?: return
+        val next = step.next()
+        if (next == null) finishWizard() else updateState { copy(wizardStep = next) }
+    }
+
+    fun wizardBack() {
+        val step = state.value.wizardStep ?: return
+        step.previous()?.let { previous -> updateState { copy(wizardStep = previous) } }
+    }
+
+    /** "完成" or "跳过向导": the wizard is done for good; a first run that never picked stays with granted folders. */
+    fun finishWizard() {
+        val current = state.value
+        if (current.wizardStep == null) return
+        val choice = Onboarding.choiceOnFinish(current.wizardAccess, onboarding.accessChoice(), current.wizardFirstRun)
+        if (choice != onboarding.accessChoice()) onboarding.setAccessChoice(choice)
+        onboarding.setWizardDone()
+        updateState {
+            copy(
+                wizardStep = null,
+                wizardAccess = null,
+                wizardNotice = null,
+                wizardError = null,
+                rootAllowed = onboarding.rootAllowed(),
+            )
+        }
+    }
+
+    /**
+     * "使用 Root" in the wizard: the first moment su is called, so Magisk asks
+     * now and not before. The result stays in the wizard; a granted Root also
+     * rescans the built-in Root sources.
+     */
+    fun chooseRootAccess() {
+        if (state.value.busy) return
+        onboarding.setAccessChoice(AccessChoice.ROOT)
+        updateState { copy(wizardAccess = AccessChoice.ROOT, rootAllowed = true, wizardNotice = null, wizardError = null) }
+        viewModelScope.launch {
+            state.value = state.value.copy(busy = true, progress = "正在请求 Root 权限")
+            val result = withContext(Dispatchers.IO) { rootStorage.checkRootAccess() }
+            onboarding.setRootConfirmed(result.isSuccess)
+            state.value = state.value.copy(
+                busy = state.value.batch != null,
+                progress = state.value.batch?.text,
+                rootAvailable = result.isSuccess,
+                rootChecked = true,
+                wizardNotice = ROOT_GRANTED_NOTICE.takeIf { result.isSuccess },
+                wizardError = result.exceptionOrNull()?.let { error ->
+                    "没有获得 Root：${error.message ?: "su 未返回 uid 0"}。可以在 Magisk 中允许 OpenSave 后再试，或改用授权目录。"
+                },
+            )
+            if (result.isFailure) {
+                log(ActivityKind.PERMISSION, ActivityLevel.WARNING, "没有获得 Root 权限", result.exceptionOrNull()?.message.orEmpty())
+            }
+            scanSource()
+        }
+    }
+
+    /** "只用授权目录": su is not called again until the user picks Root. */
+    fun chooseSafAccess() {
+        if (state.value.busy) return
+        val wasAllowed = state.value.rootAllowed
+        onboarding.setAccessChoice(AccessChoice.SAF)
+        onboarding.setRootConfirmed(false)
+        updateState {
+            copy(
+                wizardAccess = AccessChoice.SAF,
+                rootAllowed = false,
+                rootAvailable = false,
+                rootChecked = true,
+                storageMode = StorageMode.SAF,
+                wizardNotice = null,
+                wizardError = null,
+            )
+        }
+        selectionStore.saveMode(StorageMode.SAF)
+        if (wasAllowed) scanSource()
+    }
+
+    /** The notification permission is asked once (wizard or 设置); this remembers it was. */
+    fun markNotificationsAsked() {
+        onboarding.setNotificationsAsked()
+        updateState { copy(notificationsAsked = true) }
+    }
+
+    /** "清除筛选" of the library's empty state. */
+    fun clearLibraryFilters() = updateState {
+        copy(libraryTypeFilter = LibraryView.ALL_TYPES, libraryStatusFilter = LibraryStatusFilter.ALL)
     }
 
     /**
@@ -433,10 +604,11 @@ class SourceViewModel(
             },
         )
         viewModelScope.launch {
-            val rootAvailable = withContext(Dispatchers.IO) { rootStorage.checkRootAccess().isSuccess }
+            val rootAvailable = checkRootIfAllowed()
             state.value = state.value.copy(
                 rootAvailable = rootAvailable,
                 rootChecked = true,
+                rootAllowed = onboarding.rootAllowed(),
             )
             scanSource()
         }
@@ -616,9 +788,26 @@ class SourceViewModel(
             }
     }
 
+    /**
+     * su is called only once the user chose Root (or on an install that predates
+     * the wizard); a success is remembered so a later refusal to a background
+     * worker can be reported.
+     */
+    private suspend fun checkRootIfAllowed(): Boolean {
+        if (!onboarding.rootAllowed()) return false
+        val available = withContext(Dispatchers.IO) { rootStorage.checkRootAccess().isSuccess }
+        if (available && !onboarding.rootConfirmed()) onboarding.setRootConfirmed(true)
+        return available
+    }
+
     private fun refreshRootAccess() {
+        if (!onboarding.rootAllowed()) {
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, ROOT_NOT_CHOSEN)) }
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val result = rootStorage.checkRootAccess()
+            if (result.isSuccess) onboarding.setRootConfirmed(true)
             val rootAvailable = result.isSuccess
             state.value = state.value.copy(
                 rootAvailable = rootAvailable,
@@ -720,7 +909,7 @@ class SourceViewModel(
         testAndSaveGameSave(config.serviceUrl, config.syncKey)
     }
 
-    /** "新快照自动上传" (自动化): needs a saved game-save address and key. */
+    /** "新版本自动上传" (自动化): needs a saved game-save address and key. */
     fun setAutoUploadEnabled(enabled: Boolean) {
         if (state.value.busy) return
         val saved = savedGameSaveConfig()
@@ -767,8 +956,9 @@ class SourceViewModel(
         val page = state.value.page
         viewModelScope.launch {
             state.value = state.value.started(page, "正在扫描已选存档来源")
-            val (rootAvailable, options, scans) = withContext(Dispatchers.IO) {
-                val rootAvailable = rootStorage.checkRootAccess().isSuccess
+            val rootAllowed = onboarding.rootAllowed()
+            val rootAvailable = checkRootIfAllowed()
+            val (options, scans) = withContext(Dispatchers.IO) {
                 val current = state.value
                 val androidGames = installedGameCatalog.allApps()
                 val options = buildSourceOptions(current.authorizedTrees, current.rootPath)
@@ -780,10 +970,10 @@ class SourceViewModel(
                             SourceScanResult(
                                 source,
                                 label,
-                                skippedReason = "目录授权已失效",
+                                skippedReason = FOLDER_GRANT_LOST,
                                 access = SourceAccessStatus.unavailable(
                                     SourceAccessCapability.SAF,
-                                    "目录授权已失效",
+                                    FOLDER_GRANT_LOST,
                                 ),
                             )
                         } else {
@@ -814,15 +1004,15 @@ class SourceViewModel(
                         }
 
                         is SourceSelection.Root -> when {
-                            !rootAvailable -> SourceScanResult(
-                                source,
-                                label,
-                                skippedReason = "Root 未授权",
-                                access = SourceAccessStatus.unavailable(
-                                    SourceAccessCapability.ROOT,
-                                    "Root 未授权",
-                                ),
-                            )
+                            !rootAvailable -> {
+                                val reason = if (rootAllowed) "Root 未授权" else "未启用 Root"
+                                SourceScanResult(
+                                    source,
+                                    label,
+                                    skippedReason = reason,
+                                    access = SourceAccessStatus.unavailable(SourceAccessCapability.ROOT, reason),
+                                )
+                            }
                             else -> {
                                 val exists = rootStorage.pathExists(source.path)
                                 when {
@@ -874,21 +1064,30 @@ class SourceViewModel(
                         }
                     }
                 }
-                Triple(rootAvailable, options, results)
+                options to results
             }
             val games = GameLibrary.sourceGames(scans)
             val availableSourceCount = scans.count { it.access.readable }
             val skippedSourceCount = scans.size - availableSourceCount
             val activeScan = scans.firstOrNull { it.sourceId == state.value.activeSourceId }?.scan
             val eligibleKeys = GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey }
-            state.value = state.value.finished(
-                page,
-                action = buildString {
-                    append("扫描完成：${games.size} 个游戏条目，$availableSourceCount 个来源可读")
-                    if (skippedSourceCount > 0) append("，跳过 $skippedSourceCount 个")
-                },
-            ).copy(
+            val summary = buildString {
+                append("扫描完成：${games.size} 款游戏，$availableSourceCount 个来源可读")
+                if (skippedSourceCount > 0) append("，跳过 $skippedSourceCount 个")
+            }
+            log(ActivityKind.SCAN, ActivityLevel.INFO, summary)
+            val lostFolders = scans.filter { it.source is SourceSelection.Saf && it.skippedReason == FOLDER_GRANT_LOST }.map { it.label }
+            if (lostFolders.isNotEmpty()) {
+                log(
+                    ActivityKind.PERMISSION,
+                    ActivityLevel.WARNING,
+                    "${lostFolders.size} 个授权目录的权限已失效",
+                    lostFolders.joinToString("、") + "；请在“来源”页重新添加授权目录。",
+                )
+            }
+            state.value = state.value.finished(page, action = summary).copy(
                 rootAvailable = rootAvailable,
+                rootAllowed = rootAllowed,
                 rootChecked = true,
                 sourceScans = scans,
                 sourceOptions = options,
@@ -1058,9 +1257,9 @@ class SourceViewModel(
         val chosenEntries = entries.filter { it.libraryKey in chosen }
         if (chosenEntries.isEmpty()) {
             val reason = when (operation) {
-                BatchOperation.BACKUP -> "请选择至少一款含有已识别存档位置的游戏"
+                BatchOperation.BACKUP -> "请选择至少一款含有已确认存档位置的游戏"
                 BatchOperation.UPLOAD_PENDING -> "没有待上传的版本"
-                BatchOperation.CHECK_CLOUD -> "请先扫描含有已识别存档位置的来源"
+                BatchOperation.CHECK_CLOUD -> "请先扫描含有已确认存档位置的来源"
                 BatchOperation.RESTORE_CLOUD_NEWER -> if (restorePlan.conflicts.isNotEmpty()) {
                     "没有可安全恢复的游戏；${restorePlan.conflicts.size} 款冲突需逐个确认"
                 } else {
@@ -1191,7 +1390,7 @@ class SourceViewModel(
         // data; games without such a location share the batch location set.
         val selectedSaves = GameLibrary.backupLocations(game, includeCandidates, includeAndroidApp = true)
         if (selectedSaves.isEmpty()) {
-            updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "该游戏只有候选存档位置；确认后才能备份")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "这款游戏只有待确认的存档位置；确认后才能备份")) }
             return
         }
         val manifest = runCatching { GameSnapshotManifest.from(game, selectedSaves) }
@@ -1215,6 +1414,11 @@ class SourceViewModel(
                 } else {
                     "已备份 ${manifest.gameName}$uploadSuffix"
                 }
+                when {
+                    captured.uploadError != null -> log(ActivityKind.UPLOAD, ActivityLevel.WARNING, "${manifest.gameName}：已备份，上传失败", captured.uploadError)
+                    captured.reused -> log(ActivityKind.BACKUP, ActivityLevel.INFO, "${manifest.gameName}：$UNCHANGED_SKIPPED${reusedUploadSuffix(captured)}", captured.syncNotice.orEmpty())
+                    else -> log(ActivityKind.BACKUP, ActivityLevel.SUCCESS, "已备份 ${manifest.gameName}", captured.syncNotice.orEmpty())
+                }
                 state.value = state.value.finished(
                     OpenSavePage.LIBRARY,
                     action = action,
@@ -1231,6 +1435,7 @@ class SourceViewModel(
                         ?: state.value.saveSignatures,
                 )
             }.onFailure { error ->
+                log(ActivityKind.BACKUP, ActivityLevel.ERROR, "备份 ${manifest.gameName} 失败", error.message.orEmpty())
                 state.value = state.value.finished(OpenSavePage.LIBRARY, error = "备份 ${manifest.gameName} 失败：${error.message}")
             }
         }
@@ -1335,6 +1540,7 @@ class SourceViewModel(
             result.onSuccess { outcome ->
                 when (outcome) {
                     is KeepLocal.Published -> {
+                        log(ActivityKind.UPLOAD, ActivityLevel.SUCCESS, "已把本机的 $name 发布为云端当前版本", "原云端版本仍在云端历史中")
                         state.value = state.value.finished(
                             OpenSavePage.SYNC,
                             action = "已把本机的 $name 发布为云端当前版本；原云端版本仍在云端历史中",
@@ -1351,6 +1557,7 @@ class SourceViewModel(
                         // The new local backup makes the old verdict stale: read the new head
                         // so the game stays listed with what the cloud has now.
                         val fresh = checkOneGame(entry).getOrNull()
+                        log(ActivityKind.UPLOAD, ActivityLevel.WARNING, "$name 未发布：云端当前版本在确认后又有变化", "本机版本只保存为本地备份")
                         state.value = state.value.finished(
                             OpenSavePage.SYNC,
                             error = "$name 的云端当前版本在确认后又有变化，本机版本只保存为本地备份、未发布；请重新查看",
@@ -1368,6 +1575,7 @@ class SourceViewModel(
                     }
                 }
             }.onFailure { error ->
+                log(ActivityKind.UPLOAD, ActivityLevel.ERROR, "发布 $name 失败", error.message.orEmpty())
                 state.value = state.value.finished(OpenSavePage.SYNC, error = "发布 $name 失败：${error.message}")
                     .copy(snapshots = currentSnapshots())
             }
@@ -1409,6 +1617,7 @@ class SourceViewModel(
                     else -> then(fresh)
                 }
             }.onFailure { error ->
+                log(ActivityKind.CLOUD_CHECK, ActivityLevel.ERROR, "检查 $name 的云端失败", error.message.orEmpty())
                 state.value = state.value.finished(OpenSavePage.SYNC, error = "检查 $name 的云端失败：${error.message}")
             }
         }
@@ -1523,13 +1732,14 @@ class SourceViewModel(
                 runCatching {
                     request.game?.let { game ->
                         restoreGameRequest(request, source, game)
-                        RestoreOutcome("已安全恢复 ${game.presentation.primaryName} 的游戏存档", null)
+                        RestoreOutcome("已恢复 ${game.presentation.primaryName}", null)
                     } ?: restoreRequest(request, source).let { report ->
                         RestoreOutcome("已恢复并写回授权目录：${report.fileCount} 个文件", report)
                     }
                 }
             }
             result.onSuccess { outcome ->
+                log(ActivityKind.RESTORE, ActivityLevel.SUCCESS, outcome.message, "恢复前的存档已保存为安全快照")
                 state.value = state.value.finished(page, action = outcome.message).copy(
                     report = outcome.report ?: state.value.report,
                     snapshots = currentSnapshots(),
@@ -1542,7 +1752,8 @@ class SourceViewModel(
                 // The restored saves differ from what the signatures last saw.
                 readSaveSignatures(GameLibrary.sourceGames(state.value.sourceScans))
             }.onFailure { error ->
-                state.value = state.value.finished(page, error = "恢复快照失败：${error.message}")
+                log(ActivityKind.RESTORE, ActivityLevel.ERROR, "恢复失败", error.message.orEmpty())
+                state.value = state.value.finished(page, error = "恢复失败：${error.message}")
                     .copy(snapshots = currentSnapshots())
                 readSaveSignatures(GameLibrary.sourceGames(state.value.sourceScans))
             }
@@ -1668,7 +1879,7 @@ class SourceViewModel(
         // workspace that may be days old; without it the restore does not run.
         val workspace = storage.workspaceDirectory()
         importSelection(source).getOrThrow()
-        addSafetySnapshot(sourceId, workspace, "恢复前安全副本")
+        addSafetySnapshot(sourceId, workspace, "恢复前安全快照")
         snapshotEngine.restoreSnapshot(archive, workspace).getOrThrow()
         return restoreSelection(source).getOrThrow()
     }
@@ -1710,7 +1921,7 @@ class SourceViewModel(
             require(workspace.renameTo(held)) { "无法暂存工作区" }
             try {
                 importSelection(source).getOrThrow()
-                addSafetySnapshot(SnapshotNaming.sourceId(source.idSeed), workspace, "写回前安全副本")
+                addSafetySnapshot(SnapshotNaming.sourceId(source.idSeed), workspace, "写回前安全快照")
             } finally {
                 val discarded = File(parent, "${WorkspaceWriteBackPolicy.DISCARDED_PREFIX}${UUID.randomUUID()}")
                 if (workspace.exists()) require(workspace.renameTo(discarded)) { "无法清理来源副本" }
@@ -1866,6 +2077,10 @@ class SourceViewModel(
         const val SIGNATURE_REFRESH_MIN_MILLIS = 5_000L
         const val KEEP_LOCAL_UNSUPPORTED =
             "当前 game-save 服务只支持旧的同步协议，不能“保留本机并发布”；请升级 game-save 服务，或在 PC 端处理"
+        const val FOLDER_GRANT_LOST = "目录授权已失效"
+        const val ROOT_NOT_CHOSEN = "未启用 Root：请在 设置 → 关于 → 首次使用向导 中选择“使用 Root”"
+        const val ROOT_GRANTED_NOTICE =
+            "Root 可用。请确认在 Magisk 中选择了“永久”授权：后台自动备份无法弹出授权提示，只授权一次时会跳过 Root 来源。"
         const val KEY_PAGE = "ui.page"
         const val KEY_SYNC_RETURN = "ui.syncReturnPage"
         const val KEY_SELECTED_GAME = "ui.selectedGameKey"

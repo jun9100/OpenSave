@@ -77,7 +77,7 @@ class InstalledGameCatalog(private val context: Context) {
         val prefix = when (app.recognition) {
             AndroidGameRecognition.CONFIRMED -> "Android 游戏"
             AndroidGameRecognition.LIKELY -> "疑似 Android 游戏"
-            AndroidGameRecognition.CANDIDATE -> "应用候选"
+            AndroidGameRecognition.CANDIDATE -> "待确认应用"
         }
         listOf(
             RootSourcePreset("$prefix：${app.displayName}", "/data/user/0/${app.packageName}"),
@@ -102,12 +102,12 @@ class InstalledGameCatalog(private val context: Context) {
         .flatMap { app ->
             listOf(
                 RootSourcePreset(
-                    label = "未归类应用（候选）：${app.displayName}",
+                    label = "未归类应用（待确认）：${app.displayName}",
                     path = "/data/user/0/${app.packageName}",
                     enabledByDefault = false,
                 ),
                 RootSourcePreset(
-                    label = "未归类应用（候选，外部数据）：${app.displayName}",
+                    label = "未归类应用（待确认，外部数据）：${app.displayName}",
                     path = "/storage/emulated/0/Android/data/${app.packageName}",
                     enabledByDefault = false,
                 ),

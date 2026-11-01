@@ -1,8 +1,12 @@
 package com.jun9100.opensave.ui
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,11 +52,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.core.view.WindowCompat
@@ -68,6 +75,10 @@ import com.jun9100.opensave.BackTarget
 import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.OpenSavePage
 import com.jun9100.opensave.SourceViewModel
+import com.jun9100.opensave.activity.ActivityNotifications
+import com.jun9100.opensave.ui.onboarding.FirstRunWizard
+import com.jun9100.opensave.ui.onboarding.WizardActions
+import com.jun9100.opensave.ui.settings.readClipboardText
 import com.jun9100.opensave.ui.batch.BatchPlanDialog
 import com.jun9100.opensave.ui.batch.BatchReportSheet
 import com.jun9100.opensave.ui.batch.BatchStripState
@@ -105,6 +116,32 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
     )
     // Hoisted here so switching pages or between portrait and landscape keeps the scroll position.
     val libraryListState = rememberLazyListState()
+    val context = LocalContext.current
+    val notifications = rememberNotificationAccess(
+        asked = state.notificationsAsked,
+        onAsked = sourceViewModel::markNotificationsAsked,
+    )
+
+    // First, so the dialogs it opens (game-save editor, import, test failure) come up on top of it.
+    state.wizardStep?.let { step ->
+        FirstRunWizard(
+            state = state,
+            step = step,
+            notificationsAllowed = notifications.allowed,
+            actions = WizardActions(
+                onPickFolder = { folderPicker.launch(null) },
+                onChooseRoot = sourceViewModel::chooseRootAccess,
+                onChooseSaf = sourceViewModel::chooseSafAccess,
+                onEditCloud = sourceViewModel::openGameSaveEditor,
+                onImportFromClipboard = { sourceViewModel.importGameSaveConfig(readClipboardText(context)) },
+                onRequestNotifications = notifications.request,
+                onOpenNotificationSettings = notifications.openSettings,
+                onBack = sourceViewModel::wizardBack,
+                onNext = sourceViewModel::wizardNext,
+                onSkip = sourceViewModel::finishWizard,
+            ),
+        )
+    }
 
     state.pendingGameBackup?.let { entry ->
         GameBackupConfirmDialog(
@@ -244,6 +281,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                     OpenSavePage.SETTINGS -> SettingsPage(
                         state = state,
                         viewModel = sourceViewModel,
+                        notifications = notifications,
                         modifier = contentModifier,
                     )
                     OpenSavePage.SYNC -> SyncTasksPage(
@@ -453,6 +491,49 @@ private fun ImmersiveSystemBarsEffect(hide: Boolean) {
         }
         onDispose { }
     }
+}
+
+/**
+ * Whether notifications may be posted, and the one way to ask: the runtime
+ * permission (Android 13+) is requested at most once, from the wizard or 设置;
+ * after that only the system settings can change it.
+ */
+internal class NotificationAccess(
+    val allowed: Boolean,
+    /** Null when there is nothing left to ask. */
+    val request: (() -> Unit)?,
+    val openSettings: () -> Unit,
+)
+
+@Composable
+private fun rememberNotificationAccess(asked: Boolean, onAsked: () -> Unit): NotificationAccess {
+    val context = LocalContext.current
+    var allowed by remember { mutableStateOf(ActivityNotifications.allowed(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { allowed = ActivityNotifications.allowed(context) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        allowed = granted && ActivityNotifications.allowed(context)
+    }
+    val canAsk = !asked && !allowed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    return NotificationAccess(
+        allowed = allowed,
+        request = if (canAsk) {
+            {
+                onAsked()
+                launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        } else {
+            null
+        },
+        openSettings = {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        },
+    )
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

@@ -126,6 +126,9 @@ object GameStatusResolver {
             .mapValues { (key, action) -> CloudVerdict(action, latest[key].orEmpty()) }
     }
 
+    /** The newest ordinary snapshot of [libraryKey] (`sourceId::gameKey`); empty when it has none. */
+    fun latestRecordId(snapshots: List<SnapshotRecord>, libraryKey: String): String = latestRecordIds(snapshots)[libraryKey].orEmpty()
+
     private fun latestRecordIds(snapshots: List<SnapshotRecord>): Map<String, String> = snapshots
         .filter { it.gameKey != null && !it.isSafetyCopy }
         .groupBy { "${it.sourceId}::${it.gameKey}" }

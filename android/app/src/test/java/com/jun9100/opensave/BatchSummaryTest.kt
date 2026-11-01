@@ -7,7 +7,7 @@ class BatchSummaryTest {
     @Test
     fun backupSummaryListsOnlyNonZeroCounts() {
         assertEquals(
-            "批量备份完成：新建快照 3 款，无变化 2 款",
+            "批量备份完成：新建版本 3 款，无变化 2 款",
             BatchSummary.backup(created = 3, unchanged = 2, failed = 0, uploadFailed = 0, cloudPending = 0),
         )
         assertEquals(

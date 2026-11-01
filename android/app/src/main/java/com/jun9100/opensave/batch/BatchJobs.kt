@@ -8,6 +8,10 @@ import com.jun9100.opensave.GameSnapshotManifest
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.StorageOperationLock
+import com.jun9100.opensave.activity.ActivityEntry
+import com.jun9100.opensave.activity.ActivityKind
+import com.jun9100.opensave.activity.ActivityLevel
+import com.jun9100.opensave.activity.ActivityRecorder
 import com.jun9100.opensave.ops.GameCaptureOutcome
 import com.jun9100.opensave.ops.GameOperations
 import com.jun9100.opensave.ops.PendingUpload
@@ -60,8 +64,28 @@ internal object BatchJobs {
             return complete
         } finally {
             execution.findings()?.let(BatchCenter::publishFindings)
+            report?.let { ActivityRecorder.record(appContext, BatchActivity.entry(it)) }
             BatchCenter.finish(id, report)
         }
+    }
+}
+
+/** The 动态 line of a finished or stopped batch: its summary, and the first failures. */
+internal object BatchActivity {
+    private const val MAX_DETAIL_ITEMS = 5
+
+    fun entry(report: BatchReport): ActivityEntry {
+        val failed = report.items.filter { it.status == BatchItemStatus.FAILED }
+        val level = when {
+            failed.isNotEmpty() -> ActivityLevel.WARNING
+            report.endReason != null -> ActivityLevel.WARNING
+            report.count(BatchItemStatus.NEEDS_REVIEW) > 0 -> ActivityLevel.WARNING
+            else -> ActivityLevel.SUCCESS
+        }
+        val detail = failed.take(MAX_DETAIL_ITEMS).joinToString("；") { item ->
+            if (item.detail.isBlank()) item.name else "${item.name}：${item.detail}"
+        }
+        return ActivityEntry.create(ActivityKind.BATCH, level, report.summary, detail, atMillis = report.finishedAtMillis)
     }
 }
 

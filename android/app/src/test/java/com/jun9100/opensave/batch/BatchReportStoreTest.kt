@@ -65,4 +65,18 @@ class BatchReportStoreTest {
         val withUnknown = valid.replaceFirst("[", """[{"id":"x","operation":"FUTURE","startedAt":0,"finishedAt":0,"items":[]},""")
         assertEquals(listOf(report(1)), BatchReportStore.decode(withUnknown))
     }
+
+    @Test
+    fun aFinishedBatchBecomesOneActivityLineWithItsFailures() {
+        val failed = BatchActivity.entry(report(1))
+        assertEquals(com.jun9100.opensave.activity.ActivityKind.BATCH, failed.kind)
+        assertEquals(com.jun9100.opensave.activity.ActivityLevel.WARNING, failed.level)
+        assertEquals(report(1).summary, failed.text)
+        assertEquals("Other \"quoted\"\n名字：HTTP 502 - 服务器错误", failed.detail)
+        assertEquals(report(1).finishedAtMillis, failed.atMillis)
+
+        val clean = BatchActivity.entry(report(2).copy(items = report(2).items.take(1)))
+        assertEquals(com.jun9100.opensave.activity.ActivityLevel.SUCCESS, clean.level)
+        assertEquals("", clean.detail)
+    }
 }
