@@ -145,6 +145,8 @@
     gap: 8px;
   }
   .group {
+    /* In a column that scrolls: each group keeps its full height. */
+    flex-shrink: 0;
     border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
