@@ -1820,5 +1820,6 @@
   "home.library.bulkLabel": "Batch actions",
   "home.library.bulkLead": "With the selected games:",
   "home.library.bulkHelp": "Click games to pick them (Shift-click picks a range, Ctrl-click or a long press starts picking). Batches run one game at a time and end with a list of what was done, what failed and why, and what was skipped. Restoring and stopping tracking ask first.",
-  "shortcuts.page.help": "Help"
+  "shortcuts.page.help": "Help",
+  "home.tile.folderHintTitle": "Tracked at {path} — another tracked game has the same name"
 }

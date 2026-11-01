@@ -1598,5 +1598,6 @@
   "home.library.bulkLabel": "批量操作",
   "home.library.bulkLead": "对所选游戏：",
   "home.library.bulkHelp": "点击游戏卡片进行选择（Shift+点击选择一个范围，Ctrl+点击或长按开始多选）。批量操作逐个执行，结束后列出成功、失败（及原因）和跳过的项目。恢复和停止跟踪会先确认。",
-  "shortcuts.page.help": "帮助"
+  "shortcuts.page.help": "帮助",
+  "home.tile.folderHintTitle": "跟踪的文件夹：{path}（游戏库里还有同名的游戏）"
 }

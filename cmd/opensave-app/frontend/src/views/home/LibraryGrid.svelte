@@ -25,6 +25,7 @@
   import LibraryTile from './LibraryTile.svelte';
   import LibraryViewOptions from './LibraryViewOptions.svelte';
   import { bulkJob, startBulk, BULK_OPS, bulkUnavailable } from '../../lib/bulk.js';
+  import { folderHints } from '../../lib/folderhint.js';
   import CloudUpload from 'lucide-svelte/icons/cloud-upload';
   import History from 'lucide-svelte/icons/history';
   import RefreshCcwDot from 'lucide-svelte/icons/refresh-ccw-dot';
@@ -138,6 +139,8 @@
   // time, with progress and a per-game summary in BulkDialog, and a question
   // first for the ones that replace or remove something. The selection stays,
   // so one batch can follow another; stopping tracking ends it.
+  // Games tracked more than once under one name say which folder each is.
+  $: hints = folderHints(rows.map((r) => r.game));
   const picked = () => rows.filter((r) => libSelected.has(r.game.id)).map((r) => r.game);
   $: bulkBusy = !!$bulkJob && !$bulkJob.finished;
   $: bulkCtx = { cloudReady: !!$settings?.cloudSync?.ready, paused: !!$syncPause.paused };
@@ -304,6 +307,7 @@
         cover={$libraryView.cover}
         selecting={selectMode}
         selected={libSelected.has(game.id)}
+        folderHint={hints.get(game.id) ?? ''}
         on:open={(e) => tileOpen(game.id, e.detail)}
         on:longpress={() => tileLongPress(game.id)}
       />

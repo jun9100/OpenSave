@@ -22,6 +22,7 @@
   import { view, navigate, settings, stateLoaded, gameList, conflictCount, pairingRequests, syncActivity } from '../lib/stores.js';
   import { gameCover } from '../lib/api.js';
   import { t } from '../lib/i18n.js';
+  import { folderHints } from '../lib/folderhint.js';
   import CoverImage from './CoverImage.svelte';
   import { visibleGames } from '../lib/gameactions.js';
   import { openGameMenu } from '../lib/contextmenu.js';
@@ -49,6 +50,8 @@
   ];
 
   $: deviceName = $settings?.deviceName ?? '…';
+  // Same-name games say which folder each is (lib/folderhint.js).
+  $: hints = folderHints($visibleGames);
   $: filteredGames = $visibleGames.filter((g) => g.name.toLowerCase().includes(filter.toLowerCase()));
   $: activeSyncs = Object.values($syncActivity).filter((s) => s.state === 'running').length;
 
@@ -123,7 +126,9 @@
             revealed={revealed.has(game.id)}
           />
         </span>
-        <span class="game-name">{game.name}</span>
+        <span class="game-name" title={hints.has(game.id) ? game.savePath : null}
+          >{game.name}{#if hints.has(game.id)}<span class="game-hint">{hints.get(game.id)}</span>{/if}</span
+        >
         {#if game.playingSince}
           <span class="session" title={$t('sidebar.inSession')}><Gamepad2 size={13} /></span>
         {/if}
@@ -394,6 +399,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .game-hint {
+    margin-left: 6px;
+    font-size: 0.72em;
+    color: var(--text-faint);
   }
   /* The game being played: its name and a controller, in green. */
   .game.insession .game-name {

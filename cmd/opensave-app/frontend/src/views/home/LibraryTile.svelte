@@ -13,6 +13,7 @@
   import { COVER_STYLES } from '../../lib/libraryview.js';
   import { collections, isFavourite } from '../../lib/collections.js';
   import Star from 'lucide-svelte/icons/star';
+  import FolderOpen from 'lucide-svelte/icons/folder-open';
   import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
   import RefreshCw from 'lucide-svelte/icons/refresh-cw';
   import Gamepad2 from 'lucide-svelte/icons/gamepad-2';
@@ -28,6 +29,8 @@
   /** Its place in the first showing of the library, to come in after the
    *  ones before it; -1 to simply be there. */
   export let enter = -1;
+  /** Which folder this is, when another tracked game has the same name (lib/folderhint.js). */
+  export let folderHint = '';
 
   const dispatch = createEventDispatcher();
 
@@ -169,6 +172,9 @@
     <div class="name">
       {#if isFavourite($collections, game.id)}<span class="fav" title={$t('home.tile.inFavourites')}><Star size={12} /></span>{/if}{game.name}
     </div>
+    {#if folderHint}
+      <div class="folder-hint" title={$t('home.tile.folderHintTitle', { path: game.savePath })}><FolderOpen size={11} />{folderHint}</div>
+    {/if}
     <div class="status tone-{status.tone}">
       {#if status.tone === 'warn'}<TriangleAlert size={13} class="status-icon" />{:else if status.tone === 'playing'}<Gamepad2
           size={13}
@@ -340,6 +346,21 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .folder-hint {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: -2px 0 5px;
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: ltr;
+  }
+  .folder-hint :global(svg) {
+    flex: none;
   }
   .fav {
     display: inline-flex;
