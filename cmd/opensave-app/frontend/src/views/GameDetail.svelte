@@ -2,6 +2,7 @@
   import { slidingIndicator } from '../lib/motion.js';
   import { games } from '../lib/stores.js';
   import { createRunner } from '../lib/runner.js';
+  import { t } from '../lib/i18n.js';
   import GameHeader from './game/GameHeader.svelte';
   import SnapshotsTab from './game/SnapshotsTab.svelte';
   import BranchesTab from './game/BranchesTab.svelte';
@@ -21,12 +22,13 @@
   // One action at a time across the whole page — see lib/runner.js.
   const runner = createRunner();
 
-  const tabs = [
-    { id: 'snapshots', label: 'Snapshots', icon: History, component: SnapshotsTab },
-    { id: 'branches', label: 'Branches', icon: GitBranch, component: BranchesTab },
-    { id: 'cloud', label: 'Cloud', icon: Cloud, component: CloudTab },
-    { id: 'config', label: 'Configuration', icon: SlidersHorizontal, component: ConfigTab },
-    { id: 'danger', label: 'Manage', icon: Wrench, component: ManageTab }
+  // Reactive so the labels follow a language switch; the ids stay the same.
+  $: tabs = [
+    { id: 'snapshots', label: $t('game.tabs.snapshots'), icon: History, component: SnapshotsTab },
+    { id: 'branches', label: $t('game.tabs.branches'), icon: GitBranch, component: BranchesTab },
+    { id: 'cloud', label: $t('game.tabs.cloud'), icon: Cloud, component: CloudTab },
+    { id: 'config', label: $t('game.tabs.config'), icon: SlidersHorizontal, component: ConfigTab },
+    { id: 'danger', label: $t('game.tabs.manage'), icon: Wrench, component: ManageTab }
   ];
   let tab = 'snapshots';
 
@@ -52,21 +54,21 @@
 </script>
 
 {#if !game}
-  <div class="empty"><h3>Game not found</h3></div>
+  <div class="empty"><h3>{$t('game.tabs.gameNotFound')}</h3></div>
 {:else}
   {#key params.gameId}
     <GameHeader {game} {runner} />
 
     <div class="pill-tabs tabs" use:slidingIndicator={{ inset: 10 }}>
-      {#each tabs as t (t.id)}
-        <button class:active={tab === t.id} on:click={() => (tab = t.id)}><svelte:component this={t.icon} size={15} />{t.label}</button>
+      {#each tabs as tb (tb.id)}
+        <button class:active={tab === tb.id} on:click={() => (tab = tb.id)}><svelte:component this={tb.icon} size={15} />{tb.label}</button>
       {/each}
     </div>
 
-    {#each tabs as t (t.id)}
-      {#if opened.has(t.id)}
-        <div hidden={tab !== t.id}>
-          <svelte:component this={t.component} {game} {runner} {...t.id === 'snapshots' ? { focus: params.snapshot } : {}} />
+    {#each tabs as tb (tb.id)}
+      {#if opened.has(tb.id)}
+        <div hidden={tab !== tb.id}>
+          <svelte:component this={tb.component} {game} {runner} {...tb.id === 'snapshots' ? { focus: params.snapshot } : {}} />
         </div>
       {/if}
     {/each}

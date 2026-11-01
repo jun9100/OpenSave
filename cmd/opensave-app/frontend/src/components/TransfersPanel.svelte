@@ -8,6 +8,7 @@
   import CircleX from 'lucide-svelte/icons/circle-x';
   import X from 'lucide-svelte/icons/x';
   import { api } from '../lib/api.js';
+  import { t, trError } from '../lib/i18n.js';
   import { games, syncActivity, navigate } from '../lib/stores.js';
   import { timeAgo } from '../lib/timeago.js';
   import { amountLabel, peerLabel, speedLabel, withNames } from '../lib/transfers.js';
@@ -22,7 +23,7 @@
       data = await api.get('/api/transfers');
       error = '';
     } catch (e) {
-      error = e.message;
+      error = trError(e.message);
     }
     now = Date.now();
   }
@@ -38,53 +39,53 @@
 
   $: shown = withNames(data, $games);
 
-  function open(t) {
-    if ($games[t.gameId]) {
+  function open(tr) {
+    if ($games[tr.gameId]) {
       dispatch('close');
-      navigate('game', { gameId: t.gameId });
+      navigate('game', { gameId: tr.gameId });
     }
   }
 </script>
 
-<div class="panel" role="dialog" aria-label="Transfers">
+<div class="panel" role="dialog" aria-label={$t('transfers.title')}>
   <div class="head">
-    <h3>Transfers</h3>
-    <button class="btn small ghost icon" aria-label="Close" title="Close" on:click={() => dispatch('close')}><X size={14} /></button>
+    <h3>{$t('transfers.title')}</h3>
+    <button class="btn small ghost icon" aria-label={$t('transfers.close')} title={$t('transfers.close')} on:click={() => dispatch('close')}><X size={14} /></button>
   </div>
 
   {#if error}
-    <p class="empty">Couldn't read transfers: {error}</p>
+    <p class="empty">{$t('transfers.loadError', { error })}</p>
   {:else if !data}
     <div class="skeleton" style="height: 44px; margin: 10px 14px"></div>
   {:else if shown.active.length === 0 && shown.recent.length === 0}
-    <p class="empty">Nothing has moved between your devices since OpenSave started.</p>
+    <p class="empty">{$t('transfers.empty')}</p>
   {:else}
     {#if shown.active.length}
-      <h4>Now</h4>
-      {#each shown.active as t}
-        <button class="row" on:click={() => open(t)}>
-          <span class="dir {t.direction}"><svelte:component this={t.direction === 'upload' ? ArrowUp : ArrowDown} size={14} /></span>
+      <h4>{$t('transfers.now')}</h4>
+      {#each shown.active as tr}
+        <button class="row" on:click={() => open(tr)}>
+          <span class="dir {tr.direction}"><svelte:component this={tr.direction === 'upload' ? ArrowUp : ArrowDown} size={14} /></span>
           <span class="main">
-            <span class="name">{t.name}</span>
-            <span class="sub">{peerLabel(t)}{#if amountLabel(t)}{' · '}{amountLabel(t)}{/if}{#if speedLabel(t.speedBytesPerSec)}{' · '}{speedLabel(t.speedBytesPerSec)}{/if}</span>
-            <span class="bar"><span style="width: {Math.max(3, t.percentage ?? 0)}%"></span></span>
+            <span class="name">{tr.name}</span>
+            <span class="sub">{peerLabel(tr)}{#if amountLabel(tr)}{' · '}{amountLabel(tr)}{/if}{#if speedLabel(tr.speedBytesPerSec)}{' · '}{speedLabel(tr.speedBytesPerSec)}{/if}</span>
+            <span class="bar"><span style="width: {Math.max(3, tr.percentage ?? 0)}%"></span></span>
           </span>
-          <span class="pct">{t.percentage ?? 0}%</span>
+          <span class="pct">{tr.percentage ?? 0}%</span>
         </button>
       {/each}
     {/if}
     {#if shown.recent.length}
-      <h4>Recently</h4>
-      {#each shown.recent.slice(0, 20) as t}
-        <button class="row" on:click={() => open(t)} title={t.error || ''}>
-          <span class="dir {t.direction}"><svelte:component this={t.direction === 'upload' ? ArrowUp : ArrowDown} size={14} /></span>
+      <h4>{$t('transfers.recently')}</h4>
+      {#each shown.recent.slice(0, 20) as tr}
+        <button class="row" on:click={() => open(tr)} title={tr.error ? trError(tr.error) : ''}>
+          <span class="dir {tr.direction}"><svelte:component this={tr.direction === 'upload' ? ArrowUp : ArrowDown} size={14} /></span>
           <span class="main">
-            <span class="name">{t.name}</span>
-            <span class="sub">{peerLabel(t)}{#if amountLabel(t)}{' · '}{amountLabel(t)}{/if}{#if t.error}{' · '}{t.error}{/if}</span>
+            <span class="name">{tr.name}</span>
+            <span class="sub">{peerLabel(tr)}{#if amountLabel(tr)}{' · '}{amountLabel(tr)}{/if}{#if tr.error}{' · '}{trError(tr.error)}{/if}</span>
           </span>
           <span class="end">
-            {#if t.state === 'error'}<span class="bad"><CircleX size={13} /></span>{:else}<span class="good"><CircleCheck size={13} /></span>{/if}
-            <span class="when">{t.endedAt ? timeAgo(t.endedAt, now) : ''}</span>
+            {#if tr.state === 'error'}<span class="bad"><CircleX size={13} /></span>{:else}<span class="good"><CircleCheck size={13} /></span>{/if}
+            <span class="when">{tr.endedAt ? timeAgo(tr.endedAt, now) : ''}</span>
           </span>
         </button>
       {/each}

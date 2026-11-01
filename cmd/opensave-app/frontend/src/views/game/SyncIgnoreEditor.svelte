@@ -10,6 +10,7 @@
   import { onDestroy } from 'svelte';
   import { api } from '../../lib/api.js';
   import { addExclusion, addNegation, removeDirectExclusion } from '../../lib/ignorerules.js';
+  import { t, segments, trError } from '../../lib/i18n.js';
   import Spinner from '../../components/ui/Spinner.svelte';
   import Chevron from '../../components/ui/Chevron.svelte';
 
@@ -82,11 +83,9 @@
 </script>
 
 <div class="section">
-  <h4>Files that shouldn't sync</h4>
+  <h4>{$t('game.ignore.title')}</h4>
   <p class="hint">
-    Some games keep device-specific settings in the same folder as the save, and copying
-    those to another machine can break the game there. List them here and they stay put:
-    never sent, never received, never deleted by a sync.
+    {$t('game.ignore.intro')}
   </p>
   <textarea
     class="box"
@@ -96,35 +95,35 @@
     bind:value
   ></textarea>
   <span class="hint">
-    One pattern per line, like a <code>.gitignore</code> — <code>Config.gs</code> by name,
-    <code>/Config.gs</code> only at the top, <code>*.log</code> by extension,
-    <code>logs/</code> for a whole folder, <code>!keep.log</code> for an exception. Case
-    doesn't matter. Set the same list on your other devices; each one applies its own.
+    {#each segments($t('game.ignore.syntax'), { gitignore: '.gitignore', byName: 'Config.gs', top: '/Config.gs', ext: '*.log', folder: 'logs/', exception: '!keep.log' }, ['gitignore', 'byName', 'top', 'ext', 'folder', 'exception']) as part}{#if part.bold}<code
+          >{part.text}</code
+        >{:else}{part.text}{/if}{/each}
   </span>
   <span class="hint">
-    <strong>Snapshots still capture these files</strong>, so a restore brings them back —
-    excluding something stops it travelling, it never stops it being backed up.
+    {#each segments($t('game.ignore.snapshots'), { captured: $t('game.ignore.snapshotsStrong') }, ['captured']) as part}{#if part.bold}<strong
+          >{part.text}</strong
+        >{:else}{part.text}{/if}{/each}
   </span>
 
   <div class="picker-head">
     <button class="btn small" on:click={togglePicker}>
-      <Chevron open={showFiles} /> Pick from your save folder
+      <Chevron open={showFiles} /> {$t('game.ignore.pick')}
     </button>
     {#if showFiles && saveFiles}
       <span class="hint picker-count">
-        {excludedCount} of {saveFiles.length} files excluded
-        {#if truncated}· first {saveFiles.length} shown{/if}
+        {$t('game.ignore.count', { excluded: excludedCount, total: saveFiles.length })}
+        {#if truncated}{$t('game.ignore.truncated', { count: saveFiles.length })}{/if}
       </span>
     {/if}
   </div>
 
   {#if showFiles}
     {#if filesError}
-      <p class="hint err">{filesError}</p>
+      <p class="hint err">{trError(filesError)}</p>
     {:else if !saveFiles}
-      <p class="hint"><Spinner size={13} /> Reading the save folder…</p>
+      <p class="hint"><Spinner size={13} /> {$t('game.ignore.reading')}</p>
     {:else if saveFiles.length === 0}
-      <p class="hint">This game's folders are empty, so there is nothing to pick yet.</p>
+      <p class="hint">{$t('game.ignore.empty')}</p>
     {:else}
       <div class="picker">
         {#each saveFiles as f (f.location + '/' + f.path)}
@@ -133,17 +132,18 @@
             <span class="file-name">
               {#if f.location}<span class="file-loc">{f.location} ›</span>{/if}{f.path}
             </span>
-            <span class="verdict">{f.excluded ? "won't sync" : 'syncs'}</span>
+            <span class="verdict">{f.excluded ? $t('game.ignore.wontSync') : $t('game.ignore.syncs')}</span>
           </label>
         {/each}
       </div>
       <span class="hint">
-        Ticking a file writes the pattern for you, anchored so it can only ever mean that
-        one file. Unticking a file caught by a wildcard adds a <code>!</code> exception
-        rather than deleting the wildcard.
+        {#each segments($t('game.ignore.tickHint'), { bang: '!' }, ['bang']) as part}{#if part.bold}<code
+              >{part.text}</code
+            >{:else}{part.text}{/if}{/each}
         {#if severalFolders}
-          A pattern applies to <strong>every one of this game's folders</strong>, so a
-          name that appears in two of them is excluded in both.
+          {#each segments($t('game.ignore.severalFolders'), { every: $t('game.ignore.severalFoldersStrong') }, ['every']) as part}{#if part.bold}<strong
+                >{part.text}</strong
+              >{:else}{part.text}{/if}{/each}
         {/if}
       </span>
     {/if}

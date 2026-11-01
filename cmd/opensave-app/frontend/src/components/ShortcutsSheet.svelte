@@ -3,15 +3,19 @@
   import Keyboard from 'lucide-svelte/icons/keyboard';
   import Modal from './ui/Modal.svelte';
   import { SHORTCUTS } from '../lib/shortcuts.js';
+  import { t } from '../lib/i18n.js';
 
   export let onClose = () => {};
   const isMac = /Mac/i.test(globalThis.navigator?.platform ?? '');
   const show = (keys) => (isMac ? keys.replace('Ctrl', '⌘') : keys);
+  // Read again when the language changes: the descriptions are getters.
+  const describe = (list, _t) => list.map(([keys, what]) => [keys, what]);
+  $: rows = describe(SHORTCUTS, $t);
 </script>
 
-<Modal title="Keyboard shortcuts" icon={Keyboard} {onClose} width={520} height="auto">
+<Modal title={$t('shortcuts.title')} icon={Keyboard} {onClose} width={520} height="auto">
   <dl>
-    {#each SHORTCUTS as [keys, what]}
+    {#each rows as [keys, what]}
       <dt>{#each show(keys).split(' ') as k}<kbd>{k}</kbd>{/each}</dt>
       <dd>{what}</dd>
     {/each}

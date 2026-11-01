@@ -12,6 +12,8 @@
 // cryptographic generator and whose internal state can be recovered from its
 // own output.
 
+import { tt } from './i18n.js';
+
 // A 32-character alphabet with the shapes people mistype removed: no i, l, o
 // or u, so nothing is confusable with 1 or 0 when read off a screen or over a
 // call.
@@ -33,7 +35,7 @@ export function generateRoomCode(randomBytes = defaultRandomBytes) {
 	const n = GROUPS * GROUP_LEN;
 	const bytes = randomBytes(n);
 	if (!bytes || bytes.length < n) {
-		throw new Error('room code generation got too few random bytes');
+		throw new Error(tt('app.roomCode.tooFewBytes'));
 	}
 	let out = '';
 	for (let i = 0; i < n; i++) {
@@ -54,7 +56,7 @@ export function roomCodeEntropyBits() {
 function defaultRandomBytes(n) {
 	const c = globalThis.crypto;
 	if (!c || typeof c.getRandomValues !== 'function') {
-		throw new Error('no secure random source available for the room code');
+		throw new Error(tt('app.roomCode.noSecureRandom'));
 	}
 	return c.getRandomValues(new Uint8Array(n));
 }

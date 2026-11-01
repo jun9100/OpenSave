@@ -71,32 +71,65 @@ func (a *App) startTray() {
 	go systray.Run(func() {
 		systray.SetIcon(trayIconBytes())
 		systray.SetTitle("OpenSave")
-		systray.SetTooltip("OpenSave — game save sync")
+		systray.SetTooltip(T("OpenSave — game save sync"))
 
-		statusItem := systray.AddMenuItem("Starting…", "Where your saves stand")
+		// Every fixed label, in English, so a change of language (the window
+		// telling lang.go it is now in Chinese, say) can say them all again.
+		type label struct {
+			item       *systray.MenuItem
+			title, tip string
+		}
+		var labels []label
+		add := func(item *systray.MenuItem, title, tip string) *systray.MenuItem {
+			labels = append(labels, label{item, title, tip})
+			return item
+		}
+		menuItem := func(title, tip string) *systray.MenuItem {
+			return add(systray.AddMenuItem(T(title), T(tip)), title, tip)
+		}
+
+		statusItem := systray.AddMenuItem(T("Starting…"), T("Where your saves stand"))
 		statusItem.Disable()
-		recentMenu := systray.AddMenuItem("Recent activity", "The last few things that happened")
+		recentMenu := menuItem("Recent activity", "The last few things that happened")
 		recentItems := make([]*systray.MenuItem, trayRecentLines)
 		for i := range recentItems {
 			recentItems[i] = recentMenu.AddSubMenuItem("", "")
 			recentItems[i].Disable()
 			recentItems[i].Hide()
 		}
-		activityItem := recentMenu.AddSubMenuItem("Open Activity", "See everything that happened")
+		activityItem := add(recentMenu.AddSubMenuItem(T("Open Activity"), T("See everything that happened")), "Open Activity", "See everything that happened")
 		systray.AddSeparator()
 
-		openItem := systray.AddMenuItem("Open OpenSave", "Show the OpenSave window")
-		syncItem := systray.AddMenuItem("Sync all games", "Sync every tracked game now")
-		snapshotItem := systray.AddMenuItem("Snapshot every game now", "Take a snapshot of every tracked game")
-		pauseMenu := systray.AddMenuItem("Pause syncing", "Stop syncing for a while; snapshots are still taken")
+		openItem := menuItem("Open OpenSave", "Show the OpenSave window")
+		syncItem := menuItem("Sync all games", "Sync every tracked game now")
+		snapshotItem := menuItem("Snapshot every game now", "Take a snapshot of every tracked game")
+		pauseMenu := menuItem("Pause syncing", "Stop syncing for a while; snapshots are still taken")
 		pauseItems := make([]*systray.MenuItem, len(trayPauseChoices))
 		for i, c := range trayPauseChoices {
-			pauseItems[i] = pauseMenu.AddSubMenuItem(c.label, "")
+			pauseItems[i] = add(pauseMenu.AddSubMenuItem(T(c.label), ""), c.label, "")
 		}
-		resumeItem := systray.AddMenuItem("Resume syncing", "Start syncing again and catch up")
+		resumeItem := menuItem("Resume syncing", "Start syncing again and catch up")
 		resumeItem.Hide()
 		systray.AddSeparator()
-		quitItem := systray.AddMenuItem("Quit", "Stop syncing and exit")
+		quitItem := menuItem("Quit", "Stop syncing and exit")
+
+		relabel := func() {
+			for _, l := range labels {
+				l.item.SetTitle(T(l.title))
+				if l.tip != "" {
+					l.item.SetTooltip(T(l.tip))
+				}
+			}
+		}
+		relabelCh := make(chan struct{}, 1)
+		langMu.Lock()
+		onLanguage = func() {
+			select {
+			case relabelCh <- struct{}{}:
+			default:
+			}
+		}
+		langMu.Unlock()
 
 		trayReady.Store(true)
 
@@ -158,6 +191,9 @@ func (a *App) startTray() {
 				case <-ticker.C:
 					refresh()
 				case <-prompt:
+					refresh()
+				case <-relabelCh:
+					relabel()
 					refresh()
 				case <-openItem.ClickedCh:
 					a.showWindow()

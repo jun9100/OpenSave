@@ -5,6 +5,7 @@
 // — and not from the log, which starts afresh each launch and is mostly
 // routine.
 import { snapshotKind } from './snapshots.js';
+import { tt } from './i18n.js';
 
 const ms = (t) => (typeof t === 'number' ? t : new Date(t).getTime());
 
@@ -38,7 +39,7 @@ export function recentEvents(games, peers = {}, { limit = 5, now = new Date() } 
       // A device since unpaired still has its time on record; it is not news.
       if (!(peerId in peers)) continue;
       const at = ms(stamp);
-      if (Number.isFinite(at)) events.push({ kind: 'sync', game, title: `Synced with ${peers[peerId].name ?? 'a device'}`, at });
+      if (Number.isFinite(at)) events.push({ kind: 'sync', game, title: tt('overview.syncedWith', { name: peers[peerId].name ?? tt('overview.aDevice') }), at });
     }
   }
   events.sort((a, b) => b.at - a.at);

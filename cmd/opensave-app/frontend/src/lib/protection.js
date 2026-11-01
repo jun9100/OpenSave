@@ -9,6 +9,7 @@
 // The fields come from the peers API; see PeerProtection in
 // internal/p2p/payloadseal.go. The condition for "encrypted" is deliberately
 // the same one the send path applies, so the two cannot drift apart.
+import { tt } from './i18n.js';
 
 /**
  * @param {object} peer A peer entry from the peers payload.
@@ -24,11 +25,12 @@ export function protectionState(peer) {
   return peer?.hasKey ? 'pending' : 'open';
 }
 
+// Getters, so each label is read in the language chosen at that moment.
 export const PROTECTION_LABELS = {
-  sealed: 'Encrypted',
-  pending: 'Encrypting shortly',
-  open: 'Not encrypted',
-  direct: 'Direct connection',
+  get sealed() { return tt('protection.label.sealed'); },
+  get pending() { return tt('protection.label.pending'); },
+  get open() { return tt('protection.label.open'); },
+  get direct() { return tt('protection.label.direct'); },
 };
 
 export const PROTECTION_ICONS = {
@@ -39,13 +41,10 @@ export const PROTECTION_ICONS = {
 };
 
 export const PROTECTION_DETAILS = {
-  sealed:
-    'Saves sent to this device are sealed between the two of you. The relay — and anyone else holding your room code — passes them on without being able to read them.',
-  pending:
-    'The key is in place. Encryption starts as soon as this device checks in, which usually takes a few seconds.',
-  open: 'Saves sent to this device over the internet can be read by anyone holding your room code, including whoever runs the relay. Pairing over a relay did not keep an encryption key in older versions. Unpair and pair these two devices again to fix it.',
-  direct:
-    'This device is reached straight over your local network, so nothing passes through a relay. Local traffic is not encrypted, so treat an untrusted network accordingly.',
+  get sealed() { return tt('protection.detail.sealed'); },
+  get pending() { return tt('protection.detail.pending'); },
+  get open() { return tt('protection.detail.open'); },
+  get direct() { return tt('protection.detail.direct'); },
 };
 
 /**

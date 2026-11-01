@@ -2,6 +2,7 @@ import './app.css';
 import App from './App.svelte';
 import { appearance, applyAppearance } from './lib/appearance.js';
 import { native } from './lib/api.js';
+import { shownLocale } from './lib/i18n.js';
 // Registers where collection lists from the daemon go; must be in place
 // before the first state arrives (see onCollections in lib/stores.js).
 import './lib/collections.js';
@@ -24,6 +25,10 @@ appearance.subscribe((v) => {
 });
 dark?.addEventListener?.('change', apply);
 reduce?.addEventListener?.('change', apply);
+
+// The tray menu and the native dialogs are drawn by the Go side
+// (cmd/opensave-app/lang.go); they follow the language shown here.
+shownLocale.subscribe((l) => window.go?.main?.App?.SetLanguage?.(l));
 
 const app = new App({ target: document.getElementById('app') });
 

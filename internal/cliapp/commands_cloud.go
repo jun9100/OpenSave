@@ -511,9 +511,15 @@ func cloudPush(asJSON bool, args []string) int {
 		return emitRawJSON(raw)
 	}
 	var res struct {
-		Uploaded int `json:"uploaded"`
+		Uploaded int    `json:"uploaded"`
+		Failed   int    `json:"failed"`
+		Error    string `json:"error"`
 	}
 	_ = json.Unmarshal(raw, &res)
+	if res.Failed > 0 {
+		return fail(asJSON, fmt.Errorf("uploaded %s for %s, %d failed: %s",
+			plural(res.Uploaded, "snapshot", "snapshots"), args[0], res.Failed, res.Error))
+	}
 	if res.Uploaded > 0 {
 		success("Uploaded %s for %s", plural(res.Uploaded, "snapshot", "snapshots"), bold(args[0]))
 	} else {

@@ -11,7 +11,7 @@
   // "Select" turns the grid into a multi-select, to act on several games at
   // once (e.g. clear a batch of wrongly-tracked entries) without going in and
   // out of each one.
-  import { navigate, toast } from '../../lib/stores.js';
+  import { navigate, settings, syncPause } from '../../lib/stores.js';
   import { t } from '../../lib/i18n.js';
   import { api } from '../../lib/api.js';
   import Camera from 'lucide-svelte/icons/camera';
@@ -24,7 +24,12 @@
   import FilterTabs from '../../components/ui/FilterTabs.svelte';
   import LibraryTile from './LibraryTile.svelte';
   import LibraryViewOptions from './LibraryViewOptions.svelte';
-  import { untrackGames } from '../../lib/gameactions.js';
+  import { bulkJob, startBulk, BULK_OPS, bulkUnavailable } from '../../lib/bulk.js';
+  import CloudUpload from 'lucide-svelte/icons/cloud-upload';
+  import History from 'lucide-svelte/icons/history';
+  import RefreshCcwDot from 'lucide-svelte/icons/refresh-ccw-dot';
+  import PauseCircle from 'lucide-svelte/icons/circle-pause';
+  import Trash2 from 'lucide-svelte/icons/trash-2';
   import { collections, collectionFilter, collectionChips, inCollection } from '../../lib/collections.js';
   import Star from 'lucide-svelte/icons/star';
   import LayoutGrid from 'lucide-svelte/icons/layout-grid';
@@ -129,44 +134,53 @@
     anchor = null;
   }
 
-  // Things to do to all of them at once. The selection stays, so one can
-  // follow another; untracking ends it.
+  // Things to do to all of them at once, through lib/bulk.js: one game at a
+  // time, with progress and a per-game summary in BulkDialog, and a question
+  // first for the ones that replace or remove something. The selection stays,
+  // so one batch can follow another; stopping tracking ends it.
   const picked = () => rows.filter((r) => libSelected.has(r.game.id)).map((r) => r.game);
-  let bulkBusy = false;
-  async function forEachPicked(verb, run) {
+  $: bulkBusy = !!$bulkJob && !$bulkJob.finished;
+  $: bulkCtx = { cloudReady: !!$settings?.cloudSync?.ready, paused: !!$syncPause.paused };
+  async function bulk(op) {
     const games = picked();
     if (games.length === 0 || bulkBusy) return;
-    bulkBusy = true;
-    const failed = [];
-    for (const g of games) {
-      try {
-        await run(g);
-      } catch (e) {
-        failed.push(`${g.name}: ${e.message}`);
-      }
-    }
-    bulkBusy = false;
-    const done = games.length - failed.length;
-    if (failed.length) toast($t('home.library.bulkPartial', { verb, done, total: games.length, failed: failed.join('; ') }), 'error');
-    else toast($t('home.library.bulkDone', { verb, n: done }), 'success');
+    const results = await startBulk(op, games);
+    if (results && op === 'untrack') stopSelecting();
   }
-  const snapshotPicked = () =>
-    forEachPicked($t('home.library.verbSnapshot'), (g) => api.post(`/api/games/${g.id}/snapshot`, { comment: '' }));
-  const syncPicked = () => forEachPicked($t('home.library.verbSync'), (g) => api.post(`/api/games/${g.id}/sync`, {}));
-  const favouritePicked = () =>
-    forEachPicked($t('home.library.verbFavourite'), (g) => api.post('/api/collections/favourites/games', { gameId: g.id, in: true }));
-  // "All" is what is on screen: selecting games a filter is hiding, to then
-  // untrack them, would act on things nobody was looking at.
+  // Whether cloud backup is set up decides what a batch can offer, and it can
+  // change from outside this window (the CLI, another screen): asked afresh
+  // each time selecting starts.
+  $: if (selectMode) refreshSettings();
+  async function refreshSettings() {
+    try {
+      settings.set(await api.get('/api/settings'));
+    } catch {
+      // The last known settings are good enough to draw the buttons.
+    }
+  }
+  // "Select all" is what is on screen: selecting games a filter is hiding,
+  // to then act on them, would act on things nobody was looking at. The whole
+  // library is offered separately, and the count says how many of those
+  // picked are out of sight.
   $: allSelected = shown.length > 0 && shown.every((r) => libSelected.has(r.game.id));
+  $: hiddenPicked = [...libSelected].filter((id) => !shown.some((r) => r.game.id === id)).length;
   function toggleSelectAll() {
     libSelected = allSelected ? new Set() : new Set(shown.map((r) => r.game.id));
   }
-  function untrackSelected() {
-    const games = picked();
-    if (games.length === 0) return;
-    stopSelecting();
-    untrackGames(games);
+  const selectLibrary = () => (libSelected = new Set(rows.map((r) => r.game.id)));
+  function invertSelection() {
+    libSelected = new Set(shown.map((r) => r.game.id).filter((id) => !libSelected.has(id)));
   }
+  const BULK_BUTTONS = [
+    ['snapshot', Camera],
+    ['cloud', CloudUpload],
+    ['restore', History],
+    ['sync', RefreshCw],
+    ['enableSync', RefreshCcwDot],
+    ['disableSync', PauseCircle],
+    ['favourite', Star],
+    ['untrack', Trash2]
+  ];
 </script>
 
 <svelte:window
@@ -189,38 +203,17 @@
   />
   <div class="spacer"></div>
   {#if selectMode}
-    <span class="select-count">{$t('home.library.selectedCount', { n: libSelected.size })}</span>
-    <button class="btn small" on:click={toggleSelectAll}>
-      {allSelected ? $t('home.library.unselectAll') : $t('home.library.selectAll', { count: shown.length })}
+    <span class="select-count">
+      {$t('home.library.selectedCount', { n: libSelected.size })}{#if hiddenPicked}<span class="hidden-note">{$t('home.library.hiddenPicked', { n: hiddenPicked })}</span>{/if}
+    </span>
+    <button class="btn small" on:click={toggleSelectAll} title={filtering ? $t('home.library.selectFilteredTitle') : ''}>
+      {allSelected ? $t('home.library.unselectAll') : filtering ? $t('home.library.selectFiltered', { count: shown.length }) : $t('home.library.selectAll', { count: shown.length })}
     </button>
-    <button
-      class="btn small"
-      disabled={libSelected.size === 0 || bulkBusy}
-      on:click={snapshotPicked}
-      title={$t('home.library.snapshotTitle')}
-    >
-      <Camera size={14} />{$t('home.library.snapshot')}
-    </button>
-    <button
-      class="btn small"
-      disabled={libSelected.size === 0 || bulkBusy}
-      on:click={syncPicked}
-      title={$t('home.library.syncTitle')}
-    >
-      <RefreshCw size={14} />{$t('home.library.sync')}
-    </button>
-    <button
-      class="btn small"
-      disabled={libSelected.size === 0 || bulkBusy}
-      on:click={favouritePicked}
-      title={$t('home.library.favouriteTitle')}
-    >
-      <Star size={14} />{$t('home.library.favourite')}
-    </button>
-    <button class="btn small danger" disabled={libSelected.size === 0} on:click={untrackSelected}>
-      {$t('home.library.untrackSelected')}
-    </button>
-    <button class="btn small" on:click={stopSelecting}>{$t('common.cancel')}</button>
+    {#if filtering && libSelected.size < rows.length}
+      <button class="btn small" on:click={selectLibrary} title={$t('home.library.wholeLibraryTitle')}>{$t('home.library.wholeLibrary', { count: rows.length })}</button>
+    {/if}
+    <button class="btn small" on:click={invertSelection} disabled={shown.length === 0}>{$t('home.library.invert')}</button>
+    <button class="btn small" on:click={stopSelecting}>{$t('home.library.doneSelecting')}</button>
   {:else}
     <label class="sort">
       <span>{$t('home.library.sort')}</span>
@@ -254,6 +247,25 @@
     <button class="btn small" on:click={toggleSelectMode}><SquareCheckBig size={14} />{$t('home.library.select')}</button>
   {/if}
 </div>
+
+{#if selectMode}
+  <div class="bulkbar" role="toolbar" aria-label={$t('home.library.bulkLabel')}>
+    <span class="bulk-lead">{$t('home.library.bulkLead')}</span>
+    {#each BULK_BUTTONS as [op, icon]}
+      {@const why = bulkUnavailable(op, bulkCtx)}
+      <button
+        class="btn small"
+        class:danger={BULK_OPS[op].danger}
+        disabled={libSelected.size === 0 || bulkBusy || !!why}
+        title={why || BULK_OPS[op].hint}
+        on:click={() => bulk(op)}
+      >
+        <svelte:component this={icon} size={14} />{BULK_OPS[op].label}
+      </button>
+    {/each}
+  </div>
+  <p class="bulk-help">{$t('home.library.bulkHelp')}</p>
+{/if}
 
 {#if filters.length > 1 || chips.length}
   <div class="chips">
@@ -315,6 +327,31 @@
   }
   .toolbar h3 {
     margin-right: 6px;
+  }
+  .bulkbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .bulk-lead {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-right: 4px;
+  }
+  .bulk-help {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    margin: 0 2px 12px;
+  }
+  .hidden-note {
+    color: var(--text-faint);
+    font-weight: 400;
   }
   .search {
     width: 220px;

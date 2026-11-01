@@ -1,10 +1,15 @@
 <script>
+  import { t } from '../../lib/i18n.js';
+
   export let value = '';
-  export let placeholder = 'Filter…';
+  /** Left unset, it says "Filter…" in the chosen language. */
+  export let placeholder = null;
+
+  $: shown = placeholder ?? $t('ui.filter');
 </script>
 
 <!-- data-find: what Ctrl+F focuses (see components/Shortcuts.svelte). -->
-<input class="search" data-find {placeholder} aria-label={placeholder} bind:value />
+<input class="search" data-find placeholder={shown} aria-label={shown} bind:value />
 
 <style>
   .search {

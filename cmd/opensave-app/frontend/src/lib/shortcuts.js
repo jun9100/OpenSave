@@ -1,32 +1,42 @@
 // Keyboard shortcuts: which keys do what, in one list, so the shortcuts
 // sheet shows exactly what the handler does and cannot drift from it.
 import { writable } from 'svelte/store';
+import { tt } from './i18n.js';
 
 /** Whether the Ctrl+K palette and the shortcuts list are open — stores, so
  *  a button elsewhere (the status bar's) can open them too. */
 export const paletteOpen = writable(false);
 export const shortcutsOpen = writable(false);
 
-// Pages in the order of the sidebar, for Ctrl+1 … Ctrl+6.
+// Pages in the order of the sidebar, for Ctrl+1 … Ctrl+6. The labels are
+// getters, so they are in the language chosen when they are read.
 export const PAGES = [
-  { id: 'home', label: 'Home' },
-  { id: 'devices', label: 'Devices' },
-  { id: 'cloud', label: 'Cloud Backup' },
-  { id: 'activity', label: 'Activity' },
-  { id: 'settings', label: 'Settings' },
-  { id: 'changelog', label: 'Changelog' }
+  { id: 'home', get label() { return tt('shortcuts.page.home'); } },
+  { id: 'devices', get label() { return tt('shortcuts.page.devices'); } },
+  { id: 'cloud', get label() { return tt('shortcuts.page.cloud'); } },
+  { id: 'activity', get label() { return tt('shortcuts.page.activity'); } },
+  { id: 'settings', get label() { return tt('shortcuts.page.settings'); } },
+  { id: 'help', get label() { return tt('shortcuts.page.help'); } },
+  { id: 'changelog', get label() { return tt('shortcuts.page.changelog'); } }
 ];
+
+/** A [keys, what they do] pair whose second half is worked out when read. */
+function row(keys, describe) {
+  const r = [keys, ''];
+  Object.defineProperty(r, 1, { get: describe, enumerable: true });
+  return r;
+}
 
 /** For the sheet: [keys, what they do], in the order shown. */
 export const SHORTCUTS = [
-  ['Ctrl K', 'Jump to a game, a page or an action'],
-  ['Ctrl F', 'Search the page you are on'],
-  ...PAGES.map((p, i) => [`Ctrl ${i + 1}`, `Go to ${p.label}`]),
-  ['Ctrl ,', 'Settings'],
-  ['← → ↑ ↓', 'Move between games in the library'],
-  ['Shift F10', 'Actions for the focused game (or the menu key)'],
-  ['?', 'This list'],
-  ['Esc', 'Close a dialog or menu']
+  row('Ctrl K', () => tt('shortcuts.jump')),
+  row('Ctrl F', () => tt('shortcuts.find')),
+  ...PAGES.map((p, i) => row(`Ctrl ${i + 1}`, () => tt('shortcuts.goTo', { page: p.label }))),
+  row('Ctrl ,', () => tt('shortcuts.settings')),
+  row('← → ↑ ↓', () => tt('shortcuts.moveGames')),
+  row('Shift F10', () => tt('shortcuts.gameActions')),
+  row('?', () => tt('shortcuts.thisList')),
+  row('Esc', () => tt('shortcuts.close'))
 ];
 
 /** Whether keys pressed now are someone typing, which a bare key must not interrupt. */

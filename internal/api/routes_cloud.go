@@ -692,7 +692,11 @@ func (s *Server) handleCloudSyncLocal(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	uploaded := 0
+	// Failures are counted apart from the snapshots already there, and the
+	// first reason kept: a batch upload reports per game what went wrong,
+	// and "skipped 3" said nothing about whether those 3 were in the cloud.
+	uploaded, failed := 0, 0
+	firstErr := ""
 	for _, p := range pending {
 		progress(uploaded, p.snapID, false)
 		archive, done, err := snapshot.OpenArchive(p.zipPath)
@@ -707,11 +711,14 @@ func (s *Server) handleCloudSyncLocal(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.Daemon.Log.Log("warn", fmt.Sprintf("upload %s failed: %v", p.remoteName, err))
-			skipped++
+			failed++
+			if firstErr == "" {
+				firstErr = err.Error()
+			}
 			continue
 		}
 		uploaded++
 	}
 	progress(uploaded, "", true)
-	writeJSON(w, http.StatusOK, map[string]int{"uploaded": uploaded, "skipped": skipped})
+	writeJSON(w, http.StatusOK, map[string]any{"uploaded": uploaded, "skipped": skipped, "failed": failed, "error": firstErr})
 }

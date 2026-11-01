@@ -13,7 +13,7 @@
   import { navigate, toast } from '../../lib/stores.js';
   import { api, native } from '../../lib/api.js';
   import { folderName } from '../../lib/filedrop.js';
-  import { t } from '../../lib/i18n.js';
+  import { t, trError } from '../../lib/i18n.js';
 
   const dispatch = createEventDispatcher();
 
@@ -71,7 +71,7 @@
       dispatch('close');
       navigate('game', { gameId: game.id });
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       adding = false;
     }
@@ -93,16 +93,16 @@
       {/if}
     </div>
     <div class="field">
-      <label for="g-save-type">Save type</label>
+      <label for="g-save-type">{$t('home.addGame.saveType')}</label>
       <select id="g-save-type" bind:value={saveType}>
-        <option value="pc">PC game</option>
+        <option value="pc">{$t('home.saveType.pcGame')}</option>
         <option value="switch">Switch</option>
         <option value="emulator-eden">Eden</option>
         <option value="emulator-yuzu">Yuzu / Suyu</option>
         <option value="emulator-ryujinx">Ryujinx</option>
-        <option value="emulator-generic">Other emulator</option>
+        <option value="emulator-generic">{$t('home.saveType.otherEmulator')}</option>
       </select>
-      <span class="hint">Types stay separate in the library and game-save backup storage.</span>
+      <span class="hint">{$t('home.addGame.saveTypeHint')}</span>
     </div>
     <div class="field">
       <label for="g-name">{$t('home.addGame.name')}</label>

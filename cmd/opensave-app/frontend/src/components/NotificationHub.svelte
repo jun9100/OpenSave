@@ -12,6 +12,7 @@
   import { stateLoaded, games, conflicts, locationConflicts, pairingRequests, cloudOffers, newGames, navigate, activityTick, availableUpdate } from '../lib/stores.js';
   import { waitingOnYou, happened, badgeCount, loadSeenAt, saveSeenAt, exampleEvents } from '../lib/notifications.js';
   import { timeAgo } from '../lib/timeago.js';
+  import { t } from '../lib/i18n.js';
 
   let open = false;
   let items = [];
@@ -44,7 +45,10 @@
     clearInterval(tick);
   });
 
-  $: waiting = waitingOnYou({
+  // The bell sits in the title bar, outside App.svelte's per-language redraw,
+  // so what lib/notifications.js says is asked again when the language
+  // changes ($t is always truthy; it is here as a dependency).
+  $: waiting = $t && waitingOnYou({
     games: $games,
     conflicts: $conflicts,
     locationConflicts: $locationConflicts,
@@ -53,7 +57,7 @@
     newGames: $newGames,
     update: $availableUpdate
   });
-  $: events = [...$exampleEvents, ...happened(items, $games, seenAt, now)];
+  $: events = $t && [...$exampleEvents, ...happened(items, $games, seenAt, now)];
   $: count = badgeCount(waiting, events);
 
   // Opened and then closed, everything shown has been seen. Marked on
@@ -91,8 +95,8 @@
     class="bell"
     class:has={count > 0}
     on:click={toggle}
-    title={count ? `${count} notification${count === 1 ? '' : 's'}` : 'Notifications'}
-    aria-label={count ? `Notifications, ${count} new` : 'Notifications'}
+    title={count ? $t('notifications.bellTitle', { n: count }) : $t('notifications.title')}
+    aria-label={count ? $t('notifications.bellAria', { count }) : $t('notifications.title')}
     aria-expanded={open}
   >
     <Bell size={14} />
@@ -101,16 +105,16 @@
 
   {#if open}
     <!-- Unfolds out of the bell and folds back into it (lib/motion.js). -->
-    <div class="panel" bind:this={panel} role="dialog" aria-label="Notifications" transition:unfold>
+    <div class="panel" bind:this={panel} role="dialog" aria-label={$t('notifications.title')} transition:unfold>
       <div class="head">
-        <span class="title">Notifications</span>
+        <span class="title">{$t('notifications.title')}</span>
         {#if events.some((e) => e.unread)}
-          <button class="linklike" on:click={markAllRead}>Mark all as read</button>
+          <button class="linklike" on:click={markAllRead}>{$t('notifications.markAllRead')}</button>
         {/if}
       </div>
       <div class="scroll">
         {#if waiting.length}
-          <div class="section">Needs you</div>
+          <div class="section">{$t('notifications.needsYou')}</div>
           {#each waiting as w, i (w.id)}
             <button class="item tone-{w.tone}" style="--i: {i}" on:click={() => go(w)}>
               {#if w.gameId && $games[w.gameId]}
@@ -123,7 +127,7 @@
           {/each}
         {/if}
         {#if events.length}
-          <div class="section">Earlier</div>
+          <div class="section">{$t('notifications.earlier')}</div>
           {#each events as e, i (e.id)}
             <button class="item" class:unread={e.unread} style="--i: {Math.min(waiting.length + i, 10)}" on:click={() => go(e)}>
               {#if e.example}
@@ -135,16 +139,16 @@
                 <span class="t">{e.title}</span>
                 <span class="d">{e.detail ? `${e.detail} · ` : ''}{timeAgo(iso(e.atMs), now)}</span>
               </span>
-              {#if e.unread}<span class="dot" aria-label="Unread"></span>{/if}
+              {#if e.unread}<span class="dot" aria-label={$t('notifications.unread')}></span>{/if}
             </button>
           {/each}
         {/if}
         {#if !waiting.length && !events.length}
-          <div class="empty">Nothing new. Syncs, saves from your other devices and anything that needs you show up here.</div>
+          <div class="empty">{$t('notifications.empty')}</div>
         {/if}
       </div>
       <div class="foot">
-        <button class="linklike" on:click={() => go({ go: { view: 'activity' } })}>See all activity</button>
+        <button class="linklike" on:click={() => go({ go: { view: 'activity' } })}>{$t('notifications.seeAllActivity')}</button>
       </div>
     </div>
   {/if}

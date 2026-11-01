@@ -6,47 +6,52 @@
   import { appearance } from '../../lib/appearance.js';
   import { CONTROLLER_MODES, controllerOn, padUsed } from '../../lib/controller.js';
   import { settings } from '../../lib/stores.js';
+  import { t } from '../../lib/i18n.js';
 
   const set = (patch) => appearance.update((v) => ({ ...v, ...patch }));
 
   // What each button does, in the order someone reaches for them.
-  const BUTTONS = [
-    { keys: ['D-pad', 'Left stick'], does: 'Move between games, buttons and fields' },
-    { keys: ['A'], does: 'Press what is highlighted' },
-    { keys: ['B'], does: 'Close what is open, or go back' },
-    { keys: ['X'], does: "Open the highlighted game's menu" },
-    { keys: ['Y', 'Start'], does: 'Quick switcher (Ctrl+K)' },
-    { keys: ['LB', 'RB'], does: 'Previous or next page' }
+  $: BUTTONS = [
+    { keys: [$t('controller.key.dpad'), $t('controller.key.leftStick')], does: $t('controller.does.move') },
+    { keys: ['A'], does: $t('controller.does.press') },
+    { keys: ['B'], does: $t('controller.does.back') },
+    { keys: ['X'], does: $t('controller.does.menu') },
+    { keys: ['Y', 'Start'], does: $t('controller.does.palette') },
+    { keys: ['LB', 'RB'], does: $t('controller.does.page') }
   ];
+
+  // Read again when the language changes: the names are getters.
+  const modesNow = (_t) => Object.entries(CONTROLLER_MODES);
+  $: modes = modesNow($t);
 
   $: active = controllerOn($appearance.controller, { deviceType: $settings?.deviceType, used: $padUsed });
 </script>
 
 <div class="row">
-  <div class="segmented" role="radiogroup" aria-label="Controller" use:slidingIndicator={{ mode: 'fill' }}>
-    {#each Object.entries(CONTROLLER_MODES) as [id, label]}
+  <div class="segmented" role="radiogroup" aria-label={$t('controller.label')} use:slidingIndicator={{ mode: 'fill' }}>
+    {#each modes as [id, label]}
       <button role="radio" aria-checked={$appearance.controller === id} class:on={$appearance.controller === id} on:click={() => set({ controller: id })}>
         {label}
       </button>
     {/each}
   </div>
   <span class="state" class:is-on={active}>
-    {#if $appearance.controller === 'on'}On
-    {:else if $appearance.controller === 'off'}Off — the arrow keys scroll as usual
-    {:else if active}On now — a controller was used, or this is a Steam Deck or handheld
-    {:else}Turns on when a controller is used, and on a Steam Deck or handheld{/if}
+    {#if $appearance.controller === 'on'}{$t('controller.state.on')}
+    {:else if $appearance.controller === 'off'}{$t('controller.state.off')}
+    {:else if active}{$t('controller.state.autoOn')}
+    {:else}{$t('controller.state.autoOff')}{/if}
   </span>
 </div>
 
-<dl class="buttons" aria-label="What the buttons do">
+<dl class="buttons" aria-label={$t('controller.buttonsLabel')}>
   {#each BUTTONS as b}
     <dt>
-      {#each b.keys as k, i}{#if i > 0}<span class="or">or</span>{/if}<kbd>{k}</kbd>{/each}
+      {#each b.keys as k, i}{#if i > 0}<span class="or">{$t('controller.or')}</span>{/if}<kbd>{k}</kbd>{/each}
     </dt>
     <dd>{b.does}</dd>
   {/each}
 </dl>
-<p class="hint">The arrow keys do the same while it's on — a Steam Deck in desktop mode sends them for the D-pad.</p>
+<p class="hint">{$t('controller.hint')}</p>
 
 <style>
   .row {

@@ -6,26 +6,30 @@
 // unparseable is returned as it came, so a wrong-looking value can be
 // reported instead of vanishing.
 
+import { tt } from './i18n.js';
+
 const SEC = 1000;
 const MIN = 60 * SEC;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 export function timeAgo(iso, now = Date.now()) {
-  if (!iso) return 'never';
+  if (!iso) return tt('time.never');
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return String(iso);
   const d = now - t;
   // A stamp a few seconds in the future is a peer's clock running slightly
   // ahead, not a negative age.
-  if (d < 45 * SEC) return 'just now';
-  if (d < 90 * SEC) return 'a minute ago';
-  if (d < HOUR) return `${Math.round(d / MIN)} min ago`;
-  if (d < 90 * MIN) return 'an hour ago';
-  if (d < DAY) return `${Math.round(d / HOUR)} hours ago`;
-  if (d < 36 * HOUR) return 'yesterday';
-  if (d < 7 * DAY) return `${Math.round(d / DAY)} days ago`;
-  return 'on ' + new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  if (d < 45 * SEC) return tt('time.justNow');
+  if (d < 90 * SEC) return tt('time.minuteAgo');
+  if (d < HOUR) return tt('time.minutesAgo', { count: Math.round(d / MIN) });
+  if (d < 90 * MIN) return tt('time.hourAgo');
+  if (d < DAY) return tt('time.hoursAgo', { count: Math.round(d / HOUR) });
+  if (d < 36 * HOUR) return tt('time.yesterday');
+  if (d < 7 * DAY) return tt('time.daysAgo', { count: Math.round(d / DAY) });
+  return tt('time.onDate', {
+    date: new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  });
 }
 
 // The newest of several stamps, or null when there are none. Used where one

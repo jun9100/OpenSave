@@ -8,8 +8,9 @@
 // and nothing else — and while it sat inside a .svelte file the only way to
 // exercise it was to click the app.
 //
-// Nothing here touches the DOM, the API, or Svelte. Anything that needs those
-// stays in the component.
+// Nothing here touches the DOM, the API, or Svelte components (its words come
+// from the i18n catalog). Anything that needs those stays in the component.
+import { tt } from './i18n.js';
 
 /**
  * Compare save paths the way the daemon does: case-insensitively, ignoring a
@@ -102,23 +103,23 @@ export function fmtBytes(n) {
  * still in use", and a date is something you have to do arithmetic on.
  */
 export function fmtAge(unix, now = Date.now()) {
-  if (!unix) return 'never';
+  if (!unix) return tt('time.never');
   const secs = now / 1000 - unix;
-  if (secs < 60) return 'just now';
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  if (secs < 86400 * 365) return `${Math.floor(secs / 86400)}d ago`;
+  if (secs < 60) return tt('time.justNow');
+  if (secs < 3600) return tt('scan.age.minutes', { count: Math.floor(secs / 60) });
+  if (secs < 86400) return tt('scan.age.hours', { count: Math.floor(secs / 3600) });
+  if (secs < 86400 * 365) return tt('scan.age.days', { count: Math.floor(secs / 86400) });
   const years = secs / 86400 / 365;
-  return years < 2 ? 'over a year ago' : `${Math.round(years)} years ago`;
+  return years < 2 ? tt('scan.age.overYear') : tt('scan.age.years', { count: Math.round(years) });
 }
 
 /** What a scan tile says about its folder. */
 export function contentsLabel(r, now = Date.now()) {
-  if (!r.measured) return 'size unknown';
-  if (r.fileCount === 0) return 'empty — nothing saved here yet';
+  if (!r.measured) return tt('scan.sizeUnknown');
+  if (r.fileCount === 0) return tt('scan.emptyFolder');
   // The "+" belongs on the number, not after the noun: counting stopped at a
   // cap, so it is a floor, not "files and a bit".
-  const files = `${r.fileCount}${r.truncated ? '+' : ''} file${r.fileCount === 1 ? '' : 's'}`;
+  const files = tt('scan.files', { n: r.fileCount, plus: r.truncated ? '+' : '' });
   return `${files} · ${fmtBytes(r.totalBytes)} · ${fmtAge(r.latestMtime, now)}`;
 }
 

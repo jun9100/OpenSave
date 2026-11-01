@@ -5,12 +5,13 @@
   // text. Opens in place rather than as a hover bubble: a bubble clips at the
   // card's edge, and can't be reached from the keyboard.
   import Info from 'lucide-svelte/icons/info';
+  import { t } from '../../lib/i18n.js';
 
   let open = false;
 </script>
 
 <button type="button" class="more-toggle" aria-expanded={open} on:click|preventDefault={() => (open = !open)}>
-  <Info size={12} strokeWidth={2.4} />{open ? 'Less' : 'More'}
+  <Info size={12} strokeWidth={2.4} />{open ? $t('ui.less') : $t('ui.more')}
 </button>
 {#if open}<span class="more-body"><slot /></span>{/if}
 

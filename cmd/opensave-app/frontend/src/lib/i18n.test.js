@@ -97,3 +97,31 @@ describe('locale choice', () => {
     expect(loadLocale(storage)).toBe('system');
   });
 });
+
+describe('source keys', () => {
+  // Every literal key the app looks up must be in the catalog, or the screen
+  // shows the key itself. Read from the sources as text, so a key added to a
+  // component without its catalog entry fails here rather than on screen.
+  const sources = import.meta.glob(['../**/*.svelte', '../**/*.js', '!../**/*.test.js'], { query: '?raw', import: 'default', eager: true });
+  const used = new Map();
+  for (const [file, code] of Object.entries(sources)) {
+    for (const m of code.matchAll(/(?:\$t|\btt|\bget\(t\))\(\s*(['"])([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_]+)+)\1/g)) {
+      if (!used.has(m[2])) used.set(m[2], file);
+    }
+  }
+
+  it('finds the lookups to check', () => {
+    expect(used.size).toBeGreaterThan(1000);
+  });
+
+  it('has an English entry for every key the sources use', () => {
+    const missing = [...used].filter(([key]) => !(key in en)).map(([key, file]) => `${key} (${file})`);
+    expect(missing).toEqual([]);
+  });
+
+  it('never puts a placeholder in Chinese that English does not fill', () => {
+    const names = (v) => new Set([...(typeof v === 'string' ? v : Object.values(v).join(' ')).matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+    const bad = Object.entries(zhCN).filter(([key, v]) => [...names(v)].some((p) => !names(en[key]).has(p)));
+    expect(bad.map(([k]) => k)).toEqual([]);
+  });
+});

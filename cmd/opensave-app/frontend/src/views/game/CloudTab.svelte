@@ -2,7 +2,7 @@
   import { navigate, toast, askConfirm, settings } from '../../lib/stores.js';
   import { api } from '../../lib/api.js';
   import { fmtSize } from '../../lib/format.js';
-  import { t } from '../../lib/i18n.js';
+  import { t, segments, trError } from '../../lib/i18n.js';
   import Spinner from '../../components/ui/Spinner.svelte';
   import CircleAlert from 'lucide-svelte/icons/circle-alert';
   import CircleCheck from 'lucide-svelte/icons/circle-check';
@@ -42,7 +42,7 @@
         snaps = await api.get(`/api/cloud/snapshots/${game.id}`);
       }
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
       statusReadFailed = true;
       snaps = [];
     } finally {
@@ -274,9 +274,10 @@
         <p class="hint">{$t('game.cloud.legacy.ready_hint')}</p>
       {:else}
         <p class="hint">
-          {$t('game.cloud.legacy.configure_prefix')}
-          <button class="linklike" on:click={() => navigate('cloud')}>{$t('game.cloud.legacy.configure_link')}</button>
-          {$t('game.cloud.legacy.configure_suffix')}
+          {#each segments($t('game.cloud.legacy.configure'), { link: $t('game.cloud.legacy.configure_link') }, ['link']) as part}{#if part.bold}<button
+                class="linklike"
+                on:click={() => navigate('cloud')}>{part.text}</button
+              >{:else}{part.text}{/if}{/each}
         </p>
       {/if}
     </div>

@@ -11,6 +11,7 @@
   import { games, navigate, toast, askConfirm, settings } from '../../lib/stores.js';
   import { timeAgo } from '../../lib/timeago.js';
   import { whenLabel } from '../../lib/snapshots.js';
+  import { t, tt, trError } from '../../lib/i18n.js';
 
   let summary = null;
   let checking = false;
@@ -32,16 +33,16 @@
     try {
       const report = await api.post('/api/snapshots/check', {});
       summary = report.summary;
-      const fixed = report.repaired ? ` — ${report.repaired} put back from the cloud` : '';
+      const fixed = report.repaired ? tt('settings.checks.repairedSuffix', { count: report.repaired }) : '';
       toast(
         report.damaged.length
-          ? `${report.damaged.length} of ${report.checked} snapshots can't be restored${fixed}`
-          : `Checked ${report.checked} snapshots — every one can be restored${fixed}`,
+          ? tt('settings.checks.someDamaged', { damaged: report.damaged.length, checked: report.checked, fixed })
+          : tt('settings.checks.allRestorable', { checked: report.checked, fixed }),
         report.damaged.length ? 'error' : 'success'
       );
       settings.update((s) => (s ? { ...s, lastVerifyMs: Date.now() } : s));
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       checking = false;
     }
@@ -56,16 +57,16 @@
       const back = r.repaired.length;
       const left = r.remaining.length;
       if (!r.cloudChecked) {
-        toast(`Couldn't look in the cloud: ${r.cloudError}`, 'error');
+        toast(tt('settings.checks.cloudLookFailed', { error: trError(r.cloudError) }), 'error');
       } else if (back && left) {
-        toast(`Put back ${back} from the cloud; ${left} have no copy there`, 'success');
+        toast(tt('settings.checks.putBackSome', { back, left }), 'success');
       } else if (back) {
-        toast(`Put back all ${back} from the cloud`, 'success');
+        toast(tt('settings.checks.putBackAll', { back }), 'success');
       } else {
-        toast(`None of them have a copy in the cloud`, 'info');
+        toast(tt('settings.checks.noCloudCopies'), 'info');
       }
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       repairing = false;
       load();
@@ -75,16 +76,16 @@
   async function removeDamaged() {
     const n = summary.damaged.length;
     const ok = await askConfirm(
-      `Remove the ${n} snapshot${n === 1 ? '' : 's'} that can't be restored from the history? Their archives are already gone or damaged, so nothing that could be restored is lost; every other snapshot stays.`,
-      { title: 'Remove them?', confirmText: `Remove ${n}`, danger: true }
+      tt('settings.checks.removeConfirm', { n }),
+      { title: tt('settings.checks.removeTitle'), confirmText: tt('settings.checks.removeCount', { count: n }), danger: true }
     );
     if (!ok) return;
     removing = true;
     try {
       const r = await api.post('/api/snapshots/forget-damaged', {});
-      toast(`Removed ${r.removed.length} snapshot${r.removed.length === 1 ? '' : 's'} that couldn't be restored`, 'success');
+      toast(tt('settings.checks.removed', { n: r.removed.length }), 'success');
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       removing = false;
       load();
@@ -92,19 +93,20 @@
   }
 
   // How often it happens by itself: a daemon setting (verify_every_days).
+  // Each choice carries its label's key, translated where it is shown.
   const EVERY = [
-    [1, 'every day'],
-    [3, 'every 3 days'],
-    [7, 'every week'],
-    [14, 'every 2 weeks'],
-    [30, 'every month']
+    [1, 'settings.checks.everyDay'],
+    [3, 'settings.checks.everyThreeDays'],
+    [7, 'settings.checks.everyWeek'],
+    [14, 'settings.checks.everyTwoWeeks'],
+    [30, 'settings.checks.everyMonth']
   ];
   async function setEvery(days) {
     try {
       const saved = await api.post('/api/settings', { verifyEveryDays: days });
       settings.set(saved?.deviceName !== undefined ? saved : { ...$settings, verifyEveryDays: days });
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     }
   }
   $: every = $settings?.verifyEveryDays ?? 7;
@@ -124,8 +126,8 @@
   ).sort((a, b) => b[1].length - a[1].length);
   function inWords(ms) {
     const days = Math.round((ms - Date.now()) / 86_400_000);
-    if (days <= 0) return 'soon';
-    return days === 1 ? 'tomorrow' : `in ${days} days`;
+    if (days <= 0) return tt('settings.checks.soon');
+    return days === 1 ? tt('settings.checks.tomorrow') : tt('settings.checks.inDays', { days });
   }
 </script>
 
@@ -135,18 +137,18 @@
       {#if summary.damaged.length}
         <TriangleAlert size={18} />
         <span>
-          <strong>{summary.damaged.length} {summary.damaged.length === 1 ? "snapshot can't" : "snapshots can't"} be restored.</strong>
-          Their archives were deleted or damaged outside OpenSave. Every other snapshot is fine, and so is each game's save.
+          <strong>{$t('settings.checks.damagedHeadline', { n: summary.damaged.length })}</strong>
+          {$t('settings.checks.damagedExplain')}
         </span>
       {:else if summary.lastCheckedMs}
         <FileCheck size={18} />
         <span>
-          <strong>Every snapshot checked can be restored.</strong>
-          {summary.checked} of {summary.total} checked, last {timeAgo(iso(summary.lastCheckedMs))}.
+          <strong>{$t('settings.checks.allGood')}</strong>
+          {$t('settings.checks.checkedOf', { checked: summary.checked, total: summary.total, when: timeAgo(iso(summary.lastCheckedMs)) })}
         </span>
       {:else}
         <FileCheck size={18} />
-        <span>Not checked yet.</span>
+        <span>{$t('settings.checks.notChecked')}</span>
       {/if}
     </div>
 
@@ -155,22 +157,27 @@
         {#each byGame as [gameId, list] (gameId)}
           <li>
             <button class="linklike" on:click={() => navigate('game', { gameId, snapshot: list[0].id })}>{nameOf(gameId)}</button>
-            <span class="count">{list.length} snapshot{list.length === 1 ? '' : 's'}, {whenLabel(list[list.length - 1].timestamp)}{list.length > 1 ? ` to ${whenLabel(list[0].timestamp)}` : ''}</span>
+            <span class="count"
+              >{$t('settings.checks.gameDamaged', {
+                n: list.length,
+                from: whenLabel(list[list.length - 1].timestamp),
+                range: list.length > 1 ? $t('settings.checks.rangeTo', { to: whenLabel(list[0].timestamp) }) : ''
+              })}</span
+            >
           </li>
         {/each}
       </ul>
       <div class="fix">
         <button class="btn small primary" disabled={repairing || removing} on:click={repair}>
-          <CloudDownload size={14} />{repairing ? 'Looking in the cloud…' : 'Look for copies in the cloud'}
+          <CloudDownload size={14} />{repairing ? $t('settings.checks.looking') : $t('settings.checks.lookForCopies')}
         </button>
         <button class="btn small" disabled={repairing || removing} on:click={removeDamaged}>
-          <Trash2 size={14} />{removing ? 'Removing…' : 'Remove them from the history'}
+          <Trash2 size={14} />{removing ? $t('settings.checks.removing') : $t('settings.checks.removeFromHistory')}
         </button>
-        <button class="linklike quiet" on:click={() => (details = !details)}>{details ? 'Hide details' : 'Details'}</button>
+        <button class="linklike quiet" on:click={() => (details = !details)}>{details ? $t('settings.checks.hideDetails') : $t('settings.checks.details')}</button>
       </div>
       <p class="hint">
-        With cloud backup on, each snapshot was uploaded as it was taken: a whole copy there is fetched, checked and put back.
-        What has no copy anywhere can only be removed — the record promises a save that no longer exists.
+        {$t('settings.checks.repairHint')}
       </p>
       {#if details}
         <ul class="damaged">
@@ -179,7 +186,7 @@
               <button class="linklike" on:click={() => navigate('game', { gameId: s.gameId, snapshot: s.id })}>
                 {nameOf(s.gameId)} — {whenLabel(s.timestamp)}
               </button>
-              <span class="why">{s.problem}</span>
+              <span class="why">{trError(s.problem)}</span>
             </li>
           {/each}
         </ul>
@@ -190,24 +197,28 @@
   <div class="schedule">
     <label class="toggle">
       <input type="checkbox" checked={auto} on:change={(e) => setEvery(e.currentTarget.checked ? lastEvery : 0)} />
-      Check automatically
+      {$t('settings.checks.auto')}
     </label>
     {#if auto}
-      <select value={every} on:change={(e) => setEvery(Number(e.currentTarget.value))} aria-label="How often">
+      <select value={every} on:change={(e) => setEvery(Number(e.currentTarget.value))} aria-label={$t('settings.checks.howOften')}>
         {#each EVERY as [days, label]}
-          <option value={days}>{label}</option>
+          <option value={days}>{$t(label)}</option>
         {/each}
-        {#if !EVERY.some(([d]) => d === every)}<option value={every}>every {every} days</option>{/if}
+        {#if !EVERY.some(([d]) => d === every)}<option value={every}>{$t('settings.checks.everyNDays', { days: every })}</option>{/if}
       </select>
-      <span class="hint">{nextAt ? `Next ${inWords(nextAt)}.` : 'The first a little after OpenSave starts.'} Anything the cloud still has whole is put back as it's found.</span>
+      <span class="hint"
+        >{$t('settings.checks.scheduleHint', {
+          first: nextAt ? $t('settings.checks.next', { when: inWords(nextAt) }) : $t('settings.checks.firstSoon')
+        })}</span
+      >
     {:else}
-      <span class="hint">Snapshots are still checked before they're restored.</span>
+      <span class="hint">{$t('settings.checks.stillChecked')}</span>
     {/if}
   </div>
 
   <div class="actions">
-    <button class="btn small" disabled={checking} on:click={checkNow}>{checking ? 'Checking…' : 'Check every snapshot now'}</button>
-    <span class="hint">Each is read back in full and every file compared with its checksum. A snapshot is also checked before it is restored.</span>
+    <button class="btn small" disabled={checking} on:click={checkNow}>{checking ? $t('settings.checks.checking') : $t('settings.checks.checkNow')}</button>
+    <span class="hint">{$t('settings.checks.checkNowHint')}</span>
   </div>
 </div>
 

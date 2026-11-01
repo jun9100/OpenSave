@@ -4,17 +4,18 @@
   import { providers, providerStatus } from '../../lib/cloudproviders.js';
   import ProviderIcon from './ProviderIcon.svelte';
   import Check from 'lucide-svelte/icons/check';
+  import { t } from '../../lib/i18n.js';
 
   export let config;
   export let connected = null;
 </script>
 
-<div class="label">Select cloud storage provider</div>
+<div class="label">{$t('cloud.picker.selectProvider')}</div>
 <div class="grid">
   {#each providers as p}
     <button class="card-btn" class:active={config.provider === p.id} on:click={() => (config.provider = p.id)}>
       {#if p.id === connected}
-        <span class="tick" title="Connected"><Check size={13} strokeWidth={3.2} /></span>
+        <span class="tick" title={$t('cloud.picker.connected')}><Check size={13} strokeWidth={3.2} /></span>
       {/if}
       <div class="icon"><ProviderIcon provider={p} /></div>
       <div class="name">{p.label}</div>

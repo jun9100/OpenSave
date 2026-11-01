@@ -11,7 +11,7 @@
 // and are unread until the bell has been opened since.
 import { writable } from 'svelte/store';
 import { describe } from './timeline.js';
-import { plural } from './format.js';
+import { tt } from './i18n.js';
 
 /** Activity kinds worth a notification; the rest stay on the timeline. */
 export const NOTIFY_KINDS = ['received', 'cloud-pulled', 'deleted', 'restored', 'emptied', 'conflict'];
@@ -19,48 +19,46 @@ export const NOTIFY_KINDS = ['received', 'cloud-pulled', 'deleted', 'restored', 
 /** How far back "Earlier" reaches. */
 export const NOTIFY_DAYS = 14;
 
-const n = (count, one, many) => `${count} ${count === 1 ? one : many}`;
-
 /**
  * The things waiting on you, most pressing first.
  * @returns {{id: string, tone: 'warn'|'info', title: string, detail: string, go: {view: string, params?: object}|null, gameId?: string}[]}
  */
 export function waitingOnYou({ games = {}, conflicts = {}, locationConflicts = [], pairingRequests = [], cloudOffers = [], newGames = [], update = null } = {}) {
   const out = [];
-  const name = (id) => games[id]?.name ?? 'A game';
+  const name = (id) => games[id]?.name ?? tt('notifications.aGame');
   for (const id of Object.keys(conflicts)) {
-    out.push({ id: `conflict:${id}`, tone: 'warn', gameId: id, title: `${name(id)} needs a decision`, detail: 'It changed here and on another device at once', go: { view: 'game', params: { gameId: id } } });
+    out.push({ id: `conflict:${id}`, tone: 'warn', gameId: id, title: tt('notifications.needsDecision', { game: name(id) }), detail: tt('notifications.conflictDetail'), go: { view: 'game', params: { gameId: id } } });
   }
   for (const c of locationConflicts) {
-    out.push({ id: `location:${c.gameId}:${c.root}`, tone: 'warn', gameId: c.gameId, title: `${name(c.gameId)} needs a decision`, detail: `Its “${c.root}” location changed on two devices`, go: { view: 'game', params: { gameId: c.gameId } } });
+    out.push({ id: `location:${c.gameId}:${c.root}`, tone: 'warn', gameId: c.gameId, title: tt('notifications.needsDecision', { game: name(c.gameId) }), detail: tt('notifications.locationDetail', { root: c.root }), go: { view: 'game', params: { gameId: c.gameId } } });
   }
   for (const g of Object.values(games)) {
     if (g.emptied?.state === 'held') {
-      out.push({ id: `emptied:${g.id}`, tone: 'warn', gameId: g.id, title: `Every save file of ${g.name} was deleted here`, detail: 'Your other devices keep theirs until you choose', go: { view: 'game', params: { gameId: g.id } } });
+      out.push({ id: `emptied:${g.id}`, tone: 'warn', gameId: g.id, title: tt('notifications.emptiedTitle', { game: g.name }), detail: tt('notifications.emptiedDetail'), go: { view: 'game', params: { gameId: g.id } } });
     }
   }
   for (const r of pairingRequests) {
-    out.push({ id: `pair:${r.peerId}`, tone: 'info', title: `${r.deviceName ?? 'A device'} wants to pair`, detail: 'Approve it on Home to sync with it', go: { view: 'home' } });
+    out.push({ id: `pair:${r.peerId}`, tone: 'info', title: tt('pairing.wantsToPair', { device: r.deviceName ?? tt('pairing.aDevice') }), detail: tt('notifications.pairDetail'), go: { view: 'home' } });
   }
   for (const o of cloudOffers) {
-    out.push({ id: `offer:${o.gameId}:${o.snapshotId}`, tone: 'info', gameId: o.gameId, title: `A newer save for ${o.gameName ?? name(o.gameId)}`, detail: `From ${o.deviceName ?? 'another device'}, through the cloud`, go: { view: 'home' } });
+    out.push({ id: `offer:${o.gameId}:${o.snapshotId}`, tone: 'info', gameId: o.gameId, title: tt('notifications.offerTitle', { game: o.gameName ?? name(o.gameId) }), detail: tt('notifications.offerDetail', { device: o.deviceName ?? tt('notifications.anotherDevice') }), go: { view: 'home' } });
   }
   for (const g of Object.values(games)) {
     if (g.savePathMissing) {
-      out.push({ id: `missing:${g.id}`, tone: 'warn', gameId: g.id, title: `${g.name}'s save folder is missing`, detail: 'Nothing is synced for it until it is back', go: { view: 'game', params: { gameId: g.id } } });
+      out.push({ id: `missing:${g.id}`, tone: 'warn', gameId: g.id, title: tt('notifications.missingTitle', { game: g.name }), detail: tt('notifications.missingDetail'), go: { view: 'game', params: { gameId: g.id } } });
     }
   }
   for (const g of Object.values(games)) {
     const damaged = Object.values(g.branches ?? {}).flatMap((b) => (b.snapshots ?? []).filter((s) => s.problem)).length;
     if (damaged) {
-      out.push({ id: `damaged:${g.id}`, tone: 'warn', gameId: g.id, title: `${n(damaged, 'snapshot', 'snapshots')} of ${g.name} can't be restored`, detail: 'Found damaged when read back', go: { view: 'game', params: { gameId: g.id } } });
+      out.push({ id: `damaged:${g.id}`, tone: 'warn', gameId: g.id, title: tt('notifications.damagedTitle', { n: damaged, game: g.name }), detail: tt('notifications.damagedDetail'), go: { view: 'game', params: { gameId: g.id } } });
     }
   }
   if (newGames.length) {
-    out.push({ id: `new:${newGames.map((g) => g.name).join(',')}`, tone: 'info', title: `${n(newGames.length, 'new game', 'new games')} found`, detail: newGames.slice(0, 3).map((g) => g.name).join(', '), go: { view: 'home' } });
+    out.push({ id: `new:${newGames.map((g) => g.name).join(',')}`, tone: 'info', title: tt('notifications.newGamesTitle', { n: newGames.length }), detail: newGames.slice(0, 3).map((g) => g.name).join(tt('newGames.listSeparator')), go: { view: 'home' } });
   }
   if (update?.latest) {
-    out.push({ id: `update:${update.latest}`, tone: 'info', title: `OpenSave ${update.latest} is available`, detail: `You're on ${update.current ?? 'an older version'} — install it from the banner at the top`, go: null });
+    out.push({ id: `update:${update.latest}`, tone: 'info', title: tt('notifications.updateTitle', { version: update.latest }), detail: tt('notifications.updateDetail', { current: update.current ?? tt('notifications.olderVersion') }), go: null });
   }
   return out;
 }
@@ -84,7 +82,10 @@ export function happened(items, games = {}, seenAt = 0, now = Date.now()) {
         tone: said.tone === 'warn' ? 'warn' : 'info',
         // "Hades: got 3 files from Steam Deck" — but a sentence that opens
         // with a device's name keeps it as it is.
-        title: `${games[it.gameId].name}: ${it.device && said.title.startsWith(it.device) ? said.title : said.title[0].toLowerCase() + said.title.slice(1)}`,
+        title: tt('notifications.happenedTitle', {
+          game: games[it.gameId].name,
+          what: it.device && said.title.startsWith(it.device) ? said.title : said.title[0].toLowerCase() + said.title.slice(1)
+        }),
         detail: said.detail,
         unread: it.atMs > seenAt,
         go: { view: 'game', params: { gameId: it.gameId } }
@@ -124,7 +125,7 @@ export function arrivalMessage(ev, games, lastShown, now = Date.now()) {
   if (ev?.kind !== 'received' || !games?.[ev.gameId]) return null;
   if (now - (lastShown[ev.gameId] ?? 0) < ARRIVAL_QUIET_MS) return null;
   lastShown[ev.gameId] = now;
-  return `${games[ev.gameId].name}: got ${plural(ev.files || 1, 'file')} from ${ev.device}`;
+  return tt('notifications.arrival', { game: games[ev.gameId].name, n: ev.files || 1, device: ev.device });
 }
 
 /** An arrival as the desktop shows it: the game's name over what came, with
@@ -132,17 +133,18 @@ export function arrivalMessage(ev, games, lastShown, now = Date.now()) {
 export function arrivalNote(ev, games) {
   const game = games?.[ev.gameId];
   if (!game) return null;
-  return { title: game.name, body: `Got ${plural(ev.files || 1, 'file')} from ${ev.device}`, game };
+  return { title: game.name, body: tt('notifications.arrivalBody', { n: ev.files || 1, device: ev.device }), game };
 }
 
 /** New games found, as the desktop shows them. */
 export function newGamesNote(found) {
   if (!found?.length) return null;
   const names = found.map((g) => g.name);
-  const body = names.length <= 3 ? names.join(', ') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
+  const sep = tt('newGames.listSeparator');
+  const body = names.length <= 3 ? names.join(sep) : tt('newGames.andMore', { names: names.slice(0, 2).join(sep), count: names.length - 2 });
   return {
-    title: names.length === 1 ? 'New game found' : `${names.length} new games found`,
-    body: `${body} — track ${names.length === 1 ? 'it' : 'them'} to keep ${names.length === 1 ? 'its' : 'their'} saves in sync`,
+    title: tt('newGames.noteTitle', { n: names.length }),
+    body: tt('newGames.noteBody', { n: names.length, names: body }),
     open: { view: 'home', params: {} }
   };
 }
@@ -157,8 +159,8 @@ export function exampleEvent(now = Date.now()) {
     example: true,
     atMs: now,
     tone: 'info',
-    title: 'Hades: got 3 files from Steam Deck',
-    detail: 'An example — this is how a save arriving from another device shows',
+    title: tt('notifications.example.title'),
+    detail: tt('notifications.example.detail'),
     unread: true,
     go: null
   };

@@ -1,6 +1,7 @@
 <script>
   import { onDestroy } from 'svelte';
-  import { stateLoaded, gameList, peers, syncActivity, conflicts, locationConflicts, toast, syncPause } from '../lib/stores.js';
+  import { stateLoaded, gameList, peers, syncActivity, conflicts, locationConflicts, toast, syncPause, navigate } from '../lib/stores.js';
+  import CircleHelp from 'lucide-svelte/icons/circle-help';
   import { api, native } from '../lib/api.js';
   import { gameStatus, conflictedIds } from '../lib/gamestatus.js';
   import OfferedGames from './home/OfferedGames.svelte';
@@ -114,11 +115,11 @@
   </div>
 
   {#if $gameList.length > 0}
-    <div class="type-filter" aria-label="Save type filter">
-      <button class:active={libraryType === 'all'} on:click={() => (libraryType = 'all')}>All</button>
+    <div class="type-filter" aria-label={$t('home.saveType.filter')}>
+      <button class:active={libraryType === 'all'} on:click={() => (libraryType = 'all')}>{$t('home.saveType.all')}</button>
       <button class:active={libraryType === 'pc'} on:click={() => (libraryType = 'pc')}>PC</button>
       <button class:active={libraryType === 'switch'} on:click={() => (libraryType = 'switch')}>Switch</button>
-      <button class:active={libraryType === 'emulator'} on:click={() => (libraryType = 'emulator')}>Emulators</button>
+      <button class:active={libraryType === 'emulator'} on:click={() => (libraryType = 'emulator')}>{$t('home.saveType.emulators')}</button>
     </div>
   {/if}
 </div>
@@ -145,6 +146,7 @@
         <ScanSearch size={16} />{scanning ? $t('home.scanning') : $t('home.welcome.scanForSaves')}
       </button>
       <button class="btn" on:click={trackFolder}><FolderPlus size={16} />{$t('home.welcome.trackManually')}</button>
+      <button class="btn ghost" on:click={() => navigate('help')}><CircleHelp size={16} />{$t('home.welcome.howItWorks')}</button>
     </div>
     <p class="welcome-hint">
       {#each segments($t('home.welcome.hint'), { devices: $t('home.devices'), cloud: $t('home.cloudBackup') }, ['devices', 'cloud']) as part}

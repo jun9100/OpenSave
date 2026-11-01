@@ -11,8 +11,9 @@
   import Modal from './ui/Modal.svelte';
   import ModalFoot from './ui/ModalFoot.svelte';
   import { askConfirm } from '../lib/stores.js';
+  import { t, tt } from '../lib/i18n.js';
   import { collectionsDialog } from '../lib/gameactions.js';
-  import { collections, setInCollection, createCollection, renameCollection, deleteCollection } from '../lib/collections.js';
+  import { collections, setInCollection, createCollection, renameCollection, deleteCollection, FAVOURITES } from '../lib/collections.js';
 
   $: game = $collectionsDialog;
   const close = () => collectionsDialog.set(null);
@@ -45,13 +46,14 @@
 
   async function remove(c) {
     const n = c.gameIds.length;
-    if (!(await askConfirm(`Delete the collection “${c.name}”? ${n ? `Its ${n} game${n === 1 ? '' : 's'} stay tracked; only the grouping goes.` : 'It is empty.'}`, { title: 'Delete collection?', confirmText: 'Delete', danger: true }))) return;
+    const message = n ? tt('collections.deleteConfirm', { name: c.name, n }) : tt('collections.deleteConfirmEmpty', { name: c.name });
+    if (!(await askConfirm(message, { title: tt('collections.deleteTitle'), confirmText: tt('collections.delete'), danger: true }))) return;
     await deleteCollection(c.id);
   }
 </script>
 
 {#if game}
-  <Modal title="Collections" icon={Tags} onClose={close} width={460} height="auto" maxHeight="min(78vh, 620px)">
+  <Modal title={$t('collections.title')} icon={Tags} onClose={close} width={460} height="auto" maxHeight="min(78vh, 620px)">
     <svelte:fragment slot="sub">{game.name}</svelte:fragment>
     <div class="body">
       <ul>
@@ -76,26 +78,26 @@
               <label class="check">
                 <input type="checkbox" checked={c.gameIds.includes(game.id)} on:change={(e) => setInCollection(c.id, game.id, e.currentTarget.checked)} />
                 {#if c.builtin}<span class="star"><Star size={14} /></span>{/if}
-                <span class="name">{c.name}</span>
+                <span class="name">{c.id === FAVOURITES ? $t('collections.favourites') : c.name}</span>
                 <span class="count">{c.gameIds.length}</span>
               </label>
               {#if !c.builtin}
-                <button class="btn small ghost icon" title="Rename" aria-label="Rename {c.name}" on:click={() => startRename(c)}><Pencil size={13} /></button>
-                <button class="btn small ghost icon" title="Delete" aria-label="Delete {c.name}" on:click={() => remove(c)}><Trash2 size={13} /></button>
+                <button class="btn small ghost icon" title={$t('collections.rename')} aria-label={$t('collections.renameNamed', { name: c.name })} on:click={() => startRename(c)}><Pencil size={13} /></button>
+                <button class="btn small ghost icon" title={$t('collections.delete')} aria-label={$t('collections.deleteNamed', { name: c.name })} on:click={() => remove(c)}><Trash2 size={13} /></button>
               {/if}
             {/if}
           </li>
         {/each}
       </ul>
       <form class="new" on:submit|preventDefault={add}>
-        <input placeholder="New collection, e.g. Playing now" maxlength="40" bind:value={newName} />
-        <button class="btn small" type="submit" disabled={!newName.trim()}><Plus size={14} />Add</button>
+        <input placeholder={$t('collections.newPlaceholder')} maxlength="40" bind:value={newName} />
+        <button class="btn small" type="submit" disabled={!newName.trim()}><Plus size={14} />{$t('collections.add')}</button>
       </form>
-      <p class="hint">Collections are for finding games in the library; they don't change how a game syncs.</p>
+      <p class="hint">{$t('collections.hint')}</p>
     </div>
     <ModalFoot>
       <span></span>
-      <button class="btn primary" on:click={close}>Done</button>
+      <button class="btn primary" on:click={close}>{$t('collections.done')}</button>
     </ModalFoot>
   </Modal>
 {/if}

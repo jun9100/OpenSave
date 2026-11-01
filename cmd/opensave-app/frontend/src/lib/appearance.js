@@ -5,8 +5,20 @@
 // the same reasons: it is about this screen and the person in front of it,
 // and it takes effect as it is chosen rather than when a form is saved.
 import { writable } from 'svelte/store';
+import { tt } from './i18n.js';
 
-export const THEMES = { dark: 'Dark', light: 'Light', system: 'Match system' };
+// Labels are getters so each is read in the language shown at that moment.
+export const THEMES = {
+  get dark() {
+    return tt('appearance.theme.dark');
+  },
+  get light() {
+    return tt('appearance.theme.light');
+  },
+  get system() {
+    return tt('appearance.theme.system');
+  }
+};
 
 // Around the colour wheel, then a grey. Any colour can be offered, the bright
 // yellows and limes included: the text on an accent, and the accent used as
@@ -14,24 +26,114 @@ export const THEMES = { dark: 'Dark', light: 'Light', system: 'Match system' };
 // accentText below). The first six are the ones there have always been, and
 // look exactly as they did.
 export const ACCENTS = {
-  rose: { label: 'Rose', hex: '#e11d48' },
-  red: { label: 'Red', hex: '#dc2626' },
-  orange: { label: 'Orange', hex: '#ea580c' },
-  amber: { label: 'Amber', hex: '#f59e0b' },
-  gold: { label: 'Gold', hex: '#eab308' },
-  yellow: { label: 'Yellow', hex: '#facc15' },
-  lime: { label: 'Lime', hex: '#84cc16' },
-  green: { label: 'Green', hex: '#16a34a' },
-  emerald: { label: 'Emerald', hex: '#10b981' },
-  teal: { label: 'Teal', hex: '#0d9488' },
-  cyan: { label: 'Cyan', hex: '#06b6d4' },
-  sky: { label: 'Sky', hex: '#0ea5e9' },
-  blue: { label: 'Blue', hex: '#3b82f6' },
-  indigo: { label: 'Indigo', hex: '#6366f1' },
-  violet: { label: 'Violet', hex: '#8a63f4' },
-  purple: { label: 'Purple', hex: '#a855f7' },
-  pink: { label: 'Pink', hex: '#ec4899' },
-  slate: { label: 'Slate', hex: '#64748b' }
+  rose: {
+    get label() {
+      return tt('appearance.accent.rose');
+    },
+    hex: '#e11d48'
+  },
+  red: {
+    get label() {
+      return tt('appearance.accent.red');
+    },
+    hex: '#dc2626'
+  },
+  orange: {
+    get label() {
+      return tt('appearance.accent.orange');
+    },
+    hex: '#ea580c'
+  },
+  amber: {
+    get label() {
+      return tt('appearance.accent.amber');
+    },
+    hex: '#f59e0b'
+  },
+  gold: {
+    get label() {
+      return tt('appearance.accent.gold');
+    },
+    hex: '#eab308'
+  },
+  yellow: {
+    get label() {
+      return tt('appearance.accent.yellow');
+    },
+    hex: '#facc15'
+  },
+  lime: {
+    get label() {
+      return tt('appearance.accent.lime');
+    },
+    hex: '#84cc16'
+  },
+  green: {
+    get label() {
+      return tt('appearance.accent.green');
+    },
+    hex: '#16a34a'
+  },
+  emerald: {
+    get label() {
+      return tt('appearance.accent.emerald');
+    },
+    hex: '#10b981'
+  },
+  teal: {
+    get label() {
+      return tt('appearance.accent.teal');
+    },
+    hex: '#0d9488'
+  },
+  cyan: {
+    get label() {
+      return tt('appearance.accent.cyan');
+    },
+    hex: '#06b6d4'
+  },
+  sky: {
+    get label() {
+      return tt('appearance.accent.sky');
+    },
+    hex: '#0ea5e9'
+  },
+  blue: {
+    get label() {
+      return tt('appearance.accent.blue');
+    },
+    hex: '#3b82f6'
+  },
+  indigo: {
+    get label() {
+      return tt('appearance.accent.indigo');
+    },
+    hex: '#6366f1'
+  },
+  violet: {
+    get label() {
+      return tt('appearance.accent.violet');
+    },
+    hex: '#8a63f4'
+  },
+  purple: {
+    get label() {
+      return tt('appearance.accent.purple');
+    },
+    hex: '#a855f7'
+  },
+  pink: {
+    get label() {
+      return tt('appearance.accent.pink');
+    },
+    hex: '#ec4899'
+  },
+  slate: {
+    get label() {
+      return tt('appearance.accent.slate');
+    },
+    hex: '#64748b'
+  }
 };
 
 export const SCALES = [0.9, 1, 1.1, 1.25];

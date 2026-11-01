@@ -16,7 +16,7 @@
   import { api } from '../lib/api.js';
   import { GAME_SAVE_PROVIDER } from '../lib/cloudproviders.js';
   import { timeAgo } from '../lib/timeago.js';
-  import { t } from '../lib/i18n.js';
+  import { t, tt, trError } from '../lib/i18n.js';
   import CloudDownload from 'lucide-svelte/icons/cloud-download';
 
   let busy = '';
@@ -25,9 +25,13 @@
     google_drive: 'Google Drive',
     onedrive: 'OneDrive',
     dropbox: 'Dropbox',
-    webdav: 'your WebDAV server',
+    get webdav() {
+      return tt('cloudOffer.where.webdav');
+    },
     [GAME_SAVE_PROVIDER]: 'game-save',
-    local: 'your backup folder'
+    get local() {
+      return tt('cloudOffer.where.local');
+    }
   };
 
   const key = (o) => `${o.gameId}:${o.snapshotId}`;
@@ -39,7 +43,7 @@
       await api.post('/api/cloud/offers/accept', { gameId: offer.gameId, snapshotId: offer.snapshotId });
       toast($t('cloudOffer.broughtToast', { device: offer.deviceName, game: offer.gameName }), 'success');
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy = '';
     }
@@ -51,7 +55,7 @@
     try {
       await api.post('/api/cloud/offers/dismiss', { gameId: offer.gameId, snapshotId: offer.snapshotId });
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy = '';
     }

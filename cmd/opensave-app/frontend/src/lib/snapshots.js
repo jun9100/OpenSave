@@ -6,6 +6,8 @@
 // a copy OpenSave kept just before replacing your save is the one you want
 // after a sync went wrong, and it looked exactly like every other row.
 
+import { tt } from './i18n.js';
+
 /** A snapshot ID's own time: IDs are "snap_" and the creation time in ms. */
 export function snapIdTime(id) {
   const m = /^snap_(\d{12,})$/.exec(id ?? '');
@@ -29,10 +31,10 @@ function sameDay(a, b) {
 /** "Today", "Yesterday", or the date. */
 export function dayLabel(date, now = new Date()) {
   const d = date instanceof Date ? date : new Date(date);
-  if (sameDay(d, now)) return 'Today';
+  if (sameDay(d, now)) return tt('snapshots.today');
   const y = new Date(now);
   y.setDate(y.getDate() - 1);
-  if (sameDay(d, y)) return 'Yesterday';
+  if (sameDay(d, y)) return tt('snapshots.yesterday');
   return d.toLocaleDateString(undefined, {
     weekday: 'long',
     day: 'numeric',
@@ -45,7 +47,7 @@ export function dayLabel(date, now = new Date()) {
 export function humanizeComment(comment, now = new Date()) {
   return (comment ?? '').replace(/snap_\d{12,}/g, (id) => {
     const t = snapIdTime(id);
-    return t ? `the ${whenLabel(t, now)} snapshot` : id;
+    return t ? tt('snapshots.theSnapshot', { when: whenLabel(t, now) }) : id;
   });
 }
 
@@ -57,11 +59,11 @@ const safetyPattern = /^(before|pre-rollback|safety|auto backup before|this devi
 // The daemon's own wording for the copies it keeps, said plainly. Anything
 // not listed is shown as written.
 const plainTitles = [
-  [/^pre-rollback safety restore point \(before restoring (.+)\)$/i, (m) => `Before restoring ${m[1]}`],
-  [/^before sync replaced local files$/i, () => 'Before a sync replaced it'],
-  [/^safety snapshot before restoring file "(.+)" from (.+)$/i, (m) => `Before putting back ${m[1]} from ${m[2]}`],
-  [/^auto backup before switching to branch "(.+)"$/i, (m) => `Before switching to ${m[1]}`],
-  [/^branch "(.+)" created from "(.+)"$/i, (m) => `Start of ${m[1]}, copied from ${m[2]}`]
+  [/^pre-rollback safety restore point \(before restoring (.+)\)$/i, (m) => tt('snapshots.title.beforeRestoring', { what: m[1] })],
+  [/^before sync replaced local files$/i, () => tt('snapshots.title.beforeSync')],
+  [/^safety snapshot before restoring file "(.+)" from (.+)$/i, (m) => tt('snapshots.title.beforePuttingBack', { file: m[1], from: m[2] })],
+  [/^auto backup before switching to branch "(.+)"$/i, (m) => tt('snapshots.title.beforeSwitching', { branch: m[1] })],
+  [/^branch "(.+)" created from "(.+)"$/i, (m) => tt('snapshots.title.branchStart', { branch: m[1], from: m[2] })]
 ];
 
 function plainTitle(comment) {
@@ -83,16 +85,16 @@ export function snapshotKind(snap, now = new Date()) {
   // not reasons, and read as noise on every row.
   if (/^(auto backup|manual snapshot)$/i.test(comment)) comment = '';
   if (!snap.isSystemAuto) {
-    return { kind: 'manual', label: 'Taken by you', title: comment || 'Snapshot' };
+    return { kind: 'manual', label: tt('snapshots.kind.manual'), title: comment || tt('snapshots.title.snapshot') };
   }
-  if (comment === '') return { kind: 'auto', label: 'Automatic', title: 'Save changed' };
-  if (/^initial snapshot$/i.test(comment)) return { kind: 'start', label: 'Automatic', title: 'When tracking started' };
+  if (comment === '') return { kind: 'auto', label: tt('snapshots.kind.auto'), title: tt('snapshots.title.saveChanged') };
+  if (/^initial snapshot$/i.test(comment)) return { kind: 'start', label: tt('snapshots.kind.auto'), title: tt('snapshots.title.trackingStarted') };
   // The save as a play session left it (daemon/sessions.go).
-  if (/^after playing/i.test(comment)) return { kind: 'session', label: 'After playing', title: comment };
+  if (/^after playing/i.test(comment)) return { kind: 'session', label: tt('snapshots.kind.session'), title: comment };
   if (safetyPattern.test(comment)) {
-    return { kind: 'safety', label: 'Safety copy', title: plainTitle(comment) };
+    return { kind: 'safety', label: tt('snapshots.kind.safety'), title: plainTitle(comment) };
   }
-  return { kind: 'other', label: 'Automatic', title: plainTitle(comment) };
+  return { kind: 'other', label: tt('snapshots.kind.auto'), title: plainTitle(comment) };
 }
 
 const capitalise = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);

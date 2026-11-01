@@ -2,6 +2,7 @@
 // what moved recently. The daemon keeps the record (internal/transfers); this
 // is how it reads.
 import { fmtSize } from './format.js';
+import { tt } from './i18n.js';
 
 /** "1.2 MB/s", or '' when there is no speed to show. */
 export function speedLabel(bytesPerSec) {
@@ -11,7 +12,7 @@ export function speedLabel(bytesPerSec) {
 
 /** "400 KB of 1.0 MB", "1.0 MB", or '' when nothing is known. */
 export function amountLabel(t) {
-  if (t.totalBytes > 0 && t.state === 'running') return `${fmtSize(t.bytesTransferred ?? 0)} of ${fmtSize(t.totalBytes)}`;
+  if (t.totalBytes > 0 && t.state === 'running') return tt('transfers.amountOf', { done: fmtSize(t.bytesTransferred ?? 0), total: fmtSize(t.totalBytes) });
   if (t.totalBytes > 0) return fmtSize(t.totalBytes);
   if (t.bytesTransferred > 0) return fmtSize(t.bytesTransferred);
   return '';
@@ -19,7 +20,8 @@ export function amountLabel(t) {
 
 /** "from Deck" for a download, "to Deck" for an upload. */
 export function peerLabel(t) {
-  return t.direction === 'upload' ? `to ${t.peer || 'another device'}` : `from ${t.peer || 'another device'}`;
+  const peer = t.peer || tt('transfers.anotherDevice');
+  return t.direction === 'upload' ? tt('transfers.toPeer', { peer }) : tt('transfers.fromPeer', { peer });
 }
 
 /** The transfers as the panel lists them, with each game's name. */

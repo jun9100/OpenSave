@@ -13,6 +13,7 @@
 // unpairing — keep their confirmation.
 import { get, writable } from 'svelte/store';
 import { toast } from './stores.js';
+import { tt, trError } from './i18n.js';
 
 export const UNDO_DELAY = 6000;
 
@@ -53,7 +54,7 @@ export function withUndo({ message, keys = [], run, delay = UNDO_DELAY, notify =
         await run();
       } catch (e) {
         unhide(keys);
-        notify(e.message, 'error');
+        notify(trError(e.message), 'error');
         resolve('failed');
         return;
       }
@@ -62,7 +63,7 @@ export function withUndo({ message, keys = [], run, delay = UNDO_DELAY, notify =
     };
 
     const timer = setTimeout(() => finish(false), delay);
-    notify(message, 'info', { ttl: delay, action: { label: 'Undo', run: () => finish(true) } });
+    notify(message, 'info', { ttl: delay, action: { label: tt('undo.undo'), run: () => finish(true) } });
   });
 }
 
