@@ -66,6 +66,8 @@ internal fun GameListRow(
     /** Called when the row gains D-pad focus; null leaves focus without effect. */
     onFocused: (() -> Unit)? = null,
     focusRequester: FocusRequester? = null,
+    /** Save locations of this game in different sources; more than one replaces the source label. */
+    locationCount: Int = 1,
 ) {
     val selectable = batchEligible && batchEnabled
     Row(
@@ -107,7 +109,12 @@ internal fun GameListRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                LibraryView.rowSecondary(entry.sourceLabel, history, batchEligible, ::formatShortTime),
+                LibraryView.rowSecondary(
+                    if (locationCount > 1) "$locationCount 个存档位置" else entry.sourceLabel,
+                    history,
+                    batchEligible,
+                    ::formatShortTime,
+                ),
                 modifier = Modifier.padding(top = 2.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (batchEligible) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,

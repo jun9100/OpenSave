@@ -226,4 +226,56 @@ class LibraryViewTest {
         // A rescan that is still running keeps the games it already shows.
         assertNull(LibraryView.emptyState(scanned = false, readableSources = 1, gameCount = 3, visibleCount = 3))
     }
+
+    @Test
+    fun theSameGameInSeveralSourcesIsOneRowAndPathOnlyGamesStaySeparate() {
+        fun scan(path: String, label: String, vararg saves: DetectedSave) = SourceScanResult(
+            source = SourceSelection.Root(path),
+            label = label,
+            scan = SaveScanReport(rootPath = path, scannedDirectoryCount = saves.size, detected = saves.toList()),
+        )
+        val switchSave = { rel: String -> DetectedSave(kind = "yuzu-switch", relativePath = rel, titleId = "0100AA50140CA000", note = "", gameKey = "switch:0100AA50140CA000") }
+        val pathOnly = { rel: String -> DetectedSave(kind = "emulator", relativePath = rel, note = "", displayName = "Same") }
+        val entries = GameLibrary.sourceGames(
+            listOf(
+                scan("/storage/emulated/0/eden", "Eden Switch · 公共目录 eden", switchSave("nand/user/save/0/A/0100AA50140CA000"), pathOnly("x/saves")),
+                scan("/data/user/0/dev.eden.eden_emulator/files", "Eden Switch · 私有目录", switchSave("nand/user/save/0/B/0100AA50140CA000"), pathOnly("x/saves")),
+            ),
+        )
+        val rows = LibraryView.groupRows(entries)
+        val switchRow = rows.single { it.key == "switch:0100AA50140CA000" }
+        assertEquals(2, switchRow.members.size)
+        assertEquals(2, rows.count { row -> row.members.size == 1 && row.members.single().game.gameKey.startsWith("path:") })
+        assertEquals(switchRow.members[1], LibraryView.rowEntry(switchRow, switchRow.members[1].libraryKey))
+        assertEquals("私有目录", LibraryView.locationLabel(switchRow.members.first { it.sourceLabel.endsWith("私有目录") }))
+
+        val statuses = mapOf(
+            switchRow.members[0].libraryKey to GameSyncStatus.SYNCED,
+            switchRow.members[1].libraryKey to GameSyncStatus.CONFLICT,
+        )
+        assertEquals(GameSyncStatus.CONFLICT, LibraryView.groupStatus(switchRow, statuses))
+    }
+
+    @Test
+    fun appsAndroidDoesNotCallGamesStayOutOfTheLibrary() {
+        val path = "/storage/emulated/0"
+        val entries = GameLibrary.sourceGames(
+            listOf(
+                SourceScanResult(
+                    source = SourceSelection.Root(path),
+                    label = "共享存储",
+                    scan = SaveScanReport(
+                        rootPath = path,
+                        scannedDirectoryCount = 2,
+                        detected = listOf(
+                            DetectedSave(kind = "android-app", relativePath = "Android/data/com.google.android.youtube/files", note = "", displayName = "YouTube", gameKey = "android:com.google.android.youtube", candidate = true),
+                            DetectedSave(kind = "android-game", relativePath = "Android/data/com.poncle.vampiresurvivors/files", note = "", displayName = "Vampire Survivors", gameKey = "android:com.poncle.vampiresurvivors"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(listOf("android:com.poncle.vampiresurvivors"), LibraryView.libraryEntries(entries).map { it.game.gameKey })
+        assertEquals(listOf("com.google.android.youtube"), LibraryView.unconfirmedApps(entries).map { it.packageName })
+    }
 }

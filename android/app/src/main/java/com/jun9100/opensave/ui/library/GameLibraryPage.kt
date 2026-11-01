@@ -1,5 +1,9 @@
 package com.jun9100.opensave.ui.library
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
+import com.jun9100.opensave.LibraryRowGroup
+import androidx.compose.foundation.lazy.itemsIndexed
 import com.jun9100.opensave.AndroidAppConfirmations
 import androidx.compose.ui.text.input.KeyboardType
 import com.jun9100.opensave.ui.settings.TextEditDialog
@@ -280,12 +284,30 @@ internal fun GameLibraryContent(
     val visibleGames = remember(typeGames, statuses, state.libraryStatusFilter) {
         LibraryView.filterByStatus(typeGames, statuses, state.libraryStatusFilter)
     }
-    val visibleKeys = remember(visibleGames) { visibleGames.map { it.libraryKey } }
+    // One row per game: the same game found in several sources shares a row,
+    // and the detail switches between its save locations.
+    val rowGroups = remember(visibleGames) { LibraryView.groupRows(visibleGames) }
+    val rowEntries = remember(rowGroups, state.selectedGameKey) {
+        rowGroups.map { LibraryView.rowEntry(it, state.selectedGameKey) }
+    }
+    val groupByEntryKey = remember(rowGroups) {
+        rowGroups.flatMap { group -> group.members.map { it.libraryKey to group } }.toMap()
+    }
+    val visibleKeys = remember(rowEntries) { rowEntries.map { it.libraryKey } }
     val visibleEligibleKeys = remember(visibleGames) {
         GameLibrary.batchBackupEligibleEntries(visibleGames).map { it.libraryKey }
     }
     val eligibleKeys = remember(games) { GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey } }
     val typeEligibleKeys = remember(typeGames) { GameLibrary.batchBackupEligibleEntries(typeGames).map { it.libraryKey } }
+    // Selecting a row selects every save location of it that batch backup takes.
+    val selectRow: (String, Boolean) -> Unit = { key, selected ->
+        val members = groupByEntryKey[key]?.members?.map { it.libraryKey } ?: listOf(key)
+        members.filter { it in eligibleKeys }.ifEmpty { listOf(key) }.forEach { actions.onBatchSelected(it, selected) }
+    }
+    val rowSelected: (String) -> Boolean = { key ->
+        val members = groupByEntryKey[key]?.members?.map { it.libraryKey }?.filter { it in eligibleKeys }.orEmpty()
+        if (members.isEmpty()) key in state.librarySelection else members.all { it in state.librarySelection }
+    }
     // "备份有变更" follows the type filter only: it is a status set of its own.
     val changedKeys = remember(typeEligibleKeys, statuses) { LibraryView.changedKeys(typeEligibleKeys, statuses) }
     // Selection lives in the ViewModel: nothing is selected by default, a rescan
@@ -485,7 +507,7 @@ internal fun GameLibraryContent(
             command = command,
             targetKey = target,
             targetEligible = targetEntry?.let { GameLibrary.canBatchBackup(it.game) } == true,
-            targetSelected = target in state.librarySelection,
+            targetSelected = target?.let(rowSelected) == true,
             primary = primary,
             selectionMode = selecting,
         )
@@ -493,7 +515,7 @@ internal fun GameLibraryContent(
             LibraryHandheldAction.None -> Unit
             is LibraryHandheldAction.OpenMenu -> menuKey = action.key
             is LibraryHandheldAction.SetSelected ->
-                whenIdle(state.busy) { actions.onBatchSelected(action.key, action.selected) }()
+                whenIdle(state.busy) { selectRow(action.key, action.selected) }()
             LibraryHandheldAction.EnterSelection -> whenIdle(state.busy, actions.onEnterSelection)()
             is LibraryHandheldAction.BackupSelected -> whenIdle(state.busy) { actions.onBackupSelected(action.keys) }()
             LibraryHandheldAction.NothingToBackup -> whenIdle(state.busy) { actions.onNothingToBackup(selecting) }()
@@ -623,6 +645,12 @@ internal fun GameLibraryContent(
         // Results of the backup and restores started here are shown on top of the detail.
         Column(modifier = modifier.fillMaxSize()) {
             LibraryMessageLines(messages = messages, busy = state.busy)
+            SaveLocationSwitcher(
+                members = groupByEntryKey[detail.libraryKey]?.members.orEmpty(),
+                currentKey = detail.libraryKey,
+                enabled = !state.busy,
+                onSelect = actions.onOpenGame,
+            )
             GameDetailFor(
                 entry = presented(detail),
                 state = state,
@@ -646,7 +674,7 @@ internal fun GameLibraryContent(
                 selectedTypeId = typeId,
                 statusCounts = statusCounts,
                 selectedStatus = state.libraryStatusFilter,
-                visibleCount = visibleGames.size,
+                visibleCount = rowGroups.size,
                 selectionMode = selecting,
                 selectedCount = selectedKeys.size,
                 primary = primary,
@@ -671,6 +699,10 @@ internal fun GameLibraryContent(
                 state = state,
                 games = games,
                 visibleGames = visibleGames,
+                rowGroups = rowGroups,
+                rowEntries = rowEntries,
+                rowSelected = rowSelected,
+                onSelectRow = selectRow,
                 history = history,
                 statuses = statuses,
                 selectionMode = selecting,
@@ -685,7 +717,7 @@ internal fun GameLibraryContent(
                     val eligible = key in eligibleKeys
                     if (selecting && eligible) {
                         // Selection mode: A or a tap toggles the row (plan §4.1).
-                        whenIdle(state.busy) { actions.onBatchSelected(key, key !in state.librarySelection) }()
+                        whenIdle(state.busy) { selectRow(key, !rowSelected(key)) }()
                         if (landscape) actions.onSelectGame(key)
                     } else if (landscape) {
                         actions.onSelectGame(key)
@@ -714,6 +746,12 @@ internal fun GameLibraryContent(
                 ) {
                     LibraryMessageLines(messages = messages, busy = state.busy)
                     if (detail != null) {
+                        SaveLocationSwitcher(
+                            members = groupByEntryKey[detail.libraryKey]?.members.orEmpty(),
+                            currentKey = detail.libraryKey,
+                            enabled = !state.busy,
+                            onSelect = actions.onSelectGame,
+                        )
                         GameDetailFor(
                             entry = presented(detail),
                             state = state,
@@ -751,6 +789,10 @@ private fun GameList(
     state: SourceUiState,
     games: List<SourceGameEntry>,
     visibleGames: List<SourceGameEntry>,
+    rowGroups: List<LibraryRowGroup>,
+    rowEntries: List<SourceGameEntry>,
+    rowSelected: (String) -> Boolean,
+    onSelectRow: (String, Boolean) -> Unit,
     history: Map<String, LibraryRowHistory>,
     statuses: Map<String, GameSyncStatus>,
     selectionMode: Boolean,
@@ -817,7 +859,8 @@ private fun GameList(
                     onClearFilters = actions.onClearFilters,
                 )
             }
-            null -> items(visibleGames, key = { it.libraryKey }) { entry ->
+            null -> itemsIndexed(rowEntries, key = { index, _ -> rowGroups[index].key }) { index, entry ->
+                val group = rowGroups[index]
                 val key = entry.libraryKey
                 if (metadataRepository != null) {
                     LaunchedEffect(key) {
@@ -834,21 +877,57 @@ private fun GameList(
                     presentation = presentations[key] ?: entry.game.presentation,
                     history = history[key],
                     coverRepository = coverRepository,
-                    batchChecked = key in state.librarySelection,
-                    batchEligible = GameLibrary.canBatchBackup(entry.game),
+                    batchChecked = rowSelected(key),
+                    batchEligible = group.members.any { GameLibrary.canBatchBackup(it.game) },
                     batchEnabled = !state.busy,
-                    current = key == currentKey,
-                    status = statuses[key],
+                    current = group.members.any { it.libraryKey == currentKey },
+                    status = LibraryView.groupStatus(group, statuses),
+                    locationCount = group.members.size,
                     selectionMode = selectionMode,
                     onClick = { onRowClick(key) },
                     onFocused = {
                         focus.lastFocusedKey = key
                         if (onRowFocused != null) focusedKey = key
                     },
-                    onBatchCheckedChange = { selected -> actions.onBatchSelected(key, selected) },
+                    onBatchCheckedChange = { selected -> onSelectRow(key, selected) },
                     focusRequester = requester,
                 )
                 HorizontalDivider(modifier = Modifier.padding(start = gameRowTextStart(selectionMode)))
+            }
+        }
+    }
+}
+
+/**
+ * The same game in several sources (e.g. Eden's private, Android/data and
+ * public folders): one chip per save location. Each location keeps its own
+ * versions and restores; the chip picks which one the detail below shows.
+ */
+@Composable
+private fun SaveLocationSwitcher(
+    members: List<SourceGameEntry>,
+    currentKey: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    if (members.size < 2) return
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+        Text(
+            "${members.size} 个存档位置 · 各自备份、各自恢复",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            members.forEach { member ->
+                FilterChip(
+                    selected = member.libraryKey == currentKey,
+                    onClick = { if (enabled && member.libraryKey != currentKey) onSelect(member.libraryKey) },
+                    label = { Text(LibraryView.locationLabel(member), maxLines = 1) },
+                    modifier = Modifier.handheldFocusRing(RoundedCornerShape(8.dp)),
+                )
             }
         }
     }
