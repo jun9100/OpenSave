@@ -20,19 +20,28 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.batch.BatchOperation
 import com.jun9100.opensave.batch.BatchProgress
 import com.jun9100.opensave.batch.BatchReport
+import com.jun9100.opensave.ui.input.BusyNotice
 import com.jun9100.opensave.ui.input.handheldFocusRing
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.PreviewSurface
+import kotlinx.coroutines.delay
 
 /**
  * What the status strip shows about batches: the running one with its
@@ -62,11 +71,22 @@ internal fun BatchProgressBar(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // A press refused while the batch runs (whenIdle) briefly says why and how to stop it.
+    val blocked by BusyNotice.blockedCount.collectAsState()
+    val blockedOnShow = remember { blocked }
+    var showNotice by remember { mutableStateOf(false) }
+    LaunchedEffect(blocked) {
+        if (blocked == blockedOnShow) return@LaunchedEffect
+        showNotice = true
+        delay(BusyNotice.SHOW_MILLIS)
+        showNotice = false
+    }
     StripSurface(modifier.testTag(BATCH_PROGRESS_TAG)) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
-                progress.text,
+                if (showNotice) "${progress.operation.label}进行中，可按 Y 取消" else progress.text,
                 style = MaterialTheme.typography.bodySmall,
+                color = if (showNotice) MaterialTheme.colorScheme.primary else Color.Unspecified,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

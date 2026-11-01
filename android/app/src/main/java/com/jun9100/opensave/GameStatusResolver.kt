@@ -62,6 +62,8 @@ object GameStatusResolver {
         return when {
             latest == null -> GameSyncStatus.NEVER_BACKED_UP
             localChanged -> GameSyncStatus.LOCAL_CHANGED
+            // A conflict copy or an unadvanced legacy head is not the cloud's current save.
+            latest.uploaded && latest.notCloudHead -> GameSyncStatus.CONFLICT
             latest.uploaded -> GameSyncStatus.SYNCED
             cloudEnabled -> GameSyncStatus.NOT_UPLOADED
             else -> GameSyncStatus.LOCAL_ONLY

@@ -322,6 +322,7 @@ class AutoBackupWorker(
             if (existing != null && signature != null) repository.setSaveSignature(existing.id, signature)
             if (nativeDecision == null && existing?.uploaded == true) {
                 return publishCurrentHead(config, cloudIdentity, existing, repository.fileFor(existing))
+                    .also { if (it == GameBackupOutcome.Uploaded) repository.markUploaded(existing.id) }
             }
             val pending = existing
             val record = pending ?: createSnapshot(
@@ -341,8 +342,11 @@ class AutoBackupWorker(
 
             return client.upload(repository.fileFor(record), cloudIdentity.saveType, record.remoteName).fold(
                 onSuccess = {
-                    repository.markUploaded(record.id)
+                    // Without the head protocol the upload is all there is;
+                    // with it, the record is the current save once the head moved.
+                    repository.markUploaded(record.id, asCloudHead = !cloudIdentity.desktopCompatible)
                     publishCurrentHead(config, cloudIdentity, record, repository.fileFor(record))
+                        .also { if (it == GameBackupOutcome.Uploaded) repository.markUploaded(record.id) }
                 },
                 onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
             )
@@ -512,7 +516,7 @@ class AutoBackupWorker(
         repository: SnapshotRepository,
     ): GameBackupOutcome = native.publishSnapshot(cloudIdentity, record, archiveFile).fold(
         onSuccess = { result ->
-            repository.markUploaded(record.id)
+            repository.markUploaded(record.id, asCloudHead = result is GameSaveNativePublishResult.Confirmed)
             when (result) {
                 is GameSaveNativePublishResult.Confirmed -> GameBackupOutcome.Uploaded
                 is GameSaveNativePublishResult.Conflict -> GameBackupOutcome.Deferred(

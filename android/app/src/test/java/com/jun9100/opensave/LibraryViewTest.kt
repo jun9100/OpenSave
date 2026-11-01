@@ -121,6 +121,24 @@ class LibraryViewTest {
     }
 
     @Test
+    fun cloudNewerFilterMatchesAndItsChipOnlyShowsWhenUseful() {
+        val (a, b) = games.map { it.libraryKey }
+        val statuses = mapOf(a to GameSyncStatus.CLOUD_NEWER, b to GameSyncStatus.SYNCED)
+        assertEquals(listOf(a), LibraryView.filterByStatus(games, statuses, LibraryStatusFilter.CLOUD_NEWER).map { it.libraryKey })
+        val counts = LibraryView.statusCounts(games, statuses)
+        assertEquals(1, counts[LibraryStatusFilter.CLOUD_NEWER])
+        assertEquals(LibraryStatusFilter.entries, LibraryView.toolbarStatusFilters(counts, LibraryStatusFilter.ALL))
+
+        val none = LibraryView.statusCounts(games, emptyMap())
+        assertEquals(
+            LibraryStatusFilter.entries - LibraryStatusFilter.CLOUD_NEWER,
+            LibraryView.toolbarStatusFilters(none, LibraryStatusFilter.ALL),
+        )
+        // The active filter never disappears from under the focus.
+        assertTrue(LibraryStatusFilter.CLOUD_NEWER in LibraryView.toolbarStatusFilters(none, LibraryStatusFilter.CLOUD_NEWER))
+    }
+
+    @Test
     fun changedKeysAreNeverBackedUpOrLocallyChanged() {
         val statuses = mapOf(
             "a" to GameSyncStatus.LOCAL_CHANGED,

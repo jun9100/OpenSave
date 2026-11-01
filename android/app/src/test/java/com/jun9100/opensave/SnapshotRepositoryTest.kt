@@ -50,6 +50,28 @@ class SnapshotRepositoryTest {
     }
 
     @Test
+    fun theCloudHeadFlagSurvivesReloadAndIsClearedByAHeadUpload() {
+        val root = createTempDir(prefix = "opensave-head-")
+        try {
+            val repository = SnapshotRepository(root)
+            repository.add(record("snap_1", 1))
+            repository.markUploaded("snap_1", asCloudHead = false)
+            val conflict = SnapshotRepository(File(root.absolutePath)).list().single()
+            assertTrue(conflict.uploaded)
+            assertTrue(conflict.notCloudHead)
+
+            repository.markUploaded("snap_1")
+            assertFalse(SnapshotRepository(File(root.absolutePath)).list().single().notCloudHead)
+            // Clearing the upload never leaves the flag behind.
+            repository.markUploaded("snap_1", asCloudHead = false)
+            repository.markUploaded("snap_1", uploaded = false, asCloudHead = false)
+            assertFalse(repository.list().single().notCloudHead)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun readsLegacyTenColumnSnapshotRecords() {
         val root = createTempDir(prefix = "opensave-legacy-index-")
         try {

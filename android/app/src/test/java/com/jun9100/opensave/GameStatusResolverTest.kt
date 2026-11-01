@@ -66,6 +66,15 @@ class GameStatusResolverTest {
     }
 
     @Test
+    fun anUploadThatDidNotBecomeTheCloudHeadIsNeverSynced() {
+        val conflictCopy = record(uploaded = true, signature = "s1:1:1:1").copy(notCloudHead = true)
+        assertEquals(GameSyncStatus.CONFLICT, resolve(conflictCopy, "s1:1:1:1"))
+        // Saves changed since: the local change is what to act on first.
+        assertEquals(GameSyncStatus.LOCAL_CHANGED, resolve(conflictCopy, "s1:2:2:2"))
+        assertEquals(GameSyncStatus.SYNCED, resolve(conflictCopy.copy(notCloudHead = false), "s1:1:1:1"))
+    }
+
+    @Test
     fun onlyNeverBackedUpAndLocalChangesNeedABackup() {
         assertEquals(
             setOf(GameSyncStatus.NEVER_BACKED_UP, GameSyncStatus.LOCAL_CHANGED),

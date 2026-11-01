@@ -30,6 +30,12 @@ data class SnapshotRecord(
     val hashVersion: Int = 0,
     /** Encoded [SaveSignature] of the game's locations when it was captured; blank when unknown. */
     val saveSignature: String = "",
+    /**
+     * Uploaded, but not as the game's current cloud save: kept as a native
+     * conflict copy, or a legacy ZIP whose head could not be advanced. Never
+     * shown as "已同步".
+     */
+    val notCloudHead: Boolean = false,
 ) {
     /** A pre-restore / pre-write-back copy, not a backup the user made; it carries a comment. */
     val isSafetyCopy: Boolean get() = comment.isNotBlank()
@@ -60,9 +66,10 @@ class SnapshotRepository(private val root: File) {
         writeRecords(records)
     }
 
-    fun markUploaded(id: String, uploaded: Boolean = true) = synchronized(lock) {
+    /** [asCloudHead] false: the archive reached game-save without becoming its current save. */
+    fun markUploaded(id: String, uploaded: Boolean = true, asCloudHead: Boolean = true) = synchronized(lock) {
         val records = readRecords().map { record ->
-            if (record.id == id) record.copy(uploaded = uploaded) else record
+            if (record.id == id) record.copy(uploaded = uploaded, notCloudHead = uploaded && !asCloudHead) else record
         }
         writeRecords(records)
     }
@@ -186,6 +193,7 @@ class SnapshotRepository(private val root: File) {
         record.contentHash,
         record.hashVersion.toString(),
         record.saveSignature,
+        record.notCloudHead.toString(),
     ).joinToString("\t", transform = ::encodeField)
 
     private fun decode(line: String): SnapshotRecord? {
@@ -212,6 +220,7 @@ class SnapshotRepository(private val root: File) {
                 contentHash = fields.getOrNull(14).orEmpty(),
                 hashVersion = fields.getOrNull(15)?.toIntOrNull() ?: 0,
                 saveSignature = fields.getOrNull(16).orEmpty(),
+                notCloudHead = fields.getOrNull(17) == "true",
             )
         }.getOrNull()
     }
@@ -228,8 +237,8 @@ class SnapshotRepository(private val root: File) {
         private const val TEMPORARY_PREFIX = ".index-"
         private const val TEMPORARY_SUFFIX = ".part"
 
-        /** Older builds wrote 10, 12, 14 or 16 columns; 16 added the content hash, 17 the save signature. */
-        private val RECORD_FIELD_COUNTS = setOf(10, 12, 14, 16, 17)
+        /** Older builds wrote 10, 12, 14 or 16 columns; 16 added the content hash, 17 the save signature, 18 the head flag. */
+        private val RECORD_FIELD_COUNTS = setOf(10, 12, 14, 16, 17, 18)
 
         private val locks = ConcurrentHashMap<String, Any>()
         private val instances = ConcurrentHashMap<String, SnapshotRepository>()

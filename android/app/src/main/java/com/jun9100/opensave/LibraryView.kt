@@ -15,6 +15,9 @@ enum class LibraryStatusFilter(val label: String) {
     NOT_UPLOADED("未上传"),
     NEVER_BACKED_UP("从未备份"),
     CONFLICT("冲突"),
+
+    /** What "安全恢复云端较新" would restore; the toolbar only shows it while there is one (see [LibraryView.toolbarStatusFilters]). */
+    CLOUD_NEWER("云端较新"),
     ;
 
     fun matches(status: GameSyncStatus?): Boolean = when (this) {
@@ -23,6 +26,7 @@ enum class LibraryStatusFilter(val label: String) {
         NOT_UPLOADED -> status == GameSyncStatus.NOT_UPLOADED
         NEVER_BACKED_UP -> status == GameSyncStatus.NEVER_BACKED_UP
         CONFLICT -> status == GameSyncStatus.CONFLICT
+        CLOUD_NEWER -> status == GameSyncStatus.CLOUD_NEWER
     }
 }
 
@@ -76,6 +80,16 @@ object LibraryView {
         if (filter == LibraryStatusFilter.ALL) games else games.filter { filter.matches(statuses[it.libraryKey]) }
 
     /** How many of [games] each status chip would show. */
+    /**
+     * The status chips of the landscape toolbar: every filter, except
+     * "云端较新" while no game is (it only appears after a cloud check) and
+     * it is not the active one. The command panel always lists all of them.
+     */
+    fun toolbarStatusFilters(counts: Map<LibraryStatusFilter, Int>, selected: LibraryStatusFilter): List<LibraryStatusFilter> =
+        LibraryStatusFilter.entries.filter { filter ->
+            filter != LibraryStatusFilter.CLOUD_NEWER || filter == selected || (counts[filter] ?: 0) > 0
+        }
+
     fun statusCounts(games: List<SourceGameEntry>, statuses: Map<String, GameSyncStatus>): Map<LibraryStatusFilter, Int> =
         LibraryStatusFilter.entries.associateWith { filter -> filterByStatus(games, statuses, filter).size }
 

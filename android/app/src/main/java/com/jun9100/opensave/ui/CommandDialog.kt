@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import com.jun9100.opensave.LibraryStatusFilter
+import com.jun9100.opensave.ui.batch.CANCEL_BATCH_LABEL
 import com.jun9100.opensave.ui.dialogs.HandheldMenuDialog
 import com.jun9100.opensave.ui.dialogs.MenuEntry
 
@@ -43,6 +44,9 @@ internal fun libraryCommands(
     onStatusSelected: (LibraryStatusFilter) -> Unit,
     onOpenManagement: () -> Unit,
 ): List<MenuEntry> = buildList {
+    // While a batch runs, cancelling it is what Y is pressed for: first, so it takes the initial focus.
+    val (cancel, otherBatch) = batch.partition { it.label == CANCEL_BATCH_LABEL }
+    addAll(cancel)
     add(MenuEntry("扫描游戏", detail = "重新扫描已选的存档来源", enabled = !busy, onClick = onScan))
     if (selectionMode) {
         add(MenuEntry("全选当前筛选", detail = "已选 $selectedCount", enabled = !busy, onClick = selection.onSelectAll))
@@ -51,7 +55,7 @@ internal fun libraryCommands(
     } else {
         add(MenuEntry("进入选择模式", detail = "Select 键或长按游戏也可进入", enabled = !busy, onClick = selection.onEnter))
     }
-    addAll(batch)
+    addAll(otherBatch)
     // A single "全部" option means there is nothing to filter.
     if (typeOptions.size > 1) {
         typeOptions.forEach { (id, label) ->

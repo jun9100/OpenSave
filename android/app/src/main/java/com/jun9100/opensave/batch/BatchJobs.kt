@@ -102,7 +102,7 @@ internal class BatchExecution(
     private suspend fun backup(entry: SourceGameEntry): BatchStepResult {
         val manifest = GameSnapshotManifest.from(entry.game, GameLibrary.batchBackupLocations(entry.game))
         val captured = locked { ops.captureLocked(entry, manifest) }
-        captured.cloudUpdate?.let { remember(entry, it) }
+        if (captured.published) remember(entry, captured.cloudUpdate)
         return captured.toResult()
     }
 
@@ -112,7 +112,7 @@ internal class BatchExecution(
             PendingUpload.NothingPending -> BatchStepResult(BatchItemStatus.UNCHANGED, "最新版本已在云端")
             PendingUpload.LocalChanged -> BatchStepResult(BatchItemStatus.SKIPPED, "存档在备份后又有变更，请先备份")
             is PendingUpload.Published -> {
-                result.outcome.cloudUpdate?.let { remember(entry, it) }
+                if (result.outcome.uploaded) remember(entry, result.outcome.cloudUpdate)
                 result.outcome.toResult()
             }
         }
@@ -151,11 +151,14 @@ internal class BatchExecution(
         }
     }
 
-    /** A backup or upload found a cloud verdict; it replaces what was known for the game. */
-    private fun remember(entry: SourceGameEntry, update: GameSaveCloudUpdate) {
+    /**
+     * A backup or upload reached game-save: its verdict ([update], none when
+     * the publish became the head) replaces what was known for the game.
+     */
+    private fun remember(entry: SourceGameEntry, update: GameSaveCloudUpdate?) {
         checkedKeys += entry.libraryKey
         updates.removeAll { it.entry.libraryKey == entry.libraryKey }
-        updates += update
+        update?.let(updates::add)
     }
 
     private fun GameCaptureOutcome.toResult(): BatchStepResult {

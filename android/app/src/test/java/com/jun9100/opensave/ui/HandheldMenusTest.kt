@@ -67,6 +67,35 @@ class HandheldMenusTest {
     }
 
     @Test
+    fun libraryPanelPutsCancelFirstWhileABatchRunsInSelectionMode() {
+        var cancelled = false
+        val entries = libraryCommands(
+            busy = true,
+            typeOptions = listOf("all" to "全部"),
+            selectedTypeId = "all",
+            selectedStatus = LibraryStatusFilter.ALL,
+            selectionMode = true,
+            selectedCount = 5,
+            onScan = {},
+            selection = LibrarySelectionActions(),
+            batch = listOf(
+                MenuEntry("取消当前批量任务") { cancelled = true },
+                MenuEntry("备份所选 (5)", enabled = false) {},
+            ),
+            onTypeSelected = {},
+            onStatusSelected = {},
+            onOpenManagement = {},
+        )
+        // The dialog focuses the first enabled entry: it must be cancel, not "退出选择模式".
+        val first = entries.first { it.enabled }
+        assertEquals("取消当前批量任务", first.label)
+        first.onClick()
+        assertTrue(cancelled)
+        assertEquals(1, entries.count { it.label == "取消当前批量任务" })
+        assertTrue(entries.any { it.label == "备份所选 (5)" })
+    }
+
+    @Test
     fun managementPanelDisablesOperationsWhileBusy() {
         val entries = managementCommands(busy = true, onRefresh = {}, onListCloud = {}, onCheckCloudUpdates = {}, onPickFolder = {}, onOpenLibrary = {})
         assertEquals(listOf("刷新来源", "列举云端快照", "检查跨设备更新", "添加并授权目录", "前往 游戏库"), entries.map { it.label })

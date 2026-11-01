@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.LibraryStatusFilter
+import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.PrimaryBackup
 import com.jun9100.opensave.ui.LIBRARY_TOOLBAR_TAG
 import com.jun9100.opensave.ui.LibrarySelectionActions
@@ -251,7 +252,7 @@ private fun LibraryFilterBar(
             }
             VerticalDivider(modifier = Modifier.height(24.dp))
         }
-        LibraryStatusFilter.entries.forEach { filter ->
+        LibraryView.toolbarStatusFilters(statusCounts, selectedStatus).forEach { filter ->
             val count = statusCounts[filter] ?: 0
             FilterChip(
                 selected = selectedStatus == filter,

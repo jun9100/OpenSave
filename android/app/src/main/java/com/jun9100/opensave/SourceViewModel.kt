@@ -1053,7 +1053,11 @@ class SourceViewModel(
                     error = captured.uploadError,
                 ).copy(
                     snapshots = currentSnapshots(),
-                    cloudUpdates = mergeCloudUpdates(state.value.cloudUpdates, listOfNotNull(captured.cloudUpdate)),
+                    // A publish that reached game-save makes the game's earlier verdicts stale.
+                    cloudUpdates = mergeCloudUpdates(
+                        state.value.cloudUpdates.filterNot { captured.published && it.entry.libraryKey == entry.libraryKey },
+                        listOfNotNull(captured.cloudUpdate),
+                    ),
                     saveSignatures = captured.saveSignature
                         ?.let { state.value.saveSignatures + (entry.libraryKey to it) }
                         ?: state.value.saveSignatures,

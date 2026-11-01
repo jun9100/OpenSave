@@ -53,6 +53,8 @@ internal data class GameCaptureOutcome(
     val saveSignature: String? = null,
     /** The upload failure itself, so a batch can stop on a refused sync key. */
     val uploadException: Throwable? = null,
+    /** True when this capture reached game-save; any earlier cloud verdict for the game is stale then. */
+    val published: Boolean = false,
 )
 
 /** What publishing one local snapshot to game-save did ([GameOperations.publishLocked]). */
@@ -219,6 +221,7 @@ internal class GameOperations(
                 uploadedReused = reusable != null && finalRecord.uploaded,
                 saveSignature = saveSignature,
                 uploadException = published.uploadException,
+                published = published.uploaded,
             )
         } finally {
             workspace.deleteRecursively()
@@ -249,9 +252,10 @@ internal class GameOperations(
         nativeUpload.onSuccess { result ->
             // A confirmed head and an immutable conflict are both durable;
             // neither should be retried later as a head-changing write.
-            snapshotRepository.markUploaded(record.id)
+            val conflict = result is GameSaveNativePublishResult.Conflict
+            snapshotRepository.markUploaded(record.id, asCloudHead = !conflict)
             uploaded = true
-            if (result is GameSaveNativePublishResult.Conflict) {
+            if (conflict) {
                 val decision = native.check(cloudIdentity, manifestHash).getOrNull()
                 cloudUpdate = decision
                     ?.takeUnless { it.action == GameSaveRemoteAction.UP_TO_DATE }
@@ -274,7 +278,9 @@ internal class GameOperations(
                 uploadException = upload.exceptionOrNull()
                 return@onFailure
             }
-            snapshotRepository.markUploaded(record.id)
+            // A ZIP without the head protocol is all such a game has; otherwise
+            // it is the current save only once the head below is advanced.
+            snapshotRepository.markUploaded(record.id, asCloudHead = !cloudIdentity.desktopCompatible)
             uploaded = true
             if (!cloudIdentity.desktopCompatible) return@onFailure
             val decision = runCatching {
@@ -291,6 +297,7 @@ internal class GameOperations(
                 null -> Unit
                 GameSaveRemoteAction.UP_TO_DATE -> {
                     GameSaveHeadPublisher(app, config).publishSnapshot(cloudIdentity, record, archive)
+                        .onSuccess { snapshotRepository.markUploaded(record.id) }
                         .onFailure { legacyError ->
                             uploadError = "云端同步公告失败：${legacyError.message ?: "未知错误"}"
                             uploadException = legacyError
