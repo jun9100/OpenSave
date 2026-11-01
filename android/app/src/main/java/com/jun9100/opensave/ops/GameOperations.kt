@@ -1,6 +1,7 @@
 package com.jun9100.opensave.ops
 
 import android.content.Context
+import com.jun9100.opensave.AutoBackupFingerprint
 import com.jun9100.opensave.AutoBackupPolicy
 import com.jun9100.opensave.ContentHash
 import com.jun9100.opensave.DetectedGame
@@ -22,6 +23,7 @@ import com.jun9100.opensave.GameSaveScopesUnsupportedException
 import com.jun9100.opensave.GameSnapshotLocation
 import com.jun9100.opensave.GameSnapshotManifest
 import com.jun9100.opensave.Hashing
+import com.jun9100.opensave.PathPolicy
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.RestoreRequest
 import com.jun9100.opensave.RootStorage
@@ -515,7 +517,8 @@ internal class GameOperations(
             require(manifest.matches(currentGame)) { "游戏快照路径与当前扫描清单不匹配；请重新扫描并检查游戏身份" }
             require(manifest.gameKey == requestedGame.gameKey) { "游戏快照身份与所选游戏不匹配" }
             manifest.write(manifestFile)
-            val restoredManifestHash = AutoBackupPolicy.fingerprint(extractedRoot).manifestHash
+            val restoredFingerprint = AutoBackupPolicy.fingerprint(extractedRoot)
+            val restoredManifestHash = restoredFingerprint.manifestHash
 
             copyGameLocations(source, manifest.locations, safetyRoot).getOrThrow()
             val safetyManifest = File(safetyRoot, GameSnapshotManifest.FILE_NAME)
@@ -566,10 +569,61 @@ internal class GameOperations(
                         remoteHead = request.remoteHead,
                     ).getOrThrow()
                 }
+                request.remote?.let { remote ->
+                    recordRestoredCloudSnapshot(source, sourceId, currentGame, manifest, remote, archive, restoredFingerprint)
+                }
             }
         } finally {
             workingRoot.deleteRecursively()
         }
+    }
+
+    /**
+     * The restored cloud archive becomes this game's newest local snapshot,
+     * already uploaded and the cloud head, with the signature read after the
+     * write. It has no comment, because a comment marks a safety copy.
+     * Without it the status compares the restored saves with the
+     * snapshot from before the restore and shows "本地有变更", and
+     * "备份有变更" would publish the same content again.
+     */
+    private suspend fun recordRestoredCloudSnapshot(
+        source: SourceSelection,
+        sourceId: String,
+        game: DetectedGame,
+        manifest: GameSnapshotManifest,
+        remote: RemoteSnapshot,
+        archive: File,
+        fingerprint: AutoBackupFingerprint,
+    ) {
+        val signature = runCatching { signatureReader.read(source, game) }.getOrNull()
+        val existing = snapshotRepository.list().firstOrNull { it.sourceId == sourceId && it.remoteName == remote.name }
+        if (existing != null) {
+            snapshotRepository.markUploaded(existing.id, uploaded = true, asCloudHead = true)
+            signature?.let { snapshotRepository.setSaveSignature(existing.id, it) }
+            return
+        }
+        val identity = GameCloudNaming.identity(source, sourceId, game)
+        val stored = File(app.filesDir, "$SNAPSHOT_DIRECTORY/${PathPolicy.requireSafeDocumentName(remote.name)}")
+        if (archive.absoluteFile != stored.absoluteFile) archive.copyTo(stored, overwrite = true)
+        val record = SnapshotRecord(
+            id = "game_${UUID.randomUUID()}",
+            sourceId = sourceId,
+            remoteName = remote.name,
+            localPath = stored.name,
+            createdAtMillis = nextTimestamp(),
+            sizeBytes = stored.length(),
+            sha256 = Hashing.sha256(stored),
+            manifestHash = fingerprint.manifestHash,
+            gameKey = manifest.gameKey,
+            gameName = manifest.gameName,
+            saveType = identity.saveType.id,
+            cloudGameId = identity.gameId,
+            contentHash = fingerprint.contentHash,
+            hashVersion = if (fingerprint.contentHash.isBlank()) 0 else ContentHash.VERSION,
+            saveSignature = signature.orEmpty(),
+        )
+        snapshotRepository.add(record)
+        snapshotRepository.markUploaded(record.id, uploaded = true, asCloudHead = true)
     }
 
     private suspend fun copyGameLocations(
