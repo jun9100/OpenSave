@@ -80,11 +80,11 @@ class InstalledGameCatalog(private val context: Context) {
             AndroidGameRecognition.CANDIDATE -> "待确认应用"
         }
         listOf(
-            RootSourcePreset("$prefix：${app.displayName}", "/data/user/0/${app.packageName}"),
+            RootSourcePreset("$prefix：${app.displayName} · 私有目录", "/data/user/0/${app.packageName}"),
             // Do not rely on the broad shared-storage traversal: large devices can
             // reach its directory limit before an app-specific external tree.
             RootSourcePreset(
-                "$prefix（外部数据）：${app.displayName}",
+                "$prefix：${app.displayName} · Android/data",
                 "/storage/emulated/0/Android/data/${app.packageName}",
             ),
         )
@@ -102,12 +102,12 @@ class InstalledGameCatalog(private val context: Context) {
         .flatMap { app ->
             listOf(
                 RootSourcePreset(
-                    label = "未归类应用（待确认）：${app.displayName}",
+                    label = "未归类应用（待确认）：${app.displayName} · 私有目录",
                     path = "/data/user/0/${app.packageName}",
                     enabledByDefault = false,
                 ),
                 RootSourcePreset(
-                    label = "未归类应用（待确认，外部数据）：${app.displayName}",
+                    label = "未归类应用（待确认）：${app.displayName} · Android/data",
                     path = "/storage/emulated/0/Android/data/${app.packageName}",
                     enabledByDefault = false,
                 ),
@@ -117,6 +117,7 @@ class InstalledGameCatalog(private val context: Context) {
 
     private fun recognitionOf(application: ApplicationInfo, packageManager: PackageManager): AndroidGameRecognition {
         if (application.packageName in knownNativeGames ||
+            AndroidAppConfirmations.isConfirmed(application.packageName) ||
             application.category == ApplicationInfo.CATEGORY_GAME ||
             application.flags and ApplicationInfo.FLAG_IS_GAME != 0
         ) {

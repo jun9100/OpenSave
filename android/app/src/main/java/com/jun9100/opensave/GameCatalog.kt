@@ -107,7 +107,8 @@ object GameCatalog {
             ?: rawName?.let { nameEntries[normalized(it)] }
         val steamAppId = appId ?: entry?.steamAppId
 
-        val originalName = entry?.originalName ?: humanReadableName(save, rawName)
+        val learnedName = titleId?.let(GameNames::switchTitle)
+        val originalName = entry?.originalName ?: learnedName ?: humanReadableName(save, rawName)
         return GamePresentation(
             localizedName = entry?.localizedName,
             originalName = originalName,

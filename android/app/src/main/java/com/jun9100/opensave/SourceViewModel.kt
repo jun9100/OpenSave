@@ -153,6 +153,8 @@ data class SourceUiState(
     val sourceScans: List<SourceScanResult> = emptyList(),
     val sourceOptions: List<SaveSourceOption> = emptyList(),
     val scanRevision: Long = 0L,
+    /** [GameNames.revision] the rows were built with; rows recompute when it changes. */
+    val nameRevision: Long = 0L,
     val snapshots: List<SnapshotRecord> = emptyList(),
     val remoteSnapshots: List<RemoteSnapshot> = emptyList(),
     val cloudUpdates: List<GameSaveCloudUpdate> = emptyList(),
@@ -252,6 +254,8 @@ class SourceViewModel(
     private val snapshotEngine = SnapshotEngine()
     private val snapshotRepository = SnapshotRepository.forApp(application)
     private val gameSaveStore = GameSaveConfigStore(application)
+    private val gameNameStore = GameNameStore(application).also { store -> runCatching { store.load() } }
+    private val androidAppStore = AndroidAppConfirmationStore(application).also { store -> runCatching { store.load() } }
     private val displayPreferences = DisplayPreferences(application)
     private val gameSaveDevice = GameSaveDeviceStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
@@ -1104,6 +1108,62 @@ class SourceViewModel(
                 saveSignatures = state.value.saveSignatures.filterKeys { it in eligibleKeys },
             )
             readSaveSignatures(games)
+            if (rootAvailable && rootAllowed) learnSwitchTitles()
+        }
+    }
+
+    /**
+     * Switch titles the built-in catalog does not know are named from the
+     * emulators' own game lists and the ROM file names those lists point at.
+     * Both live where only root can read; without root the user can still
+     * name a game by hand.
+     */
+    private fun learnSwitchTitles() {
+        viewModelScope.launch {
+            val learned = withContext(Dispatchers.IO) {
+                runCatching {
+                    val titles = linkedMapOf<String, String>()
+                    val romDirectories = linkedSetOf<String>()
+                    for (pkg in SWITCH_EMULATOR_PACKAGES) {
+                        val path = "/data/user/0/$pkg/shared_prefs/${pkg}_preferences.xml"
+                        val xml = RootCommand.execute("cat ${RootCommand.shellQuote(path)} 2>/dev/null")
+                            .takeIf { it.exitCode == 0 }?.output ?: continue
+                        romDirectories += SwitchTitleNameSources.romDirectories(xml)
+                        titles.putAll(SwitchTitleNameSources.fromEmulatorPreferences(xml))
+                    }
+                    for (directory in romDirectories) {
+                        val listing = RootCommand.execute("ls -1 ${RootCommand.shellQuote(directory)} 2>/dev/null")
+                            .takeIf { it.exitCode == 0 }?.output ?: continue
+                        // The emulator's own title wins over a file name.
+                        SwitchTitleNameSources.fromRomFileNames(listing.lines())
+                            .forEach { (titleId, name) -> titles.putIfAbsent(titleId, name) }
+                    }
+                    gameNameStore.learnSwitchTitles(titles)
+                }
+            }
+            learned.onFailure { error ->
+                log(ActivityKind.SCAN, ActivityLevel.WARNING, "读取 Switch 游戏名失败", error.message.orEmpty())
+            }
+            updateState { copy(nameRevision = GameNames.revision) }
+        }
+    }
+
+    /**
+     * Marks an Android app as a game (or takes it back out of the library).
+     * Detection reads the confirmation, so a rescan moves its data in or out.
+     */
+    fun setAndroidAppIsGame(packageName: String, isGame: Boolean) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { runCatching { androidAppStore.set(packageName, isGame) } }
+            scanSource()
+        }
+    }
+
+    /** Names a game by hand; a blank name goes back to the detected one. */
+    fun renameGame(gameKey: String, name: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { runCatching { gameNameStore.rename(gameKey, name) } }
+            updateState { copy(nameRevision = GameNames.revision) }
         }
     }
 
@@ -2076,6 +2136,16 @@ class SourceViewModel(
     )
 
     private companion object {
+        /** Emulators whose game list (with titles) lives in their shared preferences. */
+        val SWITCH_EMULATOR_PACKAGES = listOf(
+            "dev.eden.eden_emulator",
+            "org.yuzu.yuzu_emu",
+            "org.yuzu.yuzu_emu.ea",
+            "dev.suyu.suyu_emu",
+            "org.sudachi.sudachi_emu",
+            "org.citron.citron_emu",
+        )
+
         const val SNAPSHOT_DIRECTORY = "snapshots"
         const val UNCHANGED_SKIPPED = "无变化，已跳过"
         const val MAX_HISTORY = 40

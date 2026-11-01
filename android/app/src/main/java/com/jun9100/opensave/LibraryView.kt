@@ -221,4 +221,30 @@ object LibraryView {
         gameDetailOpen && !landscape -> BackTarget.CLOSE_DETAIL
         else -> BackTarget.SYSTEM
     }
+
+    /**
+     * An Android app that Android does not mark as a game and the user has not
+     * confirmed: its data was found, but it stays off the library and is
+     * listed on the 来源 page instead.
+     */
+    fun isUnconfirmedApp(entry: SourceGameEntry): Boolean =
+        entry.game.saves.isNotEmpty() && entry.game.saves.all { it.kind == "android-app" }
+
+    /** The library's rows: every game but [isUnconfirmedApp] ones. */
+    fun libraryEntries(entries: List<SourceGameEntry>): List<SourceGameEntry> = entries.filterNot(::isUnconfirmedApp)
+
+    /** Unconfirmed apps once each, by package, for the 来源 page. */
+    fun unconfirmedApps(entries: List<SourceGameEntry>): List<PendingAndroidApp> = entries
+        .filter(::isUnconfirmedApp)
+        .groupBy { it.game.presentation.androidPackageName ?: it.game.gameKey.removePrefix("android:") }
+        .map { (packageName, forApp) ->
+            PendingAndroidApp(packageName, forApp.first().game.presentation.primaryName, forApp.sumOf { it.game.locationCount })
+        }
+        .sortedBy { it.name.lowercase() }
 }
+
+data class PendingAndroidApp(
+    val packageName: String,
+    val name: String,
+    val locationCount: Int,
+)

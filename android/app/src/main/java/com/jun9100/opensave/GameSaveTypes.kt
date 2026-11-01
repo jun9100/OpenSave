@@ -93,12 +93,12 @@ object GameSaveTypes {
     fun forSource(source: SourceSelection): GameSaveType = when (source) {
         is SourceSelection.Saf -> GENERIC
         is SourceSelection.Root -> when (RootSourcePresets.find(source.path)?.label) {
-            "Eden Switch", "Eden Switch（外部数据）", "Eden Switch（共享数据）",
+            "Eden Switch · 私有目录", "Eden Switch · Android/data", "Eden Switch · 公共目录 eden",
             "Yuzu", "Yuzu EA", "Suyu", "Sudachi", "Citron", "Ryujinx" -> SWITCH
-            "GameHub PC", "GameHub PC（外部数据）", "PC 共享目录",
-            "DroidDeck PC", "DroidDeck PC（外部数据）",
-            "Winlator PC", "Winlator PC（外部数据）",
-            "Winlator 6.1", "Winlator 6.1（外部数据）" -> PC
+            "GameHub PC · 私有目录", "GameHub PC · Android/data", "PC 游戏 · 公共目录 pc-game",
+            "DroidDeck PC · 私有目录", "DroidDeck PC · Android/data",
+            "Winlator PC · 私有目录", "Winlator PC · Android/data",
+            "Winlator 6.1 · 私有目录", "Winlator 6.1 · Android/data" -> PC
             "PPSSPP" -> PPSSPP
             "RetroArch" -> RETROARCH
             "Dolphin" -> DOLPHIN

@@ -10,31 +10,31 @@ class RootSourcePresetsTest {
     @Test
     fun providesCommonAndroidGameAndEmulatorRoots() {
         assertEquals(
-            "GameHub PC",
+            "GameHub PC · 私有目录",
             RootSourcePresets.find("/data/user/0/com.xiaoji.egggame/files")?.label,
         )
         assertEquals(
-            "Eden Switch",
+            "Eden Switch · 私有目录",
             RootSourcePresets.find("/data/user/0/dev.eden.eden_emulator/files/")?.label,
         )
         assertEquals(
-            "Eden Switch（外部数据）",
+            "Eden Switch · Android/data",
             RootSourcePresets.find("/storage/emulated/0/Android/data/dev.eden.eden_emulator/files")?.label,
         )
         assertEquals(
-            "Eden Switch（共享数据）",
+            "Eden Switch · 公共目录 eden",
             RootSourcePresets.find("/storage/emulated/0/eden")?.label,
         )
         assertEquals(
-            "PC 共享目录",
+            "PC 游戏 · 公共目录 pc-game",
             RootSourcePresets.find("/storage/emulated/0/pc-game")?.label,
         )
         assertEquals(
-            "DroidDeck PC",
+            "DroidDeck PC · 私有目录",
             RootSourcePresets.find("/data/user/0/com.droiddeck.launcher/files")?.label,
         )
         assertEquals(
-            "Winlator 6.1",
+            "Winlator 6.1 · 私有目录",
             RootSourcePresets.find("/data/user/0/com.ludashi.benchmark/files")?.label,
         )
         assertEquals(
@@ -55,15 +55,15 @@ class RootSourcePresetsTest {
         assertTrue(options.all(SaveSourceOption::selected))
         assertEquals(
             GameSaveTypes.PC,
-            options.first { it.label == "GameHub PC" }.saveType,
+            options.first { it.label == "GameHub PC · 私有目录" }.saveType,
         )
         assertEquals(
             GameSaveTypes.SWITCH,
-            options.first { it.label == "Eden Switch" }.saveType,
+            options.first { it.label == "Eden Switch · 私有目录" }.saveType,
         )
         assertEquals(
             GameSaveTypes.SWITCH,
-            options.first { it.label == "Eden Switch（共享数据）" }.saveType,
+            options.first { it.label == "Eden Switch · 公共目录 eden" }.saveType,
         )
         assertEquals(
             GameSaveTypes.AETHERSX2,
@@ -71,11 +71,11 @@ class RootSourcePresetsTest {
         )
         assertEquals(
             GameSaveTypes.PC,
-            options.first { it.label == "PC 共享目录" }.saveType,
+            options.first { it.label == "PC 游戏 · 公共目录 pc-game" }.saveType,
         )
         assertEquals(
             GameSaveTypes.PC,
-            options.first { it.label == "DroidDeck PC" }.saveType,
+            options.first { it.label == "DroidDeck PC · 私有目录" }.saveType,
         )
     }
 
@@ -84,8 +84,8 @@ class RootSourcePresetsTest {
         val eden = SourceSelection.Root("/data/user/0/dev.eden.eden_emulator/files")
         val options = SaveSourceOptions.build(emptyList(), null, setOf(eden.idSeed))
 
-        assertFalse(options.first { it.label == "Eden Switch" }.selected)
-        assertTrue(options.any { it.label == "GameHub PC" && it.selected })
+        assertFalse(options.first { it.label == "Eden Switch · 私有目录" }.selected)
+        assertTrue(options.any { it.label == "GameHub PC · 私有目录" && it.selected })
     }
 
     @Test
