@@ -95,6 +95,18 @@ internal sealed interface SafeRestore {
     data class Restored(val update: GameSaveCloudUpdate) : SafeRestore
 }
 
+/** Result of "保留本机并发布" for one game ([GameOperations.keepLocalLocked]). */
+internal sealed interface KeepLocal {
+    /** The local saves are the cloud's current version now; [record] is the new backup. */
+    data class Published(val record: SnapshotRecord) : KeepLocal
+
+    /** The cloud head changed after the user decided; nothing replaced it. */
+    data object HeadMoved : KeepLocal
+
+    /** An older game-save without native scopes; replacing its ZIP head is not done here. */
+    data object Unsupported : KeepLocal
+}
+
 /**
  * Per-game operations shared by [com.jun9100.opensave.SourceViewModel] and
  * [com.jun9100.opensave.batch.BatchWorker] (plan §5.5).
@@ -131,6 +143,10 @@ internal class GameOperations(
     suspend fun captureLocked(
         entry: SourceGameEntry,
         manifest: GameSnapshotManifest,
+        /** False keeps the backup local; "保留本机并发布" publishes it on top of a chosen head instead. */
+        publish: Boolean = true,
+        /** True always writes a new snapshot, so its id is new to the cloud scope. */
+        forceNew: Boolean = false,
     ): GameCaptureOutcome {
         val source = entry.source
         val selectedGame = entry.game.copy(
@@ -150,12 +166,16 @@ internal class GameOperations(
             val sourceId = entry.sourceId
             // Unchanged content (same data as the newest snapshot of this game)
             // reuses that snapshot; it is only uploaded if it never was.
-            val reusable = snapshotRepository.findReusableRecord(
-                sourceId = sourceId,
-                gameKey = manifest.gameKey,
-                contentHash = contentFingerprint.contentHash,
-                currentManifestHash = contentFingerprint.manifestHash,
-            )
+            val reusable = if (forceNew) {
+                null
+            } else {
+                snapshotRepository.findReusableRecord(
+                    sourceId = sourceId,
+                    gameKey = manifest.gameKey,
+                    contentHash = contentFingerprint.contentHash,
+                    currentManifestHash = contentFingerprint.manifestHash,
+                )
+            }
             if (reusable != null && saveSignature != null) snapshotRepository.setSaveSignature(reusable.id, saveSignature)
             if (reusable?.uploaded == true) {
                 return GameCaptureOutcome(
@@ -206,7 +226,7 @@ internal class GameOperations(
             }
 
             val config = gameSaveStore.load()
-            val published = if (config.ready) {
+            val published = if (publish && config.ready) {
                 publishLocked(entry, cloudIdentity, record, archive, contentFingerprint.manifestHash, config)
             } else {
                 PublishOutcome(uploaded = false)
@@ -314,6 +334,35 @@ internal class GameOperations(
             }
         }
         return PublishOutcome(uploaded, uploadError, uploadException, syncNotice, cloudUpdate)
+    }
+
+    /**
+     * "保留本机并发布": backs up the saves on disk now as a new version and
+     * publishes it as the cloud's current version on top of [expectedHead],
+     * the head the user saw and chose to replace (its id from a fresh check).
+     * The local saves are not touched, and the replaced cloud version stays in
+     * the scope history. Only native scopes support it: the legacy ZIP-head
+     * protocol cannot replace a head without racing other devices.
+     */
+    suspend fun keepLocalLocked(entry: SourceGameEntry, expectedHead: String, config: GameSaveConfig): KeepLocal {
+        require(config.ready) { "未启用 game-save 云端同步" }
+        require(expectedHead.isNotBlank()) { "没有可替换的云端当前版本" }
+        val saves = GameLibrary.batchBackupLocations(entry.game)
+        require(saves.isNotEmpty()) { "这款游戏没有已识别的存档位置" }
+        val manifest = GameSnapshotManifest.from(entry.game, saves)
+        val cloudIdentity = GameCloudNaming.identity(entry.source, entry.sourceId, entry.game.copy(saves = saves))
+        val captured = captureLocked(entry, manifest, publish = false, forceNew = true)
+        val archive = snapshotRepository.fileFor(captured.record)
+        val result = GameSaveNativeSync(app, config, client(config))
+            .publishOverHead(cloudIdentity, captured.record, archive, expectedHead)
+            .getOrElse { error -> if (error is GameSaveScopesUnsupportedException) return KeepLocal.Unsupported else throw error }
+        return when (result) {
+            is GameSaveNativePublishResult.Confirmed -> {
+                snapshotRepository.markUploaded(captured.record.id, asCloudHead = true)
+                KeepLocal.Published(snapshotRepository.list().first { it.id == captured.record.id })
+            }
+            is GameSaveNativePublishResult.Conflict -> KeepLocal.HeadMoved
+        }
     }
 
     /**

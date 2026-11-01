@@ -48,6 +48,9 @@ enum class BackTarget {
     /** A secondary top-level page -> game library. */
     LIBRARY,
 
+    /** "同步与任务" -> the page it was opened from. */
+    PARENT,
+
     /** Nothing of ours to pop: let the system handle it. */
     SYSTEM,
 }
@@ -188,6 +191,7 @@ object LibraryView {
         state.rootChecked && !state.rootAvailable && !state.hasPersistedPermission
 
     fun backTarget(page: OpenSavePage, gameDetailOpen: Boolean, landscape: Boolean): BackTarget = when {
+        !page.topLevel -> BackTarget.PARENT
         page != OpenSavePage.LIBRARY -> BackTarget.LIBRARY
         // The landscape detail is a pane next to the list, not a page on top of it.
         gameDetailOpen && !landscape -> BackTarget.CLOSE_DETAIL

@@ -137,15 +137,20 @@ object HandheldKeyMap {
 
 /** Pure decisions behind the commands, so they are unit tested apart from Compose. */
 object HandheldDispatch {
-    /** Top-level pages in rail order; L1/R1 cycle through them. */
+    /**
+     * Top-level pages in rail order; L1/R1 cycle through them. A secondary page
+     * ("同步与任务") counts as the library unless the caller passes the page it
+     * was opened from.
+     */
     fun pageAfter(page: OpenSavePage, command: HandheldCommand): OpenSavePage? {
-        val pages = OpenSavePage.entries
+        val pages = OpenSavePage.topLevelPages
         val step = when (command) {
             HandheldCommand.PREVIOUS_PAGE -> -1
             HandheldCommand.NEXT_PAGE -> 1
             else -> return null
         }
-        return pages[(pages.indexOf(page) + step + pages.size) % pages.size]
+        val index = pages.indexOf(page).coerceAtLeast(0)
+        return pages[(index + step + pages.size) % pages.size]
     }
 
     /**
@@ -170,6 +175,15 @@ object HandheldDispatch {
         lastFocusedKey?.takeIf { it in visibleKeys }
             ?: selectedKey?.takeIf { it in visibleKeys }
             ?: visibleKeys.firstOrNull()
+
+    /**
+     * After the window regains focus (back from the background): a row held
+     * focus before, so focus goes back to it unless it is still in the list
+     * or was moved to the detail on purpose. The system itself puts focus on
+     * the first focusable (the "全部" chip) in non-touch mode.
+     */
+    fun shouldRestoreRowFocus(listHasFocus: Boolean, detailHasFocus: Boolean, detailFocusPending: Boolean): Boolean =
+        !listHasFocus && !detailHasFocus && !detailFocusPending
 
     /** Row index L2/R2 jump to: one screen of rows up or down, clamped to the list. */
     fun pageJumpIndex(currentIndex: Int, visibleRows: Int, total: Int, forward: Boolean): Int {

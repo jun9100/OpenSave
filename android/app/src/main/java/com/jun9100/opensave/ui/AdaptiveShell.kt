@@ -25,7 +25,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.SettingsBackupRestore
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +65,7 @@ import com.jun9100.opensave.ui.batch.BatchReportSheet
 import com.jun9100.opensave.ui.batch.BatchStripState
 import com.jun9100.opensave.ui.batch.LocalBatchStrip
 import com.jun9100.opensave.ui.dialogs.GameBackupConfirmDialog
+import com.jun9100.opensave.ui.dialogs.KeepLocalConfirmDialog
 import com.jun9100.opensave.ui.dialogs.RestoreConfirmDialog
 import com.jun9100.opensave.ui.dialogs.WorkspaceWriteBackDialog
 import com.jun9100.opensave.ui.input.FocusWatch
@@ -75,7 +79,9 @@ import com.jun9100.opensave.ui.input.handheldNavigationActive
 import com.jun9100.opensave.ui.input.watchFocus
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.library.GameLibraryPage
-import com.jun9100.opensave.ui.settings.SourceManagementPage
+import com.jun9100.opensave.ui.settings.SettingsPage
+import com.jun9100.opensave.ui.sources.SourcesPage
+import com.jun9100.opensave.ui.sync.SyncTasksPage
 
 @Composable
 internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
@@ -122,7 +128,15 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
         )
     }
 
-    state.lastBatchReport?.takeIf { state.batchReportOpen }?.let { report ->
+    state.pendingKeepLocal?.let { request ->
+        KeepLocalConfirmDialog(
+            request = request,
+            onDismiss = sourceViewModel::cancelKeepLocal,
+            onConfirm = sourceViewModel::confirmKeepLocal,
+        )
+    }
+
+    (state.viewedBatchReport ?: state.lastBatchReport)?.takeIf { state.batchReportOpen }?.let { report ->
         BatchReportSheet(
             report = report,
             busy = state.busy,
@@ -143,7 +157,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
 
     // L1/R1 switch the top-level page from anywhere, even with nothing focused.
     HandheldCommandEffect { command ->
-        HandheldDispatch.pageAfter(state.page, command)?.let(sourceViewModel::showPage)
+        HandheldDispatch.pageAfter(state.navigationPage, command)?.let(sourceViewModel::showPage)
     }
 
     val shellFocus = remember { FocusWatch() }
@@ -156,16 +170,20 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
             }
             AdaptiveShellFrame(
                 page = state.page,
+                navigationPage = state.navigationPage,
                 busy = state.busy,
                 progress = LibraryView.progressLine(state),
                 gameDetailOpen = state.gameDetailOpen && state.selectedGameKey != null,
                 onShowPage = sourceViewModel::showPage,
-                onRefresh = if (state.page == OpenSavePage.LIBRARY) {
-                    sourceViewModel::scanSource
-                } else {
-                    sourceViewModel::refreshPersistedSource
+                onRefresh = {
+                    when (state.page) {
+                        OpenSavePage.LIBRARY, OpenSavePage.SOURCES -> sourceViewModel.scanSource()
+                        OpenSavePage.SETTINGS -> sourceViewModel.refreshPersistedSource()
+                        OpenSavePage.SYNC -> sourceViewModel.checkCloudUpdates(OpenSavePage.SYNC)
+                    }
                 },
                 onCloseDetail = sourceViewModel::closeGameDetail,
+                onNavigateUp = { sourceViewModel.navigateBack(landscape) },
             ) { contentModifier ->
                 when (state.page) {
                     OpenSavePage.LIBRARY -> GameLibraryPage(
@@ -173,13 +191,23 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                         viewModel = sourceViewModel,
                         listState = libraryListState,
                         modifier = contentModifier,
-                        onOpenManagement = { sourceViewModel.showPage(OpenSavePage.MANAGEMENT) },
+                        onOpenSources = { sourceViewModel.showPage(OpenSavePage.SOURCES) },
                         onPickFolder = { folderPicker.launch(null) },
                     )
-                    OpenSavePage.MANAGEMENT -> SourceManagementPage(
+                    OpenSavePage.SOURCES -> SourcesPage(
                         state = state,
                         viewModel = sourceViewModel,
                         onPickFolder = { folderPicker.launch(null) },
+                        modifier = contentModifier,
+                    )
+                    OpenSavePage.SETTINGS -> SettingsPage(
+                        state = state,
+                        viewModel = sourceViewModel,
+                        modifier = contentModifier,
+                    )
+                    OpenSavePage.SYNC -> SyncTasksPage(
+                        state = state,
+                        viewModel = sourceViewModel,
                         modifier = contentModifier,
                     )
                 }
@@ -205,6 +233,10 @@ internal fun AdaptiveShellFrame(
     onShowPage: (OpenSavePage) -> Unit,
     onRefresh: () -> Unit,
     onCloseDetail: () -> Unit,
+    /** The rail or bottom bar item to highlight; a secondary page highlights the one it came from. */
+    navigationPage: OpenSavePage = page,
+    /** Portrait back arrow of a secondary page. */
+    onNavigateUp: () -> Unit = {},
     content: @Composable ColumnScope.(Modifier) -> Unit,
 ) {
     val landscape = LocalAdaptiveLayout.current.isLandscape
@@ -222,27 +254,22 @@ internal fun AdaptiveShellFrame(
                         )
                     },
                 ) {
-                    NavigationRailItem(
-                        selected = page == OpenSavePage.LIBRARY,
-                        onClick = { onShowPage(OpenSavePage.LIBRARY) },
-                        modifier = Modifier.handheldFocusRing(RoundedCornerShape(16.dp)),
-                        icon = { Icon(Icons.Outlined.SportsEsports, contentDescription = null) },
-                        label = { Text("游戏库") },
-                    )
-                    NavigationRailItem(
-                        selected = page == OpenSavePage.MANAGEMENT,
-                        onClick = { onShowPage(OpenSavePage.MANAGEMENT) },
-                        modifier = Modifier.handheldFocusRing(RoundedCornerShape(16.dp)),
-                        icon = { Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = null) },
-                        label = { Text("备份与设置", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    )
+                    OpenSavePage.topLevelPages.forEach { item ->
+                        NavigationRailItem(
+                            selected = navigationPage == item,
+                            onClick = { onShowPage(item) },
+                            modifier = Modifier.handheldFocusRing(RoundedCornerShape(16.dp)),
+                            icon = { Icon(pageIcon(item), contentDescription = null) },
+                            label = { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     NavigationRailItem(
                         selected = false,
                         onClick = whenIdle(busy, onRefresh),
                         modifier = Modifier.handheldFocusRing(RoundedCornerShape(16.dp)).busyDimmed(busy),
                         icon = { Icon(Icons.Outlined.Refresh, contentDescription = "刷新") },
-                        label = { Text(if (page == OpenSavePage.LIBRARY) "扫描" else "刷新") },
+                        label = { Text(refreshLabel(page)) },
                     )
                     if (handheldNavigationActive()) ButtonHints(page)
                 }
@@ -260,6 +287,7 @@ internal fun AdaptiveShellFrame(
         }
     } else {
         val showingDetail = page == OpenSavePage.LIBRARY && gameDetailOpen
+        val secondary = !page.topLevel
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -268,17 +296,17 @@ internal fun AdaptiveShellFrame(
                             IconButton(onClick = onCloseDetail, modifier = Modifier.handheldFocusRing(CircleShape)) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回游戏列表")
                             }
+                        } else if (secondary) {
+                            IconButton(onClick = onNavigateUp, modifier = Modifier.handheldFocusRing(CircleShape)) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
+                            }
                         }
                     },
                     title = {
                         Column {
                             Text("OpenSave")
                             Text(
-                                text = when {
-                                    showingDetail -> "游戏详情"
-                                    page == OpenSavePage.LIBRARY -> "游戏库"
-                                    else -> "备份与设置"
-                                },
+                                text = if (showingDetail) "游戏详情" else page.title,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -299,20 +327,15 @@ internal fun AdaptiveShellFrame(
             bottomBar = {
                 if (!showingDetail) {
                     NavigationBar {
-                        NavigationBarItem(
-                            selected = page == OpenSavePage.LIBRARY,
-                            onClick = { onShowPage(OpenSavePage.LIBRARY) },
-                            modifier = Modifier.handheldFocusRing(RoundedCornerShape(16.dp)),
-                            icon = { Icon(Icons.Outlined.SportsEsports, contentDescription = null) },
-                            label = { Text("游戏库") },
-                        )
-                        NavigationBarItem(
-                            selected = page == OpenSavePage.MANAGEMENT,
-                            onClick = { onShowPage(OpenSavePage.MANAGEMENT) },
-                            modifier = Modifier.handheldFocusRing(RoundedCornerShape(16.dp)),
-                            icon = { Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = null) },
-                            label = { Text("备份与设置") },
-                        )
+                        OpenSavePage.topLevelPages.forEach { item ->
+                            NavigationBarItem(
+                                selected = navigationPage == item,
+                                onClick = { onShowPage(item) },
+                                modifier = Modifier.handheldFocusRing(RoundedCornerShape(16.dp)),
+                                icon = { Icon(pageIcon(item), contentDescription = null) },
+                                label = { Text(item.title) },
+                            )
+                        }
                     }
                 }
             },
@@ -329,6 +352,19 @@ internal fun AdaptiveShellFrame(
             }
         }
     }
+}
+
+private fun pageIcon(page: OpenSavePage): ImageVector = when (page) {
+    OpenSavePage.LIBRARY -> Icons.Outlined.SportsEsports
+    OpenSavePage.SOURCES -> Icons.Outlined.FolderOpen
+    OpenSavePage.SETTINGS -> Icons.Outlined.Settings
+    OpenSavePage.SYNC -> Icons.Outlined.Sync
+}
+
+private fun refreshLabel(page: OpenSavePage): String = when (page) {
+    OpenSavePage.LIBRARY, OpenSavePage.SOURCES -> "扫描"
+    OpenSavePage.SETTINGS -> "刷新"
+    OpenSavePage.SYNC -> "检查"
 }
 
 /** Compact key legend under the rail items; shown only while the pad is in use. */

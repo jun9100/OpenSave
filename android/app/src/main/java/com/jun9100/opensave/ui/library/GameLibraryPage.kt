@@ -2,6 +2,8 @@ package com.jun9100.opensave.ui.library
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -46,17 +48,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.CoverRepository
@@ -77,6 +83,8 @@ import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.SteamMetadataRepository
+import com.jun9100.opensave.SyncInbox
+import com.jun9100.opensave.SyncItemKind
 import com.jun9100.opensave.batch.BatchEligibility
 import com.jun9100.opensave.batch.BatchOperation
 import com.jun9100.opensave.ui.CommandDialog
@@ -102,6 +110,7 @@ import com.jun9100.opensave.ui.input.tryRequestFocus
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.input.whenIdleWith
 import com.jun9100.opensave.ui.libraryCommands
+import com.jun9100.opensave.ui.libraryFilterCommands
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.OdinScreenPreviews
 import com.jun9100.opensave.ui.preview.PreviewData
@@ -131,7 +140,8 @@ internal class LibraryActions(
     val onRestoreLocal: (SourceGameEntry, SnapshotRecord) -> Unit = { _, _ -> },
     val onRestoreRemote: (SourceGameEntry, RemoteSnapshot) -> Unit = { _, _ -> },
     val onSourceDetailsExpanded: (Boolean) -> Unit = {},
-    val onOpenManagement: () -> Unit = {},
+    val onOpenSources: () -> Unit = {},
+    val onOpenSyncTasks: () -> Unit = {},
     /** Opens the system folder picker to grant a save directory. */
     val onPickFolder: () -> Unit = {},
     val onScan: () -> Unit = {},
@@ -165,13 +175,13 @@ internal fun GameLibraryPage(
     viewModel: SourceViewModel,
     listState: LazyListState,
     modifier: Modifier = Modifier,
-    onOpenManagement: () -> Unit,
+    onOpenSources: () -> Unit,
     onPickFolder: () -> Unit,
 ) {
     val context = LocalContext.current
     val coverRepository = remember(context) { CoverRepository(context.applicationContext) }
     val metadataRepository = remember(context) { SteamMetadataRepository(context.applicationContext) }
-    val actions = remember(viewModel, onOpenManagement) {
+    val actions = remember(viewModel, onOpenSources) {
         LibraryActions(
             onTypeSelected = viewModel::setLibraryTypeFilter,
             onStatusSelected = viewModel::setLibraryStatusFilter,
@@ -189,7 +199,8 @@ internal fun GameLibraryPage(
             onRestoreLocal = viewModel::requestLocalGameRestore,
             onRestoreRemote = viewModel::requestRemoteGameRestore,
             onSourceDetailsExpanded = viewModel::setSourceDetailsExpanded,
-            onOpenManagement = onOpenManagement,
+            onOpenSources = onOpenSources,
+            onOpenSyncTasks = viewModel::openSyncTasks,
             onPickFolder = onPickFolder,
             onScan = viewModel::scanSource,
             onBatch = { operation, keys -> viewModel.requestBatch(operation, keys) },
@@ -306,6 +317,13 @@ internal fun GameLibraryContent(
         ),
     )
     val history = remember(state.snapshots) { LibraryView.historyIndex(state.snapshots) }
+    val cloudActions = remember(state.cloudUpdates, state.rememberedCloudVerdicts, state.snapshots) {
+        GameStatusResolver.effectiveCloudActions(state.cloudUpdates, state.rememberedCloudVerdicts, state.snapshots)
+    }
+    val syncItems = remember(games, statuses, state.cloudUpdates, cloudActions, state.syncDismissed) {
+        SyncInbox.items(games, statuses, state.cloudUpdates, cloudActions, state.syncDismissed)
+    }
+    val syncBanner = SyncInbox.bannerText(syncItems)
     // Steam names resolved for rows are shared with the detail pane and its backup.
     val presentations = remember { mutableStateMapOf<String, GamePresentation>() }
     val presented: (SourceGameEntry) -> SourceGameEntry = { entry ->
@@ -324,6 +342,8 @@ internal fun GameLibraryContent(
     var menuKey by rememberSaveable { mutableStateOf<String?>(null) }
     var commandsOpen by rememberSaveable { mutableStateOf(false) }
     var batchMenuOpen by rememberSaveable { mutableStateOf(false) }
+    var filtersOpen by rememberSaveable { mutableStateOf(false) }
+    val dialogOpen = menuKey != null || commandsOpen || batchMenuOpen || filtersOpen
     // The summary line is item 0 of the list once anything was scanned.
     val rowOffset = if (state.sourceScans.isNotEmpty()) 1 else 0
 
@@ -354,8 +374,8 @@ internal fun GameLibraryContent(
 
     // Initial focus, and focus back after it dropped (rescan replaced the
     // rows, the portrait detail closed, the page was switched with L1/R1).
-    LaunchedEffect(handheld, shellFocus.hasFocus, visibleKeys, showingPortraitDetail, menuKey, commandsOpen, batchMenuOpen) {
-        if (!handheld || shellFocus.hasFocus || menuKey != null || commandsOpen || batchMenuOpen) return@LaunchedEffect
+    LaunchedEffect(handheld, shellFocus.hasFocus, visibleKeys, showingPortraitDetail, dialogOpen) {
+        if (!handheld || shellFocus.hasFocus || dialogOpen) return@LaunchedEffect
         withFrameNanos { }
         if (showingPortraitDetail) {
             focus.detailPrimary.tryRequestFocus()
@@ -368,13 +388,42 @@ internal fun GameLibraryContent(
     // Waking pad mode starts on the preferred row even when the system already
     // gave focus to the first focusable (the filter chip) in non-touch mode.
     LaunchedEffect(handheld) {
-        if (!handheld || focus.listHasFocus || focus.detailHasFocus || menuKey != null || commandsOpen || batchMenuOpen) return@LaunchedEffect
+        if (!handheld || focus.listHasFocus || focus.detailHasFocus || dialogOpen) return@LaunchedEffect
         withFrameNanos { }
         if (showingPortraitDetail) {
             focus.detailPrimary.tryRequestFocus()
         } else {
             HandheldDispatch.preferredFocusKey(focus.lastFocusedKey, state.selectedGameKey, visibleKeys)
                 ?.let { focusRow(it) }
+        }
+    }
+
+    // Back from the background (or the home screen) the window regains focus and,
+    // in non-touch mode, the system hands it to the first focusable: the "全部"
+    // chip. Focus that was on a row goes back to that row.
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    var rowFocusedBeforeBlur by remember { mutableStateOf(false) }
+    val currentHandheld by rememberUpdatedState(handheld)
+    val currentDialogOpen by rememberUpdatedState(dialogOpen)
+    val currentPortraitDetail by rememberUpdatedState(showingPortraitDetail)
+    val currentVisibleKeys by rememberUpdatedState(visibleKeys)
+    val currentSelectedKey by rememberUpdatedState(state.selectedGameKey)
+    LaunchedEffect(windowFocused) {
+        if (!windowFocused) {
+            rowFocusedBeforeBlur = focus.listHasFocus
+            return@LaunchedEffect
+        }
+        if (!rowFocusedBeforeBlur) return@LaunchedEffect
+        rowFocusedBeforeBlur = false
+        // The system's own focus move may land a few frames after the window focus.
+        repeat(WINDOW_FOCUS_CHECKS) {
+            withFrameNanos { }
+            if (!currentHandheld || currentDialogOpen || currentPortraitDetail) return@LaunchedEffect
+            if (HandheldDispatch.shouldRestoreRowFocus(focus.listHasFocus, focus.detailHasFocus, focus.pendingDetailFocus != null)) {
+                HandheldDispatch.preferredFocusKey(focus.lastFocusedKey, currentSelectedKey, currentVisibleKeys)
+                    ?.let { focusRow(it) }
+            }
+            delay(WINDOW_FOCUS_CHECK_DELAY_MILLIS)
         }
     }
 
@@ -463,20 +512,38 @@ internal fun GameLibraryContent(
             title = "游戏库命令",
             entries = libraryCommands(
                 busy = state.busy,
-                typeOptions = typeOptions,
-                selectedTypeId = typeId,
-                selectedStatus = state.libraryStatusFilter,
                 selectionMode = selecting,
                 selectedCount = selectedKeys.size,
+                filterSummary = listOf(
+                    typeOptions.firstOrNull { it.first == typeId }?.second ?: "全部",
+                    "状态：${state.libraryStatusFilter.label}",
+                ).joinToString(" · "),
+                syncAttention = syncItems.size,
                 onScan = actions.onScan,
                 selection = selectionActions,
                 batch = batchEntries,
-                onTypeSelected = actions.onTypeSelected,
-                onStatusSelected = actions.onStatusSelected,
-                onOpenManagement = actions.onOpenManagement,
+                onOpenFilters = { filtersOpen = true },
+                onOpenSyncTasks = actions.onOpenSyncTasks,
             ),
             busy = state.busy,
             onDismiss = { commandsOpen = false },
+        )
+    }
+
+    if (filtersOpen) {
+        HandheldMenuDialog(
+            title = "筛选",
+            subtitle = "${visibleGames.size} 款符合",
+            entries = libraryFilterCommands(
+                busy = state.busy,
+                typeOptions = typeOptions,
+                selectedTypeId = typeId,
+                selectedStatus = state.libraryStatusFilter,
+                onTypeSelected = actions.onTypeSelected,
+                onStatusSelected = actions.onStatusSelected,
+            ),
+            onDismiss = { filtersOpen = false },
+            modifier = Modifier.testTag(FILTER_MENU_TAG),
         )
     }
 
@@ -529,6 +596,10 @@ internal fun GameLibraryContent(
                 onPrimaryBackup = runPrimary,
                 onOpenBatchMenu = { batchMenuOpen = true },
             )
+        }
+        // Only while something needs a decision: absent, it costs no list height.
+        syncBanner?.let { text ->
+            SyncStatusBanner(text = text, conflict = syncItems.any { it.kind == SyncItemKind.CONFLICT }, onClick = actions.onOpenSyncTasks)
         }
         // Landscape keeps the whole list height (plan S1/S2): messages and the
         // progress strip live in the right pane there.
@@ -666,7 +737,7 @@ private fun GameList(
                 EmptyGameLibrary(
                     message = "正在扫描已知的游戏与模拟器存档来源。",
                     modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
-                    onOpenManagement = actions.onOpenManagement,
+                    onOpenSources = actions.onOpenSources,
                     onPickFolder = actions.onPickFolder,
                 )
             }
@@ -674,7 +745,7 @@ private fun GameList(
                 EmptyGameLibrary(
                     message = NO_ROOT_GUIDE,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
-                    onOpenManagement = actions.onOpenManagement,
+                    onOpenSources = actions.onOpenSources,
                     onPickFolder = actions.onPickFolder,
                 )
             }
@@ -682,7 +753,7 @@ private fun GameList(
                 EmptyGameLibrary(
                     message = "已扫描所有可用来源，但没有发现明确的游戏存档位置。候选目录不会默认纳入备份。",
                     modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
-                    onOpenManagement = actions.onOpenManagement,
+                    onOpenSources = actions.onOpenSources,
                     onPickFolder = actions.onPickFolder,
                 )
             }
@@ -756,9 +827,46 @@ private fun LibraryMessageLines(messages: PageMessage, busy: Boolean) {
 }
 
 private const val FOCUS_SELECT_DEBOUNCE_MILLIS = 150L
+private const val WINDOW_FOCUS_CHECKS = 4
+private const val WINDOW_FOCUS_CHECK_DELAY_MILLIS = 60L
+
+/**
+ * One line over the list, "2 款冲突需确认 · 1 款云端较新 ›", that opens
+ * "同步与任务"; one focus stop between the toolbar and the list.
+ */
+@Composable
+private fun SyncStatusBanner(text: String, conflict: Boolean, onClick: () -> Unit) {
+    val color = if (conflict) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+    val onColor = if (conflict) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp)
+            .heightIn(min = 40.dp)
+            .handheldFocusRing(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(color)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp)
+            .testTag(SYNC_BANNER_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (conflict) "⚠ $text" else "▼ $text",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.labelLarge,
+            color = onColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text("同步与任务 ›", style = MaterialTheme.typography.labelMedium, color = onColor, maxLines = 1)
+    }
+}
 
 internal const val GAME_LIST_TAG = "game-list"
 internal const val BATCH_MENU_TAG = "batch-menu"
+internal const val FILTER_MENU_TAG = "filter-menu"
+internal const val SYNC_BANNER_TAG = "sync-banner"
 
 /** Local and cloud versions of one game, as the detail pane and the X menu list them. */
 private fun localHistoryOf(entry: SourceGameEntry, snapshots: List<SnapshotRecord>): List<SnapshotRecord> =
@@ -934,7 +1042,7 @@ private const val NO_ROOT_GUIDE =
 private fun EmptyGameLibrary(
     message: String,
     modifier: Modifier = Modifier,
-    onOpenManagement: () -> Unit,
+    onOpenSources: () -> Unit,
     onPickFolder: () -> Unit,
 ) {
     Column(
@@ -951,7 +1059,7 @@ private fun EmptyGameLibrary(
                 Icon(Icons.Outlined.FolderOpen, contentDescription = null)
                 Text("添加存档目录", modifier = Modifier.padding(start = 8.dp))
             }
-            OutlinedButton(onClick = onOpenManagement, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
+            OutlinedButton(onClick = onOpenSources, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
                 Text("全部来源")
             }
         }
@@ -964,7 +1072,7 @@ private fun EmptyGameLibraryPreview() {
     PreviewSurface {
         EmptyGameLibrary(
             message = NO_ROOT_GUIDE,
-            onOpenManagement = {},
+            onOpenSources = {},
             onPickFolder = {},
         )
     }

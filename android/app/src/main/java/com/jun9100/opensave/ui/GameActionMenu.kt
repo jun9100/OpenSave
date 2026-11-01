@@ -71,7 +71,7 @@ internal fun gameMenuEntries(
         add(
             MenuEntry(
                 if (included) "关闭这款游戏的自动备份" else "开启这款游戏的自动备份",
-                detail = if (autoBackupScheduled) "只影响本设备" else "自动备份总开关未开启（备份与设置）",
+                detail = if (autoBackupScheduled) "只影响本设备" else "自动备份总开关未开启（设置）",
                 onClick = onToggleAutoBackup,
             ),
         )

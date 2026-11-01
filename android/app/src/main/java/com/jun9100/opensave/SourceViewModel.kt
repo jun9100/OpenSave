@@ -16,6 +16,7 @@ import com.jun9100.opensave.batch.BatchRunner
 import com.jun9100.opensave.batch.BatchWorker
 import com.jun9100.opensave.ops.GameCaptureOutcome
 import com.jun9100.opensave.ops.GameOperations
+import com.jun9100.opensave.ops.KeepLocal
 import com.jun9100.opensave.ops.ready
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,9 +33,28 @@ import java.io.File
 import java.time.Instant
 import java.util.UUID
 
-enum class OpenSavePage {
-    LIBRARY,
-    MANAGEMENT,
+/** Pages of the shell; the top-level ones are on the rail and the bottom bar, in this order. */
+enum class OpenSavePage(val title: String, val topLevel: Boolean = true) {
+    LIBRARY("游戏库"),
+    SOURCES("来源"),
+    SETTINGS("设置"),
+
+    /** Secondary page "同步与任务": opened from the library banner, the Y panel or the settings. */
+    SYNC("同步与任务", topLevel = false),
+    ;
+
+    companion object {
+        val topLevelPages: List<OpenSavePage> = entries.filter(OpenSavePage::topLevel)
+
+        /** A page name saved by this or an older build; "备份与设置" (MANAGEMENT) became 设置. */
+        fun fromSavedName(name: String?): OpenSavePage? = when (name) {
+            null -> null
+            LEGACY_MANAGEMENT -> SETTINGS
+            else -> entries.firstOrNull { it.name == name }
+        }
+
+        private const val LEGACY_MANAGEMENT = "MANAGEMENT"
+    }
 }
 
 data class RestoreRequest(
@@ -81,6 +101,18 @@ data class GameSaveCloudUpdate(
             runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
         } ?: legacyHead?.savedAtMillis ?: 0L
 }
+
+/**
+ * "保留本机并发布" waiting for its confirmation: [expectedHead] is the cloud's
+ * current version found by the fresh check just before, the only head the
+ * publish may replace.
+ */
+data class KeepLocalRequest(
+    val entry: SourceGameEntry,
+    val expectedHead: String,
+    val deviceName: String,
+    val reason: String,
+)
 
 /** A destructive batch waiting for its one confirmation (plan §5.7); only "安全恢复云端较新" asks. */
 data class BatchPlan(
@@ -152,7 +184,19 @@ data class SourceUiState(
     val autoBackupExcluded: Set<String> = emptySet(),
     /** Who holds the storage lock, e.g. [StorageOperationLock.AUTO_BACKUP]. */
     val lockOwner: String? = null,
-)
+    /** The top-level page "同步与任务" was opened from; B goes back there. */
+    val syncReturnPage: OpenSavePage = OpenSavePage.LIBRARY,
+    /** Games put off with "稍后" in "同步与任务"; this session only. */
+    val syncDismissed: Set<String> = emptySet(),
+    /** The kept batch reports, newest first ([BatchReportStore]); "同步与任务" lists them. */
+    val batchReports: List<BatchReport> = emptyList(),
+    /** The report the sheet shows; null shows [lastBatchReport]. */
+    val viewedBatchReport: BatchReport? = null,
+    val pendingKeepLocal: KeepLocalRequest? = null,
+) {
+    /** The rail and bottom bar item to highlight, and where L1/R1 cycle from. */
+    val navigationPage: OpenSavePage get() = if (page.topLevel) page else syncReturnPage
+}
 
 class SourceViewModel(
     application: Application,
@@ -205,6 +249,7 @@ class SourceViewModel(
         updateState {
             copy(
                 lastBatchReport = runCatching { reportStore.latest() }.getOrNull(),
+                batchReports = runCatching { reportStore.list() }.getOrDefault(emptyList()),
                 autoBackupExcluded = autoBackupExclusions.excluded(),
                 rememberedCloudVerdicts = runCatching { cloudVerdictStore.load() }.getOrDefault(emptyMap()),
             )
@@ -256,6 +301,7 @@ class SourceViewModel(
                 updateState {
                     copy(
                         lastBatchReport = report,
+                        batchReports = (listOf(report) + batchReports.filterNot { it.id == report.id }).take(BatchReportStore.MAX_REPORTS),
                         batchReportUnseen = true,
                         snapshots = currentSnapshots(),
                         messages = messages.with(batchPage, action = report.summary),
@@ -281,7 +327,7 @@ class SourceViewModel(
                     selectedUri = uri,
                     hasPersistedPermission = storage.hasReadPermission(uri),
                     authorizedTrees = trees,
-                    messages = state.value.messages.with(OpenSavePage.MANAGEMENT, action = "已添加系统授权目录"),
+                    messages = state.value.messages.with(OpenSavePage.SOURCES, action = "已添加系统授权目录"),
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(uri.toString()),
                     sourceOptions = buildSourceOptions(trees, state.value.rootPath),
@@ -293,7 +339,7 @@ class SourceViewModel(
                     selectedUri = uri,
                     hasPersistedPermission = false,
                     messages = state.value.messages.withError(
-                        OpenSavePage.MANAGEMENT,
+                        OpenSavePage.SOURCES,
                         "无法保存目录权限：${error.message ?: "provider refused persistent access"}",
                     ),
                 )
@@ -317,12 +363,12 @@ class SourceViewModel(
                     authorizedTrees = trees,
                     activeSourceId = activeSourceId,
                     sourceOptions = buildSourceOptions(trees, state.value.rootPath),
-                    messages = state.value.messages.with(OpenSavePage.MANAGEMENT, action = "已移除系统授权目录"),
+                    messages = state.value.messages.with(OpenSavePage.SOURCES, action = "已移除系统授权目录"),
                 )
                 scanSource()
             }
             .onFailure { error ->
-                updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "移除系统授权目录失败：${error.message}")) }
+                updateState { copy(messages = messages.withError(OpenSavePage.SOURCES, "移除系统授权目录失败：${error.message}")) }
             }
     }
 
@@ -377,7 +423,15 @@ class SourceViewModel(
         }
     }
 
-    fun showPage(page: OpenSavePage) = updateState { copy(page = page) }
+    /** Opening "同步与任务" remembers the top-level page it came from. */
+    fun showPage(page: OpenSavePage) = updateState {
+        if (page.topLevel) copy(page = page) else copy(page = page, syncReturnPage = navigationPage)
+    }
+
+    fun openSyncTasks() = showPage(OpenSavePage.SYNC)
+
+    /** "稍后": hides the game in "同步与任务" and the library banner until the app restarts. */
+    fun dismissSyncItem(libraryKey: String) = updateState { copy(syncDismissed = syncDismissed + libraryKey) }
 
     /** Shows [libraryKey] in the detail pane; in portrait this opens the full-screen detail. */
     fun openGame(libraryKey: String) = updateState { copy(selectedGameKey = libraryKey, gameDetailOpen = true) }
@@ -451,14 +505,19 @@ class SourceViewModel(
                 showPage(OpenSavePage.LIBRARY)
                 true
             }
+            BackTarget.PARENT -> {
+                showPage(current.syncReturnPage)
+                true
+            }
             BackTarget.SYSTEM -> false
         }
     }
 
     private fun restoreUiState(initial: SourceUiState): SourceUiState = initial.copy(
-        page = savedState.get<String>(KEY_PAGE)
-            ?.let { name -> OpenSavePage.entries.firstOrNull { it.name == name } }
-            ?: initial.page,
+        page = OpenSavePage.fromSavedName(savedState.get<String>(KEY_PAGE)) ?: initial.page,
+        syncReturnPage = OpenSavePage.fromSavedName(savedState.get<String>(KEY_SYNC_RETURN))
+            ?.takeIf(OpenSavePage::topLevel)
+            ?: initial.syncReturnPage,
         selectedGameKey = savedState.get<String>(KEY_SELECTED_GAME),
         gameDetailOpen = savedState.get<Boolean>(KEY_DETAIL_OPEN) ?: false,
         libraryTypeFilter = savedState.get<String>(KEY_TYPE_FILTER) ?: initial.libraryTypeFilter,
@@ -472,6 +531,7 @@ class SourceViewModel(
 
     private fun saveUiState(current: SourceUiState) {
         savedState[KEY_PAGE] = current.page.name
+        savedState[KEY_SYNC_RETURN] = current.syncReturnPage.name
         savedState[KEY_SELECTED_GAME] = current.selectedGameKey
         savedState[KEY_DETAIL_OPEN] = current.gameDetailOpen
         savedState[KEY_TYPE_FILTER] = current.libraryTypeFilter
@@ -495,7 +555,7 @@ class SourceViewModel(
                     }
                 },
                 messages = messages.with(
-                    OpenSavePage.MANAGEMENT,
+                    OpenSavePage.SOURCES,
                     action = if (mode == StorageMode.ROOT) "已切换到 Root 路径模式" else "已切换到系统授权模式",
                 ),
             )
@@ -516,7 +576,7 @@ class SourceViewModel(
                 state.value = state.value.copy(
                     storageMode = StorageMode.ROOT,
                     rootPath = canonical,
-                    messages = state.value.messages.with(OpenSavePage.MANAGEMENT, action = "已保存 Root 路径"),
+                    messages = state.value.messages.with(OpenSavePage.SOURCES, action = "已保存 Root 路径"),
                     scan = null,
                     activeSourceId = SnapshotNaming.sourceId(SourceSelection.Root(canonical).idSeed),
                     sourceOptions = buildSourceOptions(state.value.authorizedTrees, canonical),
@@ -524,7 +584,7 @@ class SourceViewModel(
                 refreshRootAccess()
             }
             .onFailure { error ->
-                updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "Root 路径无效：${error.message}")) }
+                updateState { copy(messages = messages.withError(OpenSavePage.SOURCES, "Root 路径无效：${error.message}")) }
             }
     }
 
@@ -537,7 +597,7 @@ class SourceViewModel(
                 rootChecked = true,
                 messages = if (!rootAvailable && state.value.storageMode == StorageMode.ROOT) {
                     state.value.messages.withError(
-                        OpenSavePage.MANAGEMENT,
+                        OpenSavePage.SOURCES,
                         "Root 不可用：${result.exceptionOrNull()?.message ?: "su 未返回 uid 0"}",
                     )
                 } else {
@@ -557,17 +617,17 @@ class SourceViewModel(
     fun saveGameSave() {
         val config = gameSaveConfigFromState()
         viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在加密保存 game-save 配置")
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在加密保存 game-save 配置")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveStore.save(config) }
             }
             result.onSuccess {
-                state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = "game-save 配置已保存").copy(
+                state.value = state.value.finished(OpenSavePage.SETTINGS, action = "game-save 配置已保存").copy(
                     gameSaveUrl = GameSaveClient.normalizeServiceUrl(config.serviceUrl),
                     gameSaveSaved = true,
                 )
             }.onFailure { error ->
-                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "保存 game-save 配置失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.SETTINGS, error = "保存 game-save 配置失败：${error.message}")
             }
         }
     }
@@ -575,18 +635,18 @@ class SourceViewModel(
     fun testGameSave() {
         val config = gameSaveConfigFromState()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写 game-save 服务地址和同步密钥")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写 game-save 服务地址和同步密钥")) }
             return
         }
         viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在测试 game-save 连接")
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在测试 game-save 连接")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveClient(config).testConnection().getOrThrow() }
             }
             result.onSuccess {
-                state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = "game-save 连接成功")
+                state.value = state.value.finished(OpenSavePage.SETTINGS, action = "game-save 连接成功")
             }.onFailure { error ->
-                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "game-save 连接失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.SETTINGS, error = "game-save 连接失败：${error.message}")
             }
         }
     }
@@ -745,14 +805,14 @@ class SourceViewModel(
         val current = state.value
         val option = current.sourceOptions.firstOrNull { it.id == optionId }
         if (enabled && option != null && sourceUnreachable(current, option)) {
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "该来源目录不存在或不可访问，不能勾选")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SOURCES, "该来源目录不存在或不可访问，不能勾选")) }
             return
         }
         selectionStore.setSourcesEnabled(listOf(optionId), enabled)
         state.value = current.copy(
             sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
             messages = current.messages.with(
-                OpenSavePage.MANAGEMENT,
+                OpenSavePage.SOURCES,
                 action = if (enabled) "已启用存档来源" else "已停用存档来源",
             ),
         )
@@ -770,7 +830,7 @@ class SourceViewModel(
         state.value = current.copy(
             sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
             messages = current.messages.with(
-                OpenSavePage.MANAGEMENT,
+                OpenSavePage.SOURCES,
                 action = if (enabled) "已启用全部存档来源" else "已停用全部存档来源",
             ),
         )
@@ -811,10 +871,10 @@ class SourceViewModel(
             WorkspaceWriteBackPolicy.requireWorkspace(storage.workspaceDirectory())
             persistedWriteTarget().getOrThrow()
         }.getOrElse { error ->
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, error.message ?: "无法写回工作区")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, error.message ?: "无法写回工作区")) }
             return
         }
-        updateState { copy(pendingWriteBack = request, messages = messages.withError(OpenSavePage.MANAGEMENT, null)) }
+        updateState { copy(pendingWriteBack = request, messages = messages.withError(OpenSavePage.SETTINGS, null)) }
     }
 
     fun cancelWorkspaceWriteBack() = updateState { copy(pendingWriteBack = null) }
@@ -825,11 +885,11 @@ class SourceViewModel(
         if (state.value.busy) return
         // Re-resolve the target: the dialog must never write to a source other than the one it named.
         val target = persistedWriteTarget().getOrElse { error ->
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, error.message ?: "无法写回工作区")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, error.message ?: "无法写回工作区")) }
             return
         }
         if (target.source.idSeed != request.source.idSeed) {
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "来源目录已变更，请重新确认写回")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "来源目录已变更，请重新确认写回")) }
             return
         }
         runSourceOperation(
@@ -843,14 +903,14 @@ class SourceViewModel(
     fun backupNow() {
         val source = requiredSource() ?: return
         viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在检查并创建快照")
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在检查并创建快照")
             val outcome = withContext(Dispatchers.IO) {
                 runCatching { captureSnapshot(source, upload = true) }
             }
             outcome.onSuccess { captured ->
                 val uploadSuffix = captured.uploadError?.let { "；$it" }.orEmpty()
                 state.value = state.value.finished(
-                    OpenSavePage.MANAGEMENT,
+                    OpenSavePage.SETTINGS,
                     action = "快照已保存：${captured.record.remoteName}$uploadSuffix",
                     error = captured.uploadError,
                 ).copy(
@@ -858,7 +918,7 @@ class SourceViewModel(
                     snapshots = currentSnapshots(),
                 )
             }.onFailure { error ->
-                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "创建快照失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.SETTINGS, error = "创建快照失败：${error.message}")
             }
         }
     }
@@ -904,7 +964,7 @@ class SourceViewModel(
         val entries = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(current.sourceScans))
             .filter { it.libraryKey in requested }
         if (operation.usesNetwork && !operations.loadConfig().ready) {
-            updateState { copy(messages = messages.withError(page, "请先在“备份与设置”中启用并保存 game-save 配置")) }
+            updateState { copy(messages = messages.withError(page, "请先在“设置”中启用并保存 game-save 配置")) }
             return
         }
         val scope = entries.map(SourceGameEntry::libraryKey)
@@ -968,20 +1028,27 @@ class SourceViewModel(
         BatchCenter.requestCancel()
     }
 
-    fun openBatchReport() = updateState { copy(batchReportOpen = lastBatchReport != null, batchReportUnseen = false) }
+    fun openBatchReport() = updateState {
+        copy(viewedBatchReport = null, batchReportOpen = lastBatchReport != null, batchReportUnseen = false)
+    }
 
-    fun closeBatchReport() = updateState { copy(batchReportOpen = false, batchReportUnseen = false) }
+    /** Opens one of the kept reports listed in "同步与任务". */
+    fun openStoredBatchReport(report: BatchReport) = updateState {
+        copy(viewedBatchReport = report.takeUnless { it.id == lastBatchReport?.id }, batchReportOpen = true, batchReportUnseen = false)
+    }
+
+    fun closeBatchReport() = updateState { copy(batchReportOpen = false, batchReportUnseen = false, viewedBatchReport = null) }
 
     fun dismissBatchReport() = updateState { copy(batchReportUnseen = false) }
 
-    /** "重试失败项": the same operation over the failed games of the last report that are still in the library. */
+    /** "重试失败项": the same operation over the failed games of the shown report that are still in the library. */
     fun retryFailedBatch() {
         val current = state.value
-        val report = current.lastBatchReport ?: return
+        val report = current.viewedBatchReport ?: current.lastBatchReport ?: return
         val available = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(current.sourceScans))
             .map(SourceGameEntry::libraryKey)
         val keys = BatchRunner.retryKeys(report, available)
-        updateState { copy(batchReportOpen = false, batchReportUnseen = false) }
+        updateState { copy(batchReportOpen = false, batchReportUnseen = false, viewedBatchReport = null) }
         if (keys.isEmpty()) {
             updateState { copy(messages = messages.withError(current.batchPage, "没有可重试的失败项")) }
             return
@@ -1096,39 +1163,197 @@ class SourceViewModel(
     fun listCloud() {
         val config = gameSaveConfigFromState()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写并保存 game-save 服务地址和同步密钥")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写并保存 game-save 服务地址和同步密钥")) }
             return
         }
         viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.MANAGEMENT, "正在列举云端快照")
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在列举云端快照")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveClient(config).list().getOrThrow() }
             }
             result.onSuccess { files ->
-                state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = "找到 ${files.size} 个云端快照")
+                state.value = state.value.finished(OpenSavePage.SETTINGS, action = "找到 ${files.size} 个云端快照")
                     .copy(remoteSnapshots = files)
             }.onFailure { error ->
-                state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = "列举云端快照失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.SETTINGS, error = "列举云端快照失败：${error.message}")
             }
         }
     }
 
     /** Checks the cloud heads of every game as a batch; the result is shown on the settings page. */
-    fun checkCloudUpdates() {
+    /** Checks the cloud heads of every game as a batch; the summary is shown on [page]. */
+    fun checkCloudUpdates(page: OpenSavePage = state.value.page) {
         if (state.value.busy) return
         val config = gameSaveConfigFromState()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写 game-save 服务地址和同步密钥")) }
+            updateState { copy(messages = messages.withError(page, "请先填写 game-save 服务地址和同步密钥")) }
             return
         }
         val keys = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(state.value.sourceScans))
             .map(SourceGameEntry::libraryKey)
-        requestBatch(BatchOperation.CHECK_CLOUD, keys, OpenSavePage.MANAGEMENT)
+        requestBatch(BatchOperation.CHECK_CLOUD, keys, page)
     }
 
-    fun requestCloudUpdateRestore(update: GameSaveCloudUpdate) {
+    /**
+     * "用云端覆盖" in "同步与任务": re-reads the game's cloud head now (the listed
+     * verdict may be old or only remembered), then asks for the usual restore
+     * confirmation, which saves the current local saves as a safety snapshot first.
+     */
+    fun requestSyncCloudRestore(libraryKey: String) {
+        val entry = syncEntry(libraryKey) ?: return
+        freshSyncCheck(entry) { fresh -> requestCloudUpdateRestore(fresh, OpenSavePage.SYNC) }
+    }
+
+    /**
+     * "保留本机并发布" in "同步与任务": re-reads the cloud head, then asks for
+     * confirmation to back up the saves on disk and publish them on top of
+     * exactly that head ([confirmKeepLocal]).
+     */
+    fun requestKeepLocal(libraryKey: String) {
+        val entry = syncEntry(libraryKey) ?: return
+        if (!GameLibrary.canBatchBackup(entry.game)) {
+            updateState { copy(messages = messages.withError(OpenSavePage.SYNC, "这款游戏只有待确认的存档位置，不能发布")) }
+            return
+        }
+        freshSyncCheck(entry) { fresh ->
+            val head = fresh.nativeHead
+            if (head == null) {
+                updateState { copy(messages = messages.withError(OpenSavePage.SYNC, KEEP_LOCAL_UNSUPPORTED)) }
+                return@freshSyncCheck
+            }
+            updateState {
+                copy(
+                    pendingKeepLocal = KeepLocalRequest(
+                        entry = entry,
+                        expectedHead = head.snapshot.id,
+                        deviceName = fresh.deviceName,
+                        reason = fresh.message,
+                    ),
+                    messages = messages.withError(OpenSavePage.SYNC, null),
+                )
+            }
+        }
+    }
+
+    fun cancelKeepLocal() = updateState { copy(pendingKeepLocal = null) }
+
+    fun confirmKeepLocal() {
+        val request = state.value.pendingKeepLocal ?: return
+        updateState { copy(pendingKeepLocal = null) }
+        if (state.value.busy) return
+        val entry = request.entry
+        val name = entry.game.presentation.primaryName
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.SYNC, "正在备份并发布本机的 $name")
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val config = operations.loadConfig()
+                    require(config.ready) { "请先在“设置”中启用并保存 game-save 配置" }
+                    StorageOperationLock.withLock { operations.keepLocalLocked(entry, request.expectedHead, config) }
+                }
+            }
+            result.onSuccess { outcome ->
+                when (outcome) {
+                    is KeepLocal.Published -> {
+                        state.value = state.value.finished(
+                            OpenSavePage.SYNC,
+                            action = "已把本机的 $name 发布为云端当前版本；原云端版本仍在云端历史中",
+                        ).copy(
+                            snapshots = currentSnapshots(),
+                            cloudUpdates = state.value.cloudUpdates.filterNot { it.entry.libraryKey == entry.libraryKey },
+                            saveSignatures = outcome.record.saveSignature.takeIf(String::isNotBlank)
+                                ?.let { state.value.saveSignatures + (entry.libraryKey to it) }
+                                ?: state.value.saveSignatures,
+                        )
+                        forgetCloudVerdict(entry.libraryKey)
+                    }
+                    KeepLocal.HeadMoved -> {
+                        // The new local backup makes the old verdict stale: read the new head
+                        // so the game stays listed with what the cloud has now.
+                        val fresh = checkOneGame(entry).getOrNull()
+                        state.value = state.value.finished(
+                            OpenSavePage.SYNC,
+                            error = "$name 的云端当前版本在确认后又有变化，本机版本只保存为本地备份、未发布；请重新查看",
+                        ).copy(
+                            snapshots = currentSnapshots(),
+                            cloudUpdates = mergeCloudUpdates(
+                                state.value.cloudUpdates.filterNot { it.entry.libraryKey == entry.libraryKey },
+                                listOfNotNull(fresh),
+                            ),
+                        )
+                    }
+                    KeepLocal.Unsupported -> {
+                        state.value = state.value.finished(OpenSavePage.SYNC, error = KEEP_LOCAL_UNSUPPORTED)
+                            .copy(snapshots = currentSnapshots())
+                    }
+                }
+            }.onFailure { error ->
+                state.value = state.value.finished(OpenSavePage.SYNC, error = "发布 $name 失败：${error.message}")
+                    .copy(snapshots = currentSnapshots())
+            }
+        }
+    }
+
+    private fun syncEntry(libraryKey: String): SourceGameEntry? {
+        if (state.value.busy) return null
+        val entry = GameLibrary.sourceGames(state.value.sourceScans).firstOrNull { it.libraryKey == libraryKey }
+        if (entry == null) updateState { copy(messages = messages.withError(OpenSavePage.SYNC, "这款游戏已不在游戏库中；请重新扫描")) }
+        return entry
+    }
+
+    /**
+     * Re-checks one game's cloud head before a sync decision, replacing what
+     * the list knew. Up to date clears the item; a head that is not
+     * downloadable yet says so; otherwise [then] gets the fresh verdict.
+     */
+    private fun freshSyncCheck(entry: SourceGameEntry, then: (GameSaveCloudUpdate) -> Unit) {
+        val name = entry.game.presentation.primaryName
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.SYNC, "正在检查 $name 的云端当前版本")
+            val result = checkOneGame(entry)
+            result.onSuccess { fresh ->
+                state.value = state.value.finished(
+                    OpenSavePage.SYNC,
+                    action = if (fresh == null) "$name：云端与本机一致，无需处理" else null,
+                ).copy(
+                    cloudUpdates = mergeCloudUpdates(
+                        state.value.cloudUpdates.filterNot { it.entry.libraryKey == entry.libraryKey },
+                        listOfNotNull(fresh),
+                    ),
+                )
+                when {
+                    fresh == null -> forgetCloudVerdict(entry.libraryKey)
+                    fresh.action == GameSaveRemoteAction.WAIT_FOR_REMOTE || fresh.remote == null -> updateState {
+                        copy(messages = messages.withError(OpenSavePage.SYNC, fresh.message.ifBlank { "云端版本尚未就绪，请稍后再试" }))
+                    }
+                    else -> then(fresh)
+                }
+            }.onFailure { error ->
+                state.value = state.value.finished(OpenSavePage.SYNC, error = "检查 $name 的云端失败：${error.message}")
+            }
+        }
+    }
+
+    /** One game's cloud head now; null when the cloud and this device agree. */
+    private suspend fun checkOneGame(entry: SourceGameEntry): Result<GameSaveCloudUpdate?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val config = operations.loadConfig()
+            require(config.ready) { "请先在“设置”中启用并保存 game-save 配置" }
+            val client = operations.client(config)
+            StorageOperationLock.withLock {
+                operations.checkCloudLocked(entry, config, client) { client.list().getOrThrow() }
+            }
+        }
+    }
+
+    private suspend fun forgetCloudVerdict(libraryKey: String) {
+        withContext(Dispatchers.IO) { runCatching { cloudVerdictStore.update(removedKeys = setOf(libraryKey)) } }
+        updateState { copy(rememberedCloudVerdicts = rememberedCloudVerdicts - libraryKey) }
+    }
+
+    fun requestCloudUpdateRestore(update: GameSaveCloudUpdate, page: OpenSavePage = OpenSavePage.SYNC) {
         val remote = update.remote ?: run {
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, update.message.ifBlank { "远端快照尚未就绪" })) }
+            updateState { copy(messages = messages.withError(page, update.message.ifBlank { "远端快照尚未就绪" })) }
             return
         }
         updateState {
@@ -1139,22 +1364,22 @@ class SourceViewModel(
                     nativeHead = update.nativeHead,
                     game = update.entry.game,
                     source = update.entry.source,
-                    page = OpenSavePage.MANAGEMENT,
+                    page = page,
                 ),
-                messages = messages.withError(OpenSavePage.MANAGEMENT, null),
+                messages = messages.withError(page, null),
             )
         }
     }
 
     fun requestLocalRestore(record: SnapshotRecord) {
         if (record.gameKey != null) {
-            updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请从对应游戏的历史记录中恢复此快照")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请从对应游戏的历史记录中恢复此快照")) }
             return
         }
         updateState {
             copy(
-                pendingRestore = RestoreRequest(local = record, page = OpenSavePage.MANAGEMENT),
-                messages = messages.withError(OpenSavePage.MANAGEMENT, null),
+                pendingRestore = RestoreRequest(local = record, page = OpenSavePage.SETTINGS),
+                messages = messages.withError(OpenSavePage.SETTINGS, null),
             )
         }
     }
@@ -1162,8 +1387,8 @@ class SourceViewModel(
     fun requestRemoteRestore(remote: RemoteSnapshot) {
         updateState {
             copy(
-                pendingRestore = RestoreRequest(remote = remote, page = OpenSavePage.MANAGEMENT),
-                messages = messages.withError(OpenSavePage.MANAGEMENT, null),
+                pendingRestore = RestoreRequest(remote = remote, page = OpenSavePage.SETTINGS),
+                messages = messages.withError(OpenSavePage.SETTINGS, null),
             )
         }
     }
@@ -1265,14 +1490,14 @@ class SourceViewModel(
                     copy(
                         autoBackupEnabled = enabled,
                         messages = messages.with(
-                            OpenSavePage.MANAGEMENT,
+                            OpenSavePage.SETTINGS,
                             action = if (enabled) "已启用 Wi-Fi 自动备份" else "已关闭自动备份",
                         ),
                     )
                 }
             }
             .onFailure { error ->
-                updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "设置自动备份失败：${error.message}")) }
+                updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "设置自动备份失败：${error.message}")) }
             }
     }
 
@@ -1422,16 +1647,16 @@ class SourceViewModel(
         operation: suspend () -> Result<CopyReport>,
     ) {
         viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.MANAGEMENT, action)
+            state.value = state.value.started(OpenSavePage.SETTINGS, action)
             StorageOperationLock.withLock { operation() }
                 .onSuccess { report ->
-                    state.value = state.value.finished(OpenSavePage.MANAGEMENT, action = done(report)).copy(
+                    state.value = state.value.finished(OpenSavePage.SETTINGS, action = done(report)).copy(
                         report = report,
                         snapshots = currentSnapshots(),
                     )
                 }
                 .onFailure { error ->
-                    state.value = state.value.finished(OpenSavePage.MANAGEMENT, error = error.message ?: "操作失败")
+                    state.value = state.value.finished(OpenSavePage.SETTINGS, error = error.message ?: "操作失败")
                         .copy(snapshots = currentSnapshots())
                 }
         }
@@ -1464,7 +1689,7 @@ class SourceViewModel(
             StorageMode.SAF -> {
                 val uri = state.value.selectedUri
                 if (uri == null || !storage.hasReadPermission(uri)) {
-                    updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先添加并授权一个可读取目录")) }
+                    updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先添加并授权一个可读取目录")) }
                     null
                 } else {
                     SourceSelection.Saf(uri)
@@ -1476,7 +1701,7 @@ class SourceViewModel(
                 result.fold(
                     onSuccess = { SourceSelection.Root(it) },
                     onFailure = {
-                        updateState { copy(messages = messages.withError(OpenSavePage.MANAGEMENT, "请先填写有效的 Root 绝对路径：${it.message}")) }
+                        updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写有效的 Root 绝对路径：${it.message}")) }
                         null
                     },
                 )
@@ -1562,7 +1787,10 @@ class SourceViewModel(
         const val MAX_GAME_HISTORY = 100
         const val SIGNATURE_REFRESH_MIN_MILLIS = 5_000L
         const val SOURCE_RESCAN_DEBOUNCE_MILLIS = 300L
+        const val KEEP_LOCAL_UNSUPPORTED =
+            "当前 game-save 服务只支持旧的同步协议，不能“保留本机并发布”；请升级 game-save 服务，或在 PC 端处理"
         const val KEY_PAGE = "ui.page"
+        const val KEY_SYNC_RETURN = "ui.syncReturnPage"
         const val KEY_SELECTED_GAME = "ui.selectedGameKey"
         const val KEY_DETAIL_OPEN = "ui.gameDetailOpen"
         const val KEY_TYPE_FILTER = "ui.libraryTypeFilter"

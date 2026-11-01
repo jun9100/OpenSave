@@ -68,6 +68,18 @@ internal object GameSaveNativeProtocol {
     fun archiveName(identity: GameCloudIdentity, localSnapshotId: String, deviceId: String): String =
         "${identity.gameId}__main__${remoteSnapshotId(localSnapshotId, deviceId)}.zip"
 
+    /**
+     * Parent of a "保留本机并发布" write: the head the user chose to replace,
+     * only while it is still the head and [candidateId] is new to the scope.
+     * Null means the cloud moved on since the user decided, so nothing is written.
+     */
+    fun keepLocalParent(scope: GameSaveScope, expectedHead: String, candidateId: String): String? {
+        val head = scope.head ?: return null
+        if (expectedHead.isBlank() || head.id != expectedHead) return null
+        if ((scope.snapshots + scope.conflicts).any { it.id == candidateId }) return null
+        return head.id
+    }
+
     fun follows(scope: GameSaveScope, ancestor: String): Boolean {
         if (ancestor.isBlank() || scope.head == null) return false
         val snapshots = scope.snapshots
@@ -240,6 +252,48 @@ class GameSaveNativeSync(
             states.save(identity, provisional)
             val currentHead = client.getScope(identity.saveType, identity.gameId).getOrThrow().head
             GameSaveNativePublishResult.Conflict(currentHead)
+        }
+    }
+
+    /**
+     * "保留本机并发布": makes [record] the new head on top of [expectedHead], the
+     * remote head the user chose to replace. The replaced head stays in the
+     * scope history. When the head moved since (another device published),
+     * nothing becomes the head and [GameSaveNativePublishResult.Conflict] says
+     * so; the user has to look at the new state first.
+     */
+    fun publishOverHead(
+        identity: GameCloudIdentity,
+        record: SnapshotRecord,
+        archiveFile: File,
+        expectedHead: String,
+    ): Result<GameSaveNativePublishResult> = runCatching {
+        require(record.cloudGameId == identity.gameId && record.saveType == identity.saveType.id) {
+            "本地快照与游戏同步范围不匹配"
+        }
+        require(archiveFile.isFile) { "本地快照不存在" }
+        val localSnapshotId = GameSaveNativeProtocol.localSnapshotId(record.remoteName)
+            ?: error("本地快照名称不是可同步的 OpenSave 快照")
+        val identityDevice = device.identity()
+        val remoteSnapshotId = GameSaveNativeProtocol.remoteSnapshotId(localSnapshotId, identityDevice.id)
+        val remoteArchiveName = GameSaveNativeProtocol.archiveName(identity, localSnapshotId, identityDevice.id)
+        val digest = Hashing.sha256(archiveFile).lowercase()
+        require(record.sha256.isBlank() || digest == record.sha256.lowercase()) { "本地快照摘要校验失败" }
+        val scope = client.getScope(identity.saveType, identity.gameId).getOrThrow()
+        val parent = GameSaveNativeProtocol.keepLocalParent(scope, expectedHead, remoteSnapshotId)
+            ?: return@runCatching GameSaveNativePublishResult.Conflict(scope.head)
+        client.upload(archiveFile, identity.saveType, remoteArchiveName).getOrThrow()
+        val candidate = candidate(remoteSnapshotId, remoteArchiveName, parent, digest, record)
+        try {
+            val stored = client.putScopeSnapshot(identity.saveType, identity.gameId, candidate, parent).getOrThrow()
+            val previous = states.load(identity)
+            states.save(
+                identity,
+                localState(identity, record, archiveFile, localSnapshotId, remoteArchiveName, previous, nativeHead = stored.id),
+            )
+            GameSaveNativePublishResult.Confirmed(stored)
+        } catch (error: GameSaveScopeConflictException) {
+            GameSaveNativePublishResult.Conflict(client.getScope(identity.saveType, identity.gameId).getOrThrow().head)
         }
     }
 

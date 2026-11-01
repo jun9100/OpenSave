@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
+import com.jun9100.opensave.KeepLocalRequest
 import com.jun9100.opensave.OpenSaveTheme
 import com.jun9100.opensave.RestoreRequest
 import com.jun9100.opensave.SourceGameEntry
@@ -158,6 +159,51 @@ internal fun RestoreConfirmDialog(
         },
         confirmButton = {
             Button(onClick = onConfirm, modifier = Modifier.dialogButtonFocus()) { Text("确认恢复") }
+        },
+        dismissButton = {
+            // Destructive: focus starts on the safe choice.
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.focusRequester(rememberInitialFocus()).dialogButtonFocus(),
+            ) { Text("取消") }
+        },
+    )
+}
+
+/**
+ * "保留本机并发布": the saves on this device become the cloud's current
+ * version. Destructive for the other devices' newer save, so focus starts on 取消.
+ */
+@Composable
+internal fun KeepLocalConfirmDialog(
+    request: KeepLocalRequest,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.consumeHandheldShortcuts(),
+        title = { Text("保留本机并发布？") },
+        text = {
+            val scroll = rememberScrollState()
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 280.dp)
+                    .dpadScrollable(scroll)
+                    .verticalScroll(scroll),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("将备份本机的 ${request.entry.game.presentation.primaryName}，并把它发布为云端当前版本。")
+                val device = request.deviceName.ifBlank { "另一台设备" }
+                Text("$device 上传的云端版本不再是当前版本，但仍保留在云端历史中；其他设备下次同步时会看到本机版本。")
+                request.reason.takeIf(String::isNotBlank)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("本机存档不会被修改。若确认后云端又有新版本，将不会发布。", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm, modifier = Modifier.dialogButtonFocus()) { Text("发布本机版本") }
         },
         dismissButton = {
             // Destructive: focus starts on the safe choice.

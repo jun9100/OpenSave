@@ -207,7 +207,7 @@ internal fun GameDetailPane(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("自动备份这款游戏", style = MaterialTheme.typography.bodySmall)
                     Text(
-                        if (autoBackupScheduled) "Wi-Fi 下定期备份并上传；只影响本设备" else "自动备份总开关未开启（备份与设置）",
+                        if (autoBackupScheduled) "Wi-Fi 下定期备份并上传；只影响本设备" else "自动备份总开关未开启（设置）",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -292,7 +292,7 @@ private fun VersionsTab(
     }
     if (gameSaveEnabled && remoteHistory.isEmpty()) {
         Text(
-            "云端记录为空时，可在“备份与设置”中列举 game-save 快照。",
+            "云端记录为空时，可在“设置 › 高级”中列举 game-save 快照。",
             modifier = Modifier.padding(top = 8.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

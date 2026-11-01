@@ -80,6 +80,26 @@ class GameSaveNativeProtocolTest {
         assertFalse(GameSaveNativeProtocol.follows(scope, head))
     }
 
+    @Test
+    fun keepingLocalWritesOnlyOnTopOfTheHeadTheUserSaw() {
+        val identity = identity()
+        val seen = "snap_1730000100000--dev-desktop1"
+        val mine = "snap_1730000300000--dev-odin2"
+        val head = snapshot(identity, seen, "")
+        val scope = scope(identity, head, listOf(head))
+
+        assertEquals(seen, GameSaveNativeProtocol.keepLocalParent(scope, seen, mine))
+        // Another device published after the user decided: nothing is written.
+        val moved = snapshot(identity, "snap_1730000200000--dev-deck", seen)
+        assertEquals(null, GameSaveNativeProtocol.keepLocalParent(scope(identity, moved, listOf(moved, head)), seen, mine))
+        // An empty scope or an unknown expectation is never treated as "replace".
+        assertEquals(null, GameSaveNativeProtocol.keepLocalParent(scope.copy(head = null), seen, mine))
+        assertEquals(null, GameSaveNativeProtocol.keepLocalParent(scope, "", mine))
+        // The candidate id is already a snapshot or a conflict copy of the scope.
+        val copy = snapshot(identity, mine, "").copy(conflict = true)
+        assertEquals(null, GameSaveNativeProtocol.keepLocalParent(scope.copy(conflicts = listOf(copy)), seen, mine))
+    }
+
     private fun identity() = GameCloudIdentity(
         saveType = GameSaveTypes.SWITCH,
         gameId = "switch-0100000000010000",

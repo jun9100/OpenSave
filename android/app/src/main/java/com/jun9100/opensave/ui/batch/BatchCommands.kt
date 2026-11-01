@@ -43,7 +43,7 @@ internal fun batchCommands(
 ): List<MenuEntry> = buildList {
     if (batchRunning) add(MenuEntry(CANCEL_BATCH_LABEL, detail = "当前这款完成后停止", onClick = actions.onCancelBatch))
     add(MenuEntry(primary.label, detail = "不弹确认；可在进度条上取消", enabled = !busy && primary.enabled, onClick = actions.onBackup))
-    val cloudDetail: (String) -> String = { detail -> if (cloudReady) detail else "需先在“备份与设置”中启用 game-save" }
+    val cloudDetail: (String) -> String = { detail -> if (cloudReady) detail else "需先在“设置”中启用 game-save" }
     add(
         MenuEntry(
             "上传待传 (${scope.pendingUpload})",
@@ -70,8 +70,11 @@ internal fun batchCommands(
             onClick = actions.onRestoreCloudNewer,
         ),
     )
-    add(MenuEntry("最近的批量报告", enabled = hasReport, onClick = actions.onOpenReport))
+    add(MenuEntry(BATCH_REPORT_LABEL, enabled = hasReport, onClick = actions.onOpenReport))
 }
 
 /** The command that stops a running batch; the library panel puts it first so Y then A cancels. */
 internal const val CANCEL_BATCH_LABEL = "取消当前批量任务"
+
+/** Opens the last batch report; the library panel lifts it near the top. */
+internal const val BATCH_REPORT_LABEL = "最近的批量报告"

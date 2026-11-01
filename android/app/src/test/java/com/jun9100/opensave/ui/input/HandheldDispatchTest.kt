@@ -11,10 +11,28 @@ class HandheldDispatchTest {
 
     @Test
     fun l1AndR1CycleThroughTheTopLevelPages() {
-        assertEquals(OpenSavePage.MANAGEMENT, HandheldDispatch.pageAfter(OpenSavePage.LIBRARY, HandheldCommand.NEXT_PAGE))
-        assertEquals(OpenSavePage.LIBRARY, HandheldDispatch.pageAfter(OpenSavePage.MANAGEMENT, HandheldCommand.NEXT_PAGE))
-        assertEquals(OpenSavePage.MANAGEMENT, HandheldDispatch.pageAfter(OpenSavePage.LIBRARY, HandheldCommand.PREVIOUS_PAGE))
+        assertEquals(OpenSavePage.SOURCES, HandheldDispatch.pageAfter(OpenSavePage.LIBRARY, HandheldCommand.NEXT_PAGE))
+        assertEquals(OpenSavePage.SETTINGS, HandheldDispatch.pageAfter(OpenSavePage.SOURCES, HandheldCommand.NEXT_PAGE))
+        assertEquals(OpenSavePage.LIBRARY, HandheldDispatch.pageAfter(OpenSavePage.SETTINGS, HandheldCommand.NEXT_PAGE))
+        assertEquals(OpenSavePage.SETTINGS, HandheldDispatch.pageAfter(OpenSavePage.LIBRARY, HandheldCommand.PREVIOUS_PAGE))
         assertNull(HandheldDispatch.pageAfter(OpenSavePage.LIBRARY, HandheldCommand.GAME_MENU))
+    }
+
+    @Test
+    fun l1AndR1FromSyncAndTasksCycleFromThePageItWasOpenedFrom() {
+        // "同步与任务" is not on the rail; the shell passes the page it was opened from.
+        assertEquals(OpenSavePage.LIBRARY, HandheldDispatch.pageAfter(OpenSavePage.SETTINGS, HandheldCommand.NEXT_PAGE))
+        // A page that is not top-level never makes the cycle stick.
+        assertEquals(OpenSavePage.SOURCES, HandheldDispatch.pageAfter(OpenSavePage.SYNC, HandheldCommand.NEXT_PAGE))
+    }
+
+    @Test
+    fun pagesSavedByOlderBuildsAreMigrated() {
+        assertEquals(OpenSavePage.SETTINGS, OpenSavePage.fromSavedName("MANAGEMENT"))
+        assertEquals(OpenSavePage.SOURCES, OpenSavePage.fromSavedName("SOURCES"))
+        assertNull(OpenSavePage.fromSavedName("UNKNOWN"))
+        assertNull(OpenSavePage.fromSavedName(null))
+        assertEquals(listOf(OpenSavePage.LIBRARY, OpenSavePage.SOURCES, OpenSavePage.SETTINGS), OpenSavePage.topLevelPages)
     }
 
     @Test
@@ -113,9 +131,19 @@ class HandheldDispatchTest {
     }
 
     @Test
+    fun focusGoesBackToTheRowWhenTheSystemMovedItOnWindowFocus() {
+        // The system put focus on the "全部" chip: neither list nor detail has it.
+        assertEquals(true, HandheldDispatch.shouldRestoreRowFocus(listHasFocus = false, detailHasFocus = false, detailFocusPending = false))
+        assertEquals(false, HandheldDispatch.shouldRestoreRowFocus(listHasFocus = true, detailHasFocus = false, detailFocusPending = false))
+        // A dialog choice moved focus to the detail pane on purpose.
+        assertEquals(false, HandheldDispatch.shouldRestoreRowFocus(listHasFocus = false, detailHasFocus = true, detailFocusPending = false))
+        assertEquals(false, HandheldDispatch.shouldRestoreRowFocus(listHasFocus = false, detailHasFocus = false, detailFocusPending = true))
+    }
+
+    @Test
     fun hintsOnlyListKeysThatActOnThePage() {
         val library = HandheldHints.forPage(OpenSavePage.LIBRARY).map { it.first }
-        val management = HandheldHints.forPage(OpenSavePage.MANAGEMENT).map { it.first }
+        val management = HandheldHints.forPage(OpenSavePage.SETTINGS).map { it.first }
         assertEquals(listOf("A", "B", "X", "Select", "Start", "Y", "L1/R1", "L2/R2"), library)
         assertEquals(listOf("A", "B", "Y", "L1/R1", "L2/R2"), management)
     }

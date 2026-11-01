@@ -198,8 +198,9 @@ class LibraryViewTest {
         assertEquals(BackTarget.CLOSE_DETAIL, LibraryView.backTarget(OpenSavePage.LIBRARY, gameDetailOpen = true, landscape = false))
         assertEquals(BackTarget.SYSTEM, LibraryView.backTarget(OpenSavePage.LIBRARY, gameDetailOpen = true, landscape = true))
         assertEquals(BackTarget.SYSTEM, LibraryView.backTarget(OpenSavePage.LIBRARY, gameDetailOpen = false, landscape = false))
-        assertEquals(BackTarget.LIBRARY, LibraryView.backTarget(OpenSavePage.MANAGEMENT, gameDetailOpen = true, landscape = false))
-        assertEquals(BackTarget.LIBRARY, LibraryView.backTarget(OpenSavePage.MANAGEMENT, gameDetailOpen = false, landscape = true))
+        assertEquals(BackTarget.LIBRARY, LibraryView.backTarget(OpenSavePage.SETTINGS, gameDetailOpen = true, landscape = false))
+        assertEquals(BackTarget.LIBRARY, LibraryView.backTarget(OpenSavePage.SOURCES, gameDetailOpen = false, landscape = true))
+        assertEquals(BackTarget.PARENT, LibraryView.backTarget(OpenSavePage.SYNC, gameDetailOpen = false, landscape = true))
     }
 
     private fun record(id: String, gameKey: String?, createdAt: Long, uploaded: Boolean, comment: String = "") = SnapshotRecord(
