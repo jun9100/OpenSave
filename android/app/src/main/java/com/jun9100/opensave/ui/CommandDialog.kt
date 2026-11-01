@@ -106,14 +106,26 @@ internal class LibrarySelectionActions(
     val onClear: () -> Unit = {},
 )
 
-/** Commands of the 来源 page. */
+/** Commands of the 来源 page: the two ways to add a source, then the staged changes and the scan. */
 internal fun sourcesCommands(
     busy: Boolean,
+    /** Staged source toggles not applied yet. */
+    pendingChanges: Int,
+    rootAvailable: Boolean,
     onPickFolder: () -> Unit,
+    onAddRootPath: () -> Unit,
+    onApply: () -> Unit,
     onScan: () -> Unit,
     onRefresh: () -> Unit,
-): List<MenuEntry> = listOf(
-    MenuEntry("添加并授权目录", detail = "没有 Root 时用系统授权访问存档目录", enabled = !busy, onClick = onPickFolder),
+): List<MenuEntry> = listOfNotNull(
+    MenuEntry(
+        "应用并重新扫描 ($pendingChanges)",
+        detail = "保存勾选的改动并扫描一次",
+        enabled = !busy,
+        onClick = onApply,
+    ).takeIf { pendingChanges > 0 },
+    MenuEntry("添加授权目录", detail = "没有 Root 时用系统授权访问存档目录", enabled = !busy, onClick = onPickFolder),
+    MenuEntry("添加 Root 路径", detail = "扫描 Root 才能读取的目录", enabled = !busy, onClick = onAddRootPath).takeIf { rootAvailable },
     MenuEntry("重新扫描来源", enabled = !busy, onClick = onScan),
     MenuEntry("刷新来源", detail = "重新读取已保存的来源与 Root 状态", enabled = !busy, onClick = onRefresh),
 )
@@ -124,7 +136,8 @@ internal fun settingsCommands(
     syncAttention: Int,
     onOpenSyncTasks: () -> Unit,
     onCheckCloudUpdates: () -> Unit,
-    onListCloud: () -> Unit,
+    onEditCloud: () -> Unit,
+    onImportFromClipboard: () -> Unit,
     onRefresh: () -> Unit,
     /** Opens the last batch report; null while there is none. */
     onOpenBatchReport: (() -> Unit)? = null,
@@ -132,7 +145,8 @@ internal fun settingsCommands(
     syncTasksEntry(syncAttention, onOpenSyncTasks),
     MenuEntry("检查跨设备更新", detail = "只读取云端，不修改存档", enabled = !busy, onClick = onCheckCloudUpdates),
     onOpenBatchReport?.let { MenuEntry(BATCH_REPORT_LABEL, onClick = it) },
-    MenuEntry("列举云端快照", enabled = !busy, onClick = onListCloud),
+    MenuEntry("编辑云端配置…", detail = "服务地址和同步密钥，测试通过后保存", enabled = !busy, onClick = onEditCloud),
+    MenuEntry("从剪贴板导入配置", detail = "opensave://game-save 链接", enabled = !busy, onClick = onImportFromClipboard),
     MenuEntry("刷新配置", detail = "重新读取已保存的 game-save 配置", enabled = !busy, onClick = onRefresh),
 )
 

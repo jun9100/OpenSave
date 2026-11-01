@@ -1,5 +1,8 @@
 package com.jun9100.opensave.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,13 +46,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -79,6 +87,9 @@ import com.jun9100.opensave.ui.input.handheldNavigationActive
 import com.jun9100.opensave.ui.input.watchFocus
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.library.GameLibraryPage
+import com.jun9100.opensave.ui.settings.ConfigImportConfirmDialog
+import com.jun9100.opensave.ui.settings.GameSaveEditorDialog
+import com.jun9100.opensave.ui.settings.GameSaveTestFailedDialog
 import com.jun9100.opensave.ui.settings.SettingsPage
 import com.jun9100.opensave.ui.sources.SourcesPage
 import com.jun9100.opensave.ui.sync.SyncTasksPage
@@ -136,6 +147,35 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
         )
     }
 
+    state.gameSaveEditor?.let { initial ->
+        GameSaveEditorDialog(
+            initial = initial,
+            busy = state.busy,
+            onDismiss = sourceViewModel::closeGameSaveEditor,
+            onTestAndSave = sourceViewModel::testAndSaveGameSave,
+        )
+    }
+
+    state.gameSaveTestFailure?.let { failure ->
+        GameSaveTestFailedDialog(
+            failure = failure,
+            busy = state.busy,
+            onSaveAnyway = sourceViewModel::saveGameSaveAnyway,
+            onEdit = sourceViewModel::editFailedGameSave,
+            onDismiss = sourceViewModel::dismissGameSaveTestFailure,
+        )
+    }
+
+    state.pendingConfigImport?.let { config ->
+        ConfigImportConfirmDialog(
+            config = config,
+            replacing = state.gameSaveUrl.isNotBlank() || state.gameSaveSyncKey.isNotBlank(),
+            busy = state.busy,
+            onDismiss = sourceViewModel::cancelConfigImport,
+            onConfirm = sourceViewModel::confirmConfigImport,
+        )
+    }
+
     (state.viewedBatchReport ?: state.lastBatchReport)?.takeIf { state.batchReportOpen }?.let { report ->
         BatchReportSheet(
             report = report,
@@ -164,6 +204,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
     ProvideAdaptiveLayout(modifier = Modifier.fillMaxSize().watchFocus(shellFocus)) {
         CompositionLocalProvider(LocalShellFocus provides shellFocus, LocalBatchStrip provides batchStrip) {
             val landscape = LocalAdaptiveLayout.current.isLandscape
+            ImmersiveSystemBarsEffect(hide = landscape && state.immersiveLandscape)
             // Back stack: portrait game detail -> list; secondary page -> library; otherwise the system.
             BackHandler(enabled = LibraryView.backTarget(state.page, state.gameDetailOpen, landscape) != BackTarget.SYSTEM) {
                 sourceViewModel.navigateBack(landscape)
@@ -390,3 +431,32 @@ internal const val NAVIGATION_RAIL_TAG = "navigation-rail"
 internal const val LIBRARY_TOOLBAR_TAG = "library-toolbar"
 internal const val GAME_DETAIL_TAG = "game-detail"
 internal const val BUTTON_HINTS_TAG = "button-hints"
+
+/**
+ * 横屏沉浸模式 (设置 → 显示, plan Q2): hides the status and gesture bars while
+ * [hide]; a swipe from the edge shows them for a moment. Leaving landscape or
+ * switching it off shows them again.
+ */
+@Composable
+private fun ImmersiveSystemBarsEffect(hide: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(hide, view) {
+        val window = view.context.findActivity()?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            if (hide) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose { }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}

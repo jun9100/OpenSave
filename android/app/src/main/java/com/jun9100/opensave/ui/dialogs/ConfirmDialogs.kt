@@ -215,6 +215,31 @@ internal fun KeepLocalConfirmDialog(
     )
 }
 
+/** Back on the 来源 page with toggles not applied yet; dropping them is the destructive choice. */
+@Composable
+internal fun DiscardSourceChangesDialog(
+    count: Int,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.consumeHandheldShortcuts(),
+        title = { Text("放弃未应用的来源改动？") },
+        text = { Text("有 $count 项来源改动还没有应用。放弃后来源选择保持原样；要保留改动，请取消后选择“应用并重新扫描”。") },
+        confirmButton = {
+            Button(onClick = onConfirm, modifier = Modifier.dialogButtonFocus()) { Text("放弃改动") }
+        },
+        dismissButton = {
+            // Destructive: focus starts on the safe choice.
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.focusRequester(rememberInitialFocus()).dialogButtonFocus(),
+            ) { Text("取消") }
+        },
+    )
+}
+
 /** Focus ring for dialog buttons (pill shaped). */
 @Composable
 internal fun Modifier.dialogButtonFocus(): Modifier = handheldFocusRing(RoundedCornerShape(20.dp))

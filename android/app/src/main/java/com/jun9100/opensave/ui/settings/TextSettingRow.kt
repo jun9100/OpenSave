@@ -143,8 +143,9 @@ internal object TextSettingSummary {
     }
 }
 
+/** One text field in a dialog; the field takes focus and the keyboard when it opens. */
 @Composable
-private fun TextEditDialog(
+internal fun TextEditDialog(
     title: String,
     initial: String,
     placeholder: String,
@@ -152,6 +153,8 @@ private fun TextEditDialog(
     keyboardType: KeyboardType,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
+    confirmLabel: String = "确定",
+    note: String? = null,
 ) {
     var text by rememberSaveable { mutableStateOf(initial) }
     var visible by rememberSaveable { mutableStateOf(false) }
@@ -160,35 +163,40 @@ private fun TextEditDialog(
         modifier = Modifier.consumeHandheldShortcuts(),
         title = { Text(title) },
         text = {
-            // Opened on purpose, so the field takes focus and the keyboard right away.
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                placeholder = { if (placeholder.isNotBlank()) Text(placeholder) },
-                singleLine = true,
-                visualTransformation = if (secret && !visible) PasswordVisualTransformation() else VisualTransformation.None,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = if (secret) KeyboardType.Password else keyboardType,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(onDone = { onConfirm(text.trim()) }),
-                trailingIcon = if (secret) {
-                    {
-                        IconButton(onClick = { visible = !visible }) {
-                            Icon(
-                                if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                contentDescription = if (visible) "隐藏$title" else "显示$title",
-                            )
+            Column {
+                note?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // Opened on purpose, so the field takes focus and the keyboard right away.
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { if (placeholder.isNotBlank()) Text(placeholder) },
+                    singleLine = true,
+                    visualTransformation = if (secret && !visible) PasswordVisualTransformation() else VisualTransformation.None,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = if (secret) KeyboardType.Password else keyboardType,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm(text.trim()) }),
+                    trailingIcon = if (secret) {
+                        {
+                            IconButton(onClick = { visible = !visible }) {
+                                Icon(
+                                    if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    contentDescription = if (visible) "隐藏$title" else "显示$title",
+                                )
+                            }
                         }
-                    }
-                } else {
-                    null
-                },
-                modifier = Modifier.fillMaxWidth().focusRequester(rememberInitialFocus()),
-            )
+                    } else {
+                        null
+                    },
+                    modifier = Modifier.fillMaxWidth().focusRequester(rememberInitialFocus()),
+                )
+            }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(text.trim()) }, modifier = Modifier.dialogButtonFocus()) { Text("确定") }
+            Button(onClick = { onConfirm(text.trim()) }, modifier = Modifier.dialogButtonFocus()) { Text(confirmLabel) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, modifier = Modifier.dialogButtonFocus()) { Text("取消") }

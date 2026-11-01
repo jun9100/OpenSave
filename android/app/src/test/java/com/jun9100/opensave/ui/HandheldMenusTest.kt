@@ -141,13 +141,42 @@ class HandheldMenusTest {
 
     @Test
     fun settingsAndSourcesPanelsDisableOperationsWhileBusy() {
-        val settings = settingsCommands(busy = true, syncAttention = 1, onOpenSyncTasks = {}, onCheckCloudUpdates = {}, onListCloud = {}, onRefresh = {})
-        assertEquals(listOf("同步与任务", "检查跨设备更新", "列举云端快照", "刷新配置"), settings.map { it.label })
-        assertEquals(listOf(true, false, false, false), settings.map { it.enabled })
-        val sources = sourcesCommands(busy = true, onPickFolder = {}, onScan = {}, onRefresh = {})
-        assertEquals(listOf("添加并授权目录", "重新扫描来源", "刷新来源"), sources.map { it.label })
+        val settings = settingsCommands(
+            busy = true,
+            syncAttention = 1,
+            onOpenSyncTasks = {},
+            onCheckCloudUpdates = {},
+            onEditCloud = {},
+            onImportFromClipboard = {},
+            onRefresh = {},
+        )
+        assertEquals(listOf("同步与任务", "检查跨设备更新", "编辑云端配置…", "从剪贴板导入配置", "刷新配置"), settings.map { it.label })
+        assertEquals(listOf(true, false, false, false, false), settings.map { it.enabled })
+        val sources = sources(busy = true, pending = 0, root = false)
+        assertEquals(listOf("添加授权目录", "重新扫描来源", "刷新来源"), sources.map { it.label })
         assertTrue(sources.none { it.enabled })
     }
+
+    @Test
+    fun sourcesPanelPutsStagedChangesFirstAndRootOnlyWithRoot() {
+        var applied = false
+        val entries = sources(busy = false, pending = 2, root = true, onApply = { applied = true })
+        assertEquals(listOf("应用并重新扫描 (2)", "添加授权目录", "添加 Root 路径", "重新扫描来源", "刷新来源"), entries.map { it.label })
+        entries.first().onClick()
+        assertTrue(applied)
+        assertTrue(sources(busy = false, pending = 0, root = false).none { it.label.contains("Root 路径") || it.label.startsWith("应用") })
+    }
+
+    private fun sources(busy: Boolean, pending: Int, root: Boolean, onApply: () -> Unit = {}) = sourcesCommands(
+        busy = busy,
+        pendingChanges = pending,
+        rootAvailable = root,
+        onPickFolder = {},
+        onAddRootPath = {},
+        onApply = onApply,
+        onScan = {},
+        onRefresh = {},
+    )
 
     @Test
     fun syncPanelOffersCancelOnlyWhileABatchRuns() {
@@ -216,7 +245,8 @@ class HandheldMenusTest {
             syncAttention = 0,
             onOpenSyncTasks = {},
             onCheckCloudUpdates = {},
-            onListCloud = {},
+            onEditCloud = {},
+            onImportFromClipboard = {},
             onRefresh = {},
             onOpenBatchReport = {},
         )

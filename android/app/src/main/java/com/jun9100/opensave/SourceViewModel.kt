@@ -114,6 +114,12 @@ data class KeepLocalRequest(
     val reason: String,
 )
 
+/** A game-save config whose connection test failed, and why. */
+data class GameSaveTestFailure(
+    val config: GameSaveConfig,
+    val message: String,
+)
+
 /** A destructive batch waiting for its one confirmation (plan §5.7); only "安全恢复云端较新" asks. */
 data class BatchPlan(
     val operation: BatchOperation,
@@ -193,6 +199,18 @@ data class SourceUiState(
     /** The report the sheet shows; null shows [lastBatchReport]. */
     val viewedBatchReport: BatchReport? = null,
     val pendingKeepLocal: KeepLocalRequest? = null,
+    /** Source toggles of the 来源 page not applied yet. */
+    val sourceDraft: SourceDraft = SourceDraft(),
+    /** Back on the 来源 page with [sourceDraft] pending asks first. */
+    val confirmDiscardSourceDraft: Boolean = false,
+    /** The game-save editor is open, starting from this config; null while closed. */
+    val gameSaveEditor: GameSaveConfig? = null,
+    /** "测试并保存" failed for this config; the user may still save it. */
+    val gameSaveTestFailure: GameSaveTestFailure? = null,
+    /** A config read from the clipboard, waiting for its confirmation. */
+    val pendingConfigImport: ImportedGameSaveConfig? = null,
+    /** Hide the status and gesture bars in landscape (plan Q2: off by default). */
+    val immersiveLandscape: Boolean = false,
 ) {
     /** The rail and bottom bar item to highlight, and where L1/R1 cycle from. */
     val navigationPage: OpenSavePage get() = if (page.topLevel) page else syncReturnPage
@@ -210,6 +228,7 @@ class SourceViewModel(
     private val snapshotEngine = SnapshotEngine()
     private val snapshotRepository = SnapshotRepository.forApp(application)
     private val gameSaveStore = GameSaveConfigStore(application)
+    private val displayPreferences = DisplayPreferences(application)
     private val gameSaveDevice = GameSaveDeviceStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
     private val autoBackupExclusions = AutoBackupExclusions(application)
@@ -221,7 +240,6 @@ class SourceViewModel(
     private var signatureJob: Job? = null
     private var signaturesReadAtMillis = 0L
     private val state = MutableStateFlow(restoreUiState(SourceUiState()))
-    private val sourceRescan = Debouncer(viewModelScope, SOURCE_RESCAN_DEBOUNCE_MILLIS)
     val uiState: StateFlow<SourceUiState> = state.asStateFlow()
 
     init {
@@ -405,6 +423,7 @@ class SourceViewModel(
             gameSaveSyncKey = config.syncKey,
             gameSaveSaved = config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank(),
             autoBackupEnabled = autoBackupScheduler.isEnabled(),
+            immersiveLandscape = displayPreferences.immersiveLandscape(),
             scan = persistedScan,
             sourceOptions = sourceOptions,
             messages = if (fullDiscoveryEnabled) {
@@ -502,7 +521,11 @@ class SourceViewModel(
                 true
             }
             BackTarget.LIBRARY -> {
-                showPage(OpenSavePage.LIBRARY)
+                if (current.page == OpenSavePage.SOURCES && current.sourceDraft.pendingCount(current.sourceOptions) > 0) {
+                    updateState { copy(confirmDiscardSourceDraft = true) }
+                } else {
+                    showPage(OpenSavePage.LIBRARY)
+                }
                 true
             }
             BackTarget.PARENT -> {
@@ -543,7 +566,9 @@ class SourceViewModel(
         }
     }
 
+    /** The target of the whole-source snapshot and write-back in 设置 → 高级 (plan Q13). */
     fun selectStorageMode(mode: StorageMode) {
+        if (state.value.busy) return
         selectionStore.saveMode(mode)
         updateState {
             copy(
@@ -555,33 +580,36 @@ class SourceViewModel(
                     }
                 },
                 messages = messages.with(
-                    OpenSavePage.SOURCES,
-                    action = if (mode == StorageMode.ROOT) "已切换到 Root 路径模式" else "已切换到系统授权模式",
+                    OpenSavePage.SETTINGS,
+                    action = if (mode == StorageMode.ROOT) "整来源快照改用 Root 路径" else "整来源快照改用系统授权目录",
                 ),
             )
         }
-        if (mode == StorageMode.ROOT) {
-            refreshRootAccess()
-        } else {
-            scanSource()
-        }
+        if (mode == StorageMode.ROOT) refreshRootAccess()
     }
 
-    fun updateRootPath(value: String) = updateState { copy(rootPath = value) }
-
-    fun applyRootPath() {
-        rootStorage.persistRootPath(state.value.rootPath)
+    /**
+     * "添加 Root 路径" on the 来源 page: stores [path] as the custom Root source
+     * (it replaces an earlier one), switches it on and rescans. Only offered
+     * while su grants uid 0.
+     */
+    fun addRootPath(path: String) {
+        if (state.value.busy) return
+        rootStorage.persistRootPath(path)
             .onSuccess { canonical ->
-                selectionStore.saveMode(StorageMode.ROOT)
-                state.value = state.value.copy(
-                    storageMode = StorageMode.ROOT,
+                selectionStore.setSourcesEnabled(listOf(SourceSelection.Root(canonical).idSeed), enabled = true)
+                val current = state.value
+                state.value = current.copy(
                     rootPath = canonical,
-                    messages = state.value.messages.with(OpenSavePage.SOURCES, action = "已保存 Root 路径"),
-                    scan = null,
-                    activeSourceId = SnapshotNaming.sourceId(SourceSelection.Root(canonical).idSeed),
-                    sourceOptions = buildSourceOptions(state.value.authorizedTrees, canonical),
+                    activeSourceId = if (current.storageMode == StorageMode.ROOT) {
+                        SnapshotNaming.sourceId(SourceSelection.Root(canonical).idSeed)
+                    } else {
+                        current.activeSourceId
+                    },
+                    sourceOptions = buildSourceOptions(current.authorizedTrees, canonical),
+                    messages = current.messages.with(OpenSavePage.SOURCES, action = "已添加 Root 路径 $canonical"),
                 )
-                refreshRootAccess()
+                scanSource()
             }
             .onFailure { error ->
                 updateState { copy(messages = messages.withError(OpenSavePage.SOURCES, "Root 路径无效：${error.message}")) }
@@ -597,58 +625,133 @@ class SourceViewModel(
                 rootChecked = true,
                 messages = if (!rootAvailable && state.value.storageMode == StorageMode.ROOT) {
                     state.value.messages.withError(
-                        OpenSavePage.SOURCES,
+                        OpenSavePage.SETTINGS,
                         "Root 不可用：${result.exceptionOrNull()?.message ?: "su 未返回 uid 0"}",
                     )
                 } else {
                     state.value.messages
                 },
             )
-            if (rootAvailable && state.value.storageMode == StorageMode.ROOT) scanSource()
         }
     }
 
-    fun updateGameSaveUrl(value: String) = updateState { copy(gameSaveUrl = value, gameSaveSaved = false) }
-
-    fun updateGameSaveSyncKey(value: String) = updateState { copy(gameSaveSyncKey = value, gameSaveSaved = false) }
-
-    fun updateGameSaveEnabled(value: Boolean) = updateState { copy(gameSaveEnabled = value, gameSaveSaved = false) }
-
-    fun saveGameSave() {
-        val config = gameSaveConfigFromState()
-        viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.SETTINGS, "正在加密保存 game-save 配置")
-            val result = withContext(Dispatchers.IO) {
-                runCatching { gameSaveStore.save(config) }
-            }
-            result.onSuccess {
-                state.value = state.value.finished(OpenSavePage.SETTINGS, action = "game-save 配置已保存").copy(
-                    gameSaveUrl = GameSaveClient.normalizeServiceUrl(config.serviceUrl),
-                    gameSaveSaved = true,
-                )
-            }.onFailure { error ->
-                state.value = state.value.finished(OpenSavePage.SETTINGS, error = "保存 game-save 配置失败：${error.message}")
-            }
-        }
+    /** Opens the game-save editor on the saved config; the draft lives in the dialog, so a refresh never overwrites it. */
+    fun openGameSaveEditor() = updateState {
+        copy(gameSaveEditor = savedGameSaveConfig(), gameSaveTestFailure = null)
     }
 
-    fun testGameSave() {
-        val config = gameSaveConfigFromState()
-        if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写 game-save 服务地址和同步密钥")) }
+    fun closeGameSaveEditor() = updateState { copy(gameSaveEditor = null) }
+
+    /**
+     * "测试并保存": the address and key are saved only when the connection test
+     * passes. A failure closes the editor and offers "仍然保存" or going back
+     * to the draft ([editFailedGameSave]).
+     */
+    fun testAndSaveGameSave(serviceUrl: String, syncKey: String) {
+        if (state.value.busy) return
+        val saved = savedGameSaveConfig()
+        val url = serviceUrl.trim()
+        val key = syncKey.trim()
+        val normalized = runCatching { GameSaveClient.normalizeServiceUrl(url) }
+        val problem = when {
+            url.isBlank() || key.isBlank() -> "请填写 game-save 服务地址和同步密钥"
+            normalized.isFailure -> normalized.exceptionOrNull()?.message ?: "game-save 地址无效"
+            else -> null
+        }
+        if (problem != null) {
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, problem)) }
             return
         }
+        // Setting the cloud up for the first time also switches the upload on.
+        val config = GameSaveConfig(
+            enabled = saved.enabled || saved.serviceUrl.isBlank() || saved.syncKey.isBlank(),
+            serviceUrl = normalized.getOrThrow(),
+            syncKey = key,
+        )
         viewModelScope.launch {
             state.value = state.value.started(OpenSavePage.SETTINGS, "正在测试 game-save 连接")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveClient(config).testConnection().getOrThrow() }
             }
             result.onSuccess {
-                state.value = state.value.finished(OpenSavePage.SETTINGS, action = "game-save 连接成功")
+                storeGameSave(config, "game-save 连接成功，配置已保存")
             }.onFailure { error ->
-                state.value = state.value.finished(OpenSavePage.SETTINGS, error = "game-save 连接失败：${error.message}")
+                state.value = state.value.finished(OpenSavePage.SETTINGS).copy(
+                    gameSaveEditor = null,
+                    gameSaveTestFailure = GameSaveTestFailure(config, error.message ?: "连接失败"),
+                )
             }
         }
+    }
+
+    /** "仍然保存" after a failed test. */
+    fun saveGameSaveAnyway() {
+        val failure = state.value.gameSaveTestFailure ?: return
+        if (state.value.busy) return
+        updateState { copy(gameSaveTestFailure = null) }
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在加密保存 game-save 配置")
+            storeGameSave(failure.config, "game-save 配置已保存（连接测试未通过）")
+        }
+    }
+
+    /** "返回修改": the editor again, on the draft that failed. */
+    fun editFailedGameSave() = updateState {
+        copy(gameSaveEditor = gameSaveTestFailure?.config ?: savedGameSaveConfig(), gameSaveTestFailure = null)
+    }
+
+    fun dismissGameSaveTestFailure() = updateState { copy(gameSaveTestFailure = null) }
+
+    /** "从剪贴板导入配置": a valid link waits for the confirmation; anything else is refused with the reason. */
+    fun importGameSaveConfig(clipboardText: String?) {
+        GameSaveConfigLink.parse(clipboardText)
+            .onSuccess { config -> updateState { copy(pendingConfigImport = config, gameSaveTestFailure = null) } }
+            .onFailure { error ->
+                updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "无法导入配置：${error.message}")) }
+            }
+    }
+
+    fun cancelConfigImport() = updateState { copy(pendingConfigImport = null) }
+
+    /** The confirmed import runs "测试并保存" like the editor. */
+    fun confirmConfigImport() {
+        val config = state.value.pendingConfigImport ?: return
+        updateState { copy(pendingConfigImport = null) }
+        testAndSaveGameSave(config.serviceUrl, config.syncKey)
+    }
+
+    /** "新快照自动上传" (自动化): needs a saved game-save address and key. */
+    fun setAutoUploadEnabled(enabled: Boolean) {
+        if (state.value.busy) return
+        val saved = savedGameSaveConfig()
+        if (enabled && (saved.serviceUrl.isBlank() || saved.syncKey.isBlank())) {
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先在“云端”配置并保存 game-save")) }
+            return
+        }
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在保存自动上传设置")
+            storeGameSave(saved.copy(enabled = enabled), if (enabled) "新快照会自动上传" else "已关闭自动上传")
+        }
+    }
+
+    private suspend fun storeGameSave(config: GameSaveConfig, success: String) {
+        val result = withContext(Dispatchers.IO) { runCatching { gameSaveStore.save(config) } }
+        result.onSuccess {
+            state.value = state.value.finished(OpenSavePage.SETTINGS, action = success).copy(
+                gameSaveEnabled = config.enabled,
+                gameSaveUrl = GameSaveClient.normalizeServiceUrl(config.serviceUrl),
+                gameSaveSyncKey = config.syncKey,
+                gameSaveSaved = config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank(),
+                gameSaveEditor = null,
+            )
+        }.onFailure { error ->
+            state.value = state.value.finished(OpenSavePage.SETTINGS, error = "保存 game-save 配置失败：${error.message}")
+        }
+    }
+
+    fun setImmersiveLandscape(enabled: Boolean) {
+        displayPreferences.setImmersiveLandscape(enabled)
+        updateState { copy(immersiveLandscape = enabled) }
     }
 
     fun importSource() {
@@ -799,61 +902,38 @@ class SourceViewModel(
         }
     }
 
-    /** [optionId] is [SaveSourceOption.id]. The choice is stored at once; the rescan is debounced. */
-    fun setSourceEnabled(optionId: String, enabled: Boolean) {
+    /** Stages source toggles of the 来源 page; nothing is stored until [applySourceDraft]. */
+    fun updateSourceDraft(draft: SourceDraft) {
+        if (state.value.busy) return
+        updateState { copy(sourceDraft = draft) }
+    }
+
+    /** "应用并重新扫描": stores the staged toggles and rescans once. */
+    fun applySourceDraft() {
         if (state.value.busy) return
         val current = state.value
-        val option = current.sourceOptions.firstOrNull { it.id == optionId }
-        if (enabled && option != null && sourceUnreachable(current, option)) {
-            updateState { copy(messages = messages.withError(OpenSavePage.SOURCES, "该来源目录不存在或不可访问，不能勾选")) }
+        val pending = current.sourceDraft.pending(current.sourceOptions)
+        if (pending.isEmpty()) {
+            updateState { copy(sourceDraft = SourceDraft()) }
             return
         }
-        selectionStore.setSourcesEnabled(listOf(optionId), enabled)
-        state.value = current.copy(
-            sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
-            messages = current.messages.with(
-                OpenSavePage.SOURCES,
-                action = if (enabled) "已启用存档来源" else "已停用存档来源",
-            ),
-        )
-        requestSourceRescan()
-    }
-
-    fun setAllSourcesEnabled(enabled: Boolean) {
-        if (state.value.busy) return
-        val current = state.value
-        // "全选" never enables a source the last scan proved missing or unreachable.
-        val sourceIds = buildSourceOptions(current.authorizedTrees, current.rootPath)
-            .filter { option -> !enabled || !sourceUnreachable(current, option) }
-            .map(SaveSourceOption::id)
-        selectionStore.setSourcesEnabled(sourceIds, enabled)
-        state.value = current.copy(
-            sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
-            messages = current.messages.with(
-                OpenSavePage.SOURCES,
-                action = if (enabled) "已启用全部存档来源" else "已停用全部存档来源",
-            ),
-        )
-        requestSourceRescan()
-    }
-
-    private fun sourceUnreachable(current: SourceUiState, option: SaveSourceOption): Boolean =
-        SourceOptionPolicy.unreachable(
-            option = option,
-            scannedAccess = current.sourceScans.firstOrNull { it.sourceId == option.sourceId }?.access,
-            rootChecked = current.rootChecked,
-            rootAvailable = current.rootAvailable,
-        )
-
-    /**
-     * Rapid source toggles (a gamepad repeating A) trigger one rescan after the
-     * last toggle. A rescan that falls due during another operation waits for it.
-     */
-    private fun requestSourceRescan() {
-        sourceRescan.submit {
-            state.first { !it.busy }
-            scanSource()
+        pending.entries.groupBy({ it.value }, { it.key }).forEach { (enabled, ids) ->
+            selectionStore.setSourcesEnabled(ids, enabled)
         }
+        state.value = current.copy(
+            sourceDraft = SourceDraft(),
+            sourceOptions = buildSourceOptions(current.authorizedTrees, current.rootPath),
+            messages = current.messages.with(OpenSavePage.SOURCES, action = "已应用 ${pending.size} 项来源改动"),
+        )
+        scanSource()
+    }
+
+    fun cancelDiscardSourceDraft() = updateState { copy(confirmDiscardSourceDraft = false) }
+
+    /** "放弃改动" after back on the 来源 page: drops the draft and goes where back goes. */
+    fun discardSourceDraftAndLeave() {
+        updateState { copy(sourceDraft = SourceDraft(), confirmDiscardSourceDraft = false) }
+        showPage(OpenSavePage.LIBRARY)
     }
 
     /** Selecting a game (long press, Select, the X menu, the detail pane) enters selection mode. */
@@ -1161,7 +1241,7 @@ class SourceViewModel(
         if (captured.uploadedReused) "；已补传云端" else ""
 
     fun listCloud() {
-        val config = gameSaveConfigFromState()
+        val config = savedGameSaveConfig()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
             updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写并保存 game-save 服务地址和同步密钥")) }
             return
@@ -1184,7 +1264,7 @@ class SourceViewModel(
     /** Checks the cloud heads of every game as a batch; the summary is shown on [page]. */
     fun checkCloudUpdates(page: OpenSavePage = state.value.page) {
         if (state.value.busy) return
-        val config = gameSaveConfigFromState()
+        val config = savedGameSaveConfig()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
             updateState { copy(messages = messages.withError(page, "请先填写 game-save 服务地址和同步密钥")) }
             return
@@ -1714,11 +1794,9 @@ class SourceViewModel(
         is SourceSelection.Root -> true
     }
 
-    private fun gameSaveConfigFromState() = GameSaveConfig(
-        enabled = state.value.gameSaveEnabled,
-        serviceUrl = state.value.gameSaveUrl,
-        syncKey = state.value.gameSaveSyncKey,
-    )
+    /** Every operation uses the saved config, never an editor draft. */
+    private fun savedGameSaveConfig(): GameSaveConfig =
+        runCatching { gameSaveStore.load() }.getOrDefault(GameSaveConfig())
 
     private fun gameSaveClient(config: GameSaveConfig) =
         GameSaveClient(config, gameSaveDevice.identity())
@@ -1786,7 +1864,6 @@ class SourceViewModel(
         const val MAX_HISTORY = 40
         const val MAX_GAME_HISTORY = 100
         const val SIGNATURE_REFRESH_MIN_MILLIS = 5_000L
-        const val SOURCE_RESCAN_DEBOUNCE_MILLIS = 300L
         const val KEEP_LOCAL_UNSUPPORTED =
             "当前 game-save 服务只支持旧的同步协议，不能“保留本机并发布”；请升级 game-save 服务，或在 PC 端处理"
         const val KEY_PAGE = "ui.page"
