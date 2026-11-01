@@ -13,8 +13,20 @@
 import { get, writable } from 'svelte/store';
 import { LAYERS, moveFocus } from './spatial.js';
 import { isTyping, PAGES } from './shortcuts.js';
+import { tt } from './i18n.js';
 
-export const CONTROLLER_MODES = { auto: 'Automatic', on: 'On', off: 'Off' };
+/** The modes and their names; the names are getters, read in the chosen language. */
+export const CONTROLLER_MODES = {
+  get auto() {
+    return tt('controller.mode.auto');
+  },
+  get on() {
+    return tt('controller.mode.on');
+  },
+  get off() {
+    return tt('controller.mode.off');
+  }
+};
 
 /** Whether a controller has been used since the app opened. */
 export const padUsed = writable(false);

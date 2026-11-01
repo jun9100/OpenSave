@@ -9,15 +9,36 @@
 //
 // Filters are not kept at all: they are for finding something now.
 import { writable } from 'svelte/store';
+import { tt } from './i18n.js';
 
 export const COVER_STYLES = {
   // Steam's header image, 460×215: the title is legible in the art.
-  wide: { label: 'Wide banners', aspect: '460 / 215' },
+  wide: {
+    get label() {
+      return tt('library.cover.wide');
+    },
+    aspect: '460 / 215'
+  },
   // Steam's library capsule, 600×900: about twice as many games on screen.
-  tall: { label: 'Tall box art', aspect: '600 / 900' }
+  tall: {
+    get label() {
+      return tt('library.cover.tall');
+    },
+    aspect: '600 / 900'
+  }
 };
 
-export const TILE_SIZES = { small: 'Small', medium: 'Medium', large: 'Large' };
+export const TILE_SIZES = {
+  get small() {
+    return tt('library.size.small');
+  },
+  get medium() {
+    return tt('library.size.medium');
+  },
+  get large() {
+    return tt('library.size.large');
+  }
+};
 
 // Narrowest a tile may get when the number per row is left to the window.
 const MIN_WIDTH = {
@@ -82,13 +103,55 @@ libraryView.subscribe((v) => saveView(v));
 
 // What a game's status line says, gathered into what someone would look for.
 export const STATUS_FILTERS = [
-  { id: 'all', label: 'All', states: null },
-  { id: 'attention', label: 'Needs attention', states: ['missing', 'conflict', 'error'] },
-  { id: 'syncing', label: 'Syncing', states: ['syncing'] },
-  { id: 'synced', label: 'Synced', states: ['synced'] },
-  { id: 'unsynced', label: 'Not synced yet', states: ['unsynced'] },
-  { id: 'paused', label: 'Auto-sync off', states: ['paused'] },
-  { id: 'empty', label: 'No snapshot yet', states: ['empty'] }
+  {
+    id: 'all',
+    get label() {
+      return tt('library.filter.all');
+    },
+    states: null
+  },
+  {
+    id: 'attention',
+    get label() {
+      return tt('library.filter.attention');
+    },
+    states: ['missing', 'conflict', 'error']
+  },
+  {
+    id: 'syncing',
+    get label() {
+      return tt('library.filter.syncing');
+    },
+    states: ['syncing']
+  },
+  {
+    id: 'synced',
+    get label() {
+      return tt('library.filter.synced');
+    },
+    states: ['synced']
+  },
+  {
+    id: 'unsynced',
+    get label() {
+      return tt('library.filter.unsynced');
+    },
+    states: ['unsynced']
+  },
+  {
+    id: 'paused',
+    get label() {
+      return tt('library.filter.paused');
+    },
+    states: ['paused']
+  },
+  {
+    id: 'empty',
+    get label() {
+      return tt('library.filter.empty');
+    },
+    states: ['empty']
+  }
 ];
 
 const byId = Object.fromEntries(STATUS_FILTERS.map((f) => [f.id, f]));

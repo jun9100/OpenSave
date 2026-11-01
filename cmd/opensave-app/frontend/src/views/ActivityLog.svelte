@@ -7,6 +7,7 @@
   import X from 'lucide-svelte/icons/x';
   import { logEntries, gameList, navigate, toast } from '../lib/stores.js';
   import { asText, feedByDay, filterEntries, linkGames } from '../lib/activity.js';
+  import { t, tt, segments } from '../lib/i18n.js';
   import SearchInput from '../components/ui/SearchInput.svelte';
   import FilterTabs from '../components/ui/FilterTabs.svelte';
   import Timeline from './activity/Timeline.svelte';
@@ -36,22 +37,24 @@
   let query = '';
   $: problemCount = filterEntries($logEntries, { show: 'problems' }).length;
   $: shown = filterEntries($logEntries, { show, query });
-  $: groups = feedByDay(shown, now);
+  $: groups = ($t, feedByDay(shown, now));
 
   let now = new Date();
   const tick = setInterval(() => (now = new Date()), 60_000);
   onDestroy(() => clearInterval(tick));
 
   const icons = { success: Check, info: Dot, warn: Exclamation, error: X };
+  // The levels said in words to a screen reader; the technical log keeps them as logged.
+  const LEVELS = ['success', 'info', 'warn', 'error'];
   const fmtClock = (t) => new Date(t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const fmtStamp = (t) => new Date(t).toLocaleTimeString();
 
   async function copyShown() {
     try {
       await navigator.clipboard.writeText(asText(shown));
-      toast(`Copied ${shown.length} ${shown.length === 1 ? 'entry' : 'entries'}`, 'success');
+      toast(tt('activity.copied', { n: shown.length }), 'success');
     } catch (e) {
-      toast(`Could not copy: ${e.message}`, 'error');
+      toast(tt('activity.copyFailed', { error: e.message }), 'error');
     }
   }
 
@@ -68,26 +71,26 @@
 
 <div class="head">
   <div class="title-row">
-    <h2 class="page-title">Activity</h2>
-    <div class="segmented" role="tablist" aria-label="Activity view" use:slidingIndicator={{ mode: 'fill' }}>
-      <button role="tab" aria-selected={view === 'timeline'} class:on={view === 'timeline'} on:click={() => (view = 'timeline')}>Timeline</button>
-      <button role="tab" aria-selected={view === 'log'} class:on={view === 'log'} on:click={() => (view = 'log')}>Log</button>
+    <h2 class="page-title">{$t('activity.title')}</h2>
+    <div class="segmented" role="tablist" aria-label={$t('activity.viewLabel')} use:slidingIndicator={{ mode: 'fill' }}>
+      <button role="tab" aria-selected={view === 'timeline'} class:on={view === 'timeline'} on:click={() => (view = 'timeline')}>{$t('activity.view.timeline')}</button>
+      <button role="tab" aria-selected={view === 'log'} class:on={view === 'log'} on:click={() => (view = 'log')}>{$t('activity.view.log')}</button>
     </div>
   </div>
   {#if view === 'log'}
   <div class="controls">
     <FilterTabs
-      options={[['highlights', 'Highlights'], ['all', 'Everything'], ['problems', 'Problems']]}
+      options={[['highlights', $t('activity.show.highlights')], ['all', $t('activity.show.all')], ['problems', $t('activity.show.problems')]]}
       counts={{ problems: problemCount }}
       bind:value={show}
     />
-    <SearchInput placeholder="Search activity…" bind:value={query} />
-    <label class="toggle" title="Every entry exactly as logged, oldest first — what a bug report wants">
+    <SearchInput placeholder={$t('activity.searchPlaceholder')} bind:value={query} />
+    <label class="toggle" title={$t('activity.technicalHint')}>
       <input type="checkbox" bind:checked={technical} />
-      Technical log
+      {$t('activity.technical')}
     </label>
-    <button class="btn small" disabled={shown.length === 0} on:click={copyShown} title="Copy what is shown, for a bug report">
-      Copy
+    <button class="btn small" disabled={shown.length === 0} on:click={copyShown} title={$t('activity.copyHint')}>
+      {$t('activity.copy')}
     </button>
   </div>
   {/if}
@@ -96,10 +99,10 @@
 {#if view === 'timeline'}
   <Timeline />
 {:else if $logEntries.length === 0}
-  <div class="card"><div class="empty"><h3>Nothing yet</h3><p>Syncs, snapshots and anything that needs your attention show up here.</p></div></div>
+  <div class="card"><div class="empty"><h3>{$t('activity.emptyTitle')}</h3><p>{$t('activity.emptyBody')}</p></div></div>
 {:else if shown.length === 0}
-  <div class="card"><div class="empty"><h3>Nothing matches</h3><p>
-        {#if query}Try another search.{:else if show === 'problems'}No warnings or errors — all quiet.{:else}Nothing but routine so far — <button class="linklike" on:click={() => (show = 'all')}>show everything</button>.{/if}
+  <div class="card"><div class="empty"><h3>{$t('activity.noMatchTitle')}</h3><p>
+        {#if query}{$t('activity.tryAnotherSearch')}{:else if show === 'problems'}{$t('activity.noProblems')}{:else}{#each segments($t('activity.onlyRoutine'), { showAll: $t('activity.showEverything') }, ['showAll']) as part}{#if part.bold}<button class="linklike" on:click={() => (show = 'all')}>{part.text}</button>{:else}{part.text}{/if}{/each}{/if}
       </p></div></div>
 {:else if technical}
   <div class="card log" use:autoscroll={shown.length}>
@@ -118,7 +121,7 @@
       <div class="card entries">
         {#each group.entries as entry}
           <div class="entry lvl-{entry.level}">
-            <span class="icon" aria-label={entry.level}><svelte:component this={icons[entry.level] ?? Dot} size={entry.level === 'info' ? 18 : 11} strokeWidth={entry.level === 'info' ? 3 : 3.2} /></span>
+            <span class="icon" aria-label={LEVELS.includes(entry.level) ? $t(`activity.level.${entry.level}`) : entry.level}><svelte:component this={icons[entry.level] ?? Dot} size={entry.level === 'info' ? 18 : 11} strokeWidth={entry.level === 'info' ? 3 : 3.2} /></span>
             <span class="msg">
               {#each linkGames(entry.message, $gameList) as part}
                 {#if part.gameId}

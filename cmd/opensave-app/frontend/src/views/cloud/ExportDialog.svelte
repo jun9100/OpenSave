@@ -5,6 +5,7 @@
   import { createEventDispatcher, onDestroy } from 'svelte';
   import { toast, backupProgressEvent } from '../../lib/stores.js';
   import { api, native, coverURL } from '../../lib/api.js';
+  import { t, tt, trError } from '../../lib/i18n.js';
   import Modal from '../../components/ui/Modal.svelte';
   import Package from 'lucide-svelte/icons/package';
   import ModalFoot from '../../components/ui/ModalFoot.svelte';
@@ -58,7 +59,7 @@
       for (const g of tracked) sel[g.id] = true; // tracked pre-selected
       items = [...tracked, ...detected];
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
       close();
     }
   }
@@ -75,7 +76,7 @@
   async function run() {
     const chosen = (items ?? []).filter((it) => sel[it.id]);
     if (!chosen.length) return;
-    const target = await native.selectSaveFile('Export selected saves', 'opensave-saves.sscb');
+    const target = await native.selectSaveFile(tt('cloud.export.pickTitle'), 'opensave-saves.sscb');
     if (!target) return;
     exporting = true;
     try {
@@ -88,44 +89,47 @@
       // snapshot; say so, since that is not the save as it stands.
       const fromSnap = res.fromSnapshot?.length ?? 0;
       toast(
-        `Exported ${res.exported} save${res.exported === 1 ? '' : 's'}` +
-          (fromSnap ? ` — ${fromSnap === 1 ? res.fromSnapshot[0].name : `${fromSnap} games`} from the newest snapshot, as the save folder was empty or missing` : '') +
-          (skipped ? `, ${skipped} skipped — see Activity` : ''),
+        tt('cloud.export.exported', { n: res.exported }) +
+          (fromSnap
+            ? tt('cloud.export.fromSnapshot', {
+                games: fromSnap === 1 ? res.fromSnapshot[0].name : tt('cloud.export.gamesCount', { n: fromSnap })
+              })
+            : '') +
+          (skipped ? tt('cloud.export.skipped', { skipped }) : ''),
         skipped ? 'info' : 'success'
       );
       close();
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       exporting = false;
     }
   }
 </script>
 
-<Modal title="Export saves" icon={Package} onClose={close}>
+<Modal title={$t('cloud.export.title')} icon={Package} onClose={close}>
   <svelte:fragment slot="sub">
     {#if !items}
-      Looking for saves on this machine…
+      {$t('cloud.export.looking')}
     {:else}
-      {count} of {items.length} selected — each game's current save is exported
-      along with where it belongs
+      {$t('cloud.export.selectedSummary', { count, total: items.length })}
     {/if}
   </svelte:fragment>
 
   {#if !items}
-    <ModalLoading>Listing tracked games and scanning for saves…</ModalLoading>
+    <ModalLoading>{$t('cloud.export.listing')}</ModalLoading>
   {:else}
     <div class="toolbar">
       <button class="btn small" on:click={() => setAll(!allSelected)}>
-        {allSelected ? 'Unselect all' : 'Select all'}
+        {allSelected ? $t('cloud.export.unselectAll') : $t('cloud.export.selectAll')}
       </button>
-      <button class="btn small" on:click={() => { setAll(false); setAll(true, true); }}>Tracked only</button>
+      <button class="btn small" on:click={() => { setAll(false); setAll(true, true); }}>{$t('cloud.export.trackedOnly')}</button>
     </div>
     <div class="list">
       {#if items.length === 0}
         <div class="empty-state">
           <div class="empty-icon"><Package size={36} strokeWidth={1.5} /></div>
-          <p>No saves found to export.</p>
+          <p>{$t('cloud.export.noSaves')}</p>
         </div>
       {:else}
         <div class="grid">
@@ -135,7 +139,7 @@
               title={it.savePath}
               src={it.cover}
               selected={!!sel[it.id]}
-              badge={it.tracked ? 'Tracked' : 'Detected'}
+              badge={it.tracked ? $t('cloud.export.badgeTracked') : $t('cloud.export.badgeDetected')}
               on:activate={() => (sel[it.id] = !sel[it.id])}
             />
           {/each}
@@ -144,16 +148,16 @@
     </div>
     {#if exporting && prog}
       <ProgressBar done={prog.done} total={prog.total}>
-        Exporting {Math.min(prog.done + 1, prog.total)} of {prog.total}
+        {$t('cloud.export.progress', { done: Math.min(prog.done + 1, prog.total), total: prog.total })}
         {#if prog.current}&nbsp;— <code>{prog.current}</code>{/if}
       </ProgressBar>
     {/if}
     <ModalFoot>
-      <span class="quiet">Detected saves export fine without being tracked.</span>
+      <span class="quiet">{$t('cloud.export.footHint')}</span>
       <div class="actions">
-        <button class="btn" on:click={close}>Cancel</button>
+        <button class="btn" on:click={close}>{$t('common.cancel')}</button>
         <button class="btn primary" disabled={exporting || count === 0} on:click={run}>
-          {exporting ? 'Exporting…' : `Export ${count} save${count === 1 ? '' : 's'}`}
+          {exporting ? $t('cloud.export.exporting') : $t('cloud.export.exportCount', { n: count })}
         </button>
       </div>
     </ModalFoot>

@@ -29,23 +29,23 @@ type trayFacts struct {
 func trayStatus(f trayFacts) string {
 	switch {
 	case f.Conflicts == 1:
-		return "1 game needs a decision"
+		return T("1 game needs a decision")
 	case f.Conflicts > 1:
-		return fmt.Sprintf("%d games need a decision", f.Conflicts)
+		return fmt.Sprintf(T("%d games need a decision"), f.Conflicts)
 	case f.Pause.Paused && f.Pause.UntilRestart:
-		return "Syncing paused until you resume"
+		return T("Syncing paused until you resume")
 	case f.Pause.Paused:
-		return "Syncing paused · " + minutesLeft(f.Pause.RemainingSeconds)
+		return fmt.Sprintf(T("Syncing paused · %s"), minutesLeft(f.Pause.RemainingSeconds))
 	case len(f.Syncing) == 1:
-		return "Syncing " + f.Syncing[0] + "…"
+		return fmt.Sprintf(T("Syncing %s…"), f.Syncing[0])
 	case len(f.Syncing) > 1:
-		return fmt.Sprintf("Syncing %d games…", len(f.Syncing))
+		return fmt.Sprintf(T("Syncing %d games…"), len(f.Syncing))
 	case f.Games == 0:
-		return "No games tracked yet"
+		return T("No games tracked yet")
 	case f.Games == 1:
-		return "Watching 1 game"
+		return T("Watching 1 game")
 	default:
-		return fmt.Sprintf("Watching %d games", f.Games)
+		return fmt.Sprintf(T("Watching %d games"), f.Games)
 	}
 }
 
@@ -53,13 +53,13 @@ func minutesLeft(seconds int64) string {
 	m := (time.Duration(seconds)*time.Second + time.Minute - 1) / time.Minute
 	switch {
 	case m >= 60 && m%60 == 0:
-		return fmt.Sprintf("%dh left", m/60)
+		return fmt.Sprintf(T("%dh left"), m/60)
 	case m >= 60:
-		return fmt.Sprintf("%dh %dm left", m/60, m%60)
+		return fmt.Sprintf(T("%dh %dm left"), m/60, m%60)
 	case m <= 1:
-		return "under a minute left"
+		return T("under a minute left")
 	default:
-		return fmt.Sprintf("%dm left", m)
+		return fmt.Sprintf(T("%dm left"), m)
 	}
 }
 

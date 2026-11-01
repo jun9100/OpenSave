@@ -1,4 +1,6 @@
 <script>
+  import { t } from '../lib/i18n.js';
+
   // Renders parsed changelog releases. The changelog is authored as markdown
   // for GitHub, so showing the file verbatim meant users read literal "##"
   // and "**" markers. Parsing happens in Go; this only lays it out.
@@ -72,7 +74,7 @@
       {/each}
     </section>
   {:else}
-    <p class="empty">No release notes available.</p>
+    <p class="empty">{$t('changelog.noReleaseNotes')}</p>
   {/each}
 </div>
 

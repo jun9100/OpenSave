@@ -12,6 +12,7 @@
   import { newGames, navigate, toast } from '../lib/stores.js';
   import { notifyPrefs } from '../lib/notifyprefs.js';
   import { api } from '../lib/api.js';
+  import { t, trError, segments } from '../lib/i18n.js';
   import Gamepad2 from 'lucide-svelte/icons/gamepad-2';
 
   let busy = false;
@@ -26,7 +27,7 @@
     try {
       await api.post('/api/presets/new/dismiss', {});
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy = false;
     }
@@ -38,10 +39,10 @@
     await dismiss();
   }
 
-  const list = (items, rest) => {
-    const all = rest > 0 ? [...items, `${rest} more`] : items;
+  const list = (items, rest, tr) => {
+    const all = rest > 0 ? [...items, tr('newGames.nMore', { count: rest })] : items;
     if (all.length === 1) return all[0];
-    return all.slice(0, -1).join(', ') + ' and ' + all[all.length - 1];
+    return tr('newGames.listJoin', { head: all.slice(0, -1).join(tr('newGames.listSeparator')), last: all[all.length - 1] });
   };
 </script>
 
@@ -51,18 +52,18 @@
     <div class="new-body">
       <div class="new-title">
         {#if names.length === 1}
-          <strong>{names[0]}</strong> has saves OpenSave isn't keeping yet
+          {#each segments($t('newGames.bannerOne'), { name: names[0] }, ['name']) as seg}{#if seg.bold}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         {:else}
-          <strong>{names.length} games</strong> have saves OpenSave isn't keeping yet
+          {#each segments($t('newGames.bannerMany'), { games: $t('newGames.gameCount', { n: names.length }) }, ['games']) as seg}{#if seg.bold}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         {/if}
       </div>
       <div class="new-sub">
-        {#if names.length > 1}{list(shown, more)} · {/if}nothing is tracked until you choose it
+        {#if names.length > 1}{$t('newGames.subWithList', { list: list(shown, more, $t) })}{:else}{$t('newGames.nothingTracked')}{/if}
       </div>
     </div>
     <div class="new-actions">
-      <button class="btn small" disabled={busy} on:click={dismiss}>Dismiss</button>
-      <button class="btn small primary" disabled={busy} on:click={review}>Review</button>
+      <button class="btn small" disabled={busy} on:click={dismiss}>{$t('newGames.dismiss')}</button>
+      <button class="btn small primary" disabled={busy} on:click={review}>{$t('newGames.review')}</button>
     </div>
   </div>
 {/if}

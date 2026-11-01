@@ -16,7 +16,7 @@
 
 *A complete Go rewrite of the original Node.js/Electron app: one small native binary, no runtime to install, and wire-compatible with existing peers.*
 
-[Install](#install) · [Quick start](#quick-start) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [CLI](#command-line) · [Self-host the relay](#self-hosting-the-relay) · [FAQ](#faq) · [**Discord**](https://discord.gg/hvBv92DZvn)
+**[简体中文说明 / Chinese guide](USER_GUIDE.zh-CN.md)** · [Install](#install) · [Quick start](#quick-start) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [CLI](#command-line) · [Self-host the relay](#self-hosting-the-relay) · [FAQ](#faq) · [**Discord**](https://discord.gg/hvBv92DZvn)
 
 <br>
 
@@ -153,6 +153,10 @@ for immutable systems like stock SteamOS.
 4. **Play.** When a save changes, OpenSave snapshots it and syncs it to every paired device. There's nothing else to do.
 
 Need to undo something? Open a game's **history** and roll back a snapshot — the whole save or a single file.
+
+Many games at once? Press **Select** in the library (or Ctrl-click a tile), pick games — all of them, the filtered results, or by hand — and snapshot, upload to the cloud, restore the latest snapshot, turn sync on or off, or stop tracking them in one go. Each batch shows its progress and ends with what succeeded, what failed and why, and what was skipped; restoring and stopping tracking ask first.
+
+The app is in English and Simplified Chinese, following the system language; switch under **Settings → General → Appearance → Language**. The in-app **Help** page covers all of this.
 
 **New to this?** The [Getting Started guide](GETTING_STARTED.md) walks through the whole thing from a fresh install, in plain language, with what to do when something looks wrong.
 
@@ -508,6 +512,7 @@ Issues and pull requests are welcome. Please run `go test ./... -timeout 2700s` 
 
 - [Getting Started](GETTING_STARTED.md) — start here if OpenSave is new to you. The whole thing from a fresh install, in plain language
 - [User Guide](USER_GUIDE.md) — the reference: every feature, what each setting does, troubleshooting
+- [使用手册（简体中文）](USER_GUIDE.zh-CN.md) — 安装、添加游戏与模拟器、快照与恢复、云端备份（WebDAV 与 game-save）、批量操作
 - [Command line](docs/CLI.md) — the CLI end to end: the daemon model, which machine each command runs on, task-by-task sequences, scripting
 - [Running your own relay](docs/RELAY.md) — self-hosting, TLS, and the reverse-proxy settings WebSockets need
 - [Changelog](CHANGELOG.md) — release notes

@@ -8,7 +8,7 @@
   import { api, coverURL } from '../../lib/api.js';
   import Modal from '../../components/ui/Modal.svelte';
   import { withUndo, hiddenKeys } from '../../lib/undo.js';
-  import { t } from '../../lib/i18n.js';
+  import { t, trError } from '../../lib/i18n.js';
   import Chevron from '../../components/ui/Chevron.svelte';
   import ScanSearch from 'lucide-svelte/icons/scan-search';
   import Gamepad2 from 'lucide-svelte/icons/gamepad-2';
@@ -66,7 +66,7 @@
       fillMissingAppIds(results);
       scanResults = results;
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       scanning = false;
     }
@@ -208,7 +208,7 @@
             path: e.savePath
           });
         } catch (err) {
-          failed.push(`${e.savePath}: ${err.message}`);
+          failed.push(`${e.savePath}: ${trError(err.message)}`);
         }
       }
     }
@@ -238,7 +238,7 @@
         toast($t('common.nowTracking', { name: primary.name }), 'success');
       }
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     }
   }
 
@@ -260,7 +260,7 @@
         locations += extras.length - failed.length;
         problems.push(...failed);
       } catch (e) {
-        problems.push(`${primary.name}: ${e.message}`);
+        problems.push(`${primary.name}: ${trError(e.message)}`);
       }
     }
 
@@ -293,7 +293,7 @@
       else toast($t('home.scan.trackedAcrossFolders', { name: primary.name, n: items.length }), 'success');
       if (filteredResults.length === 0) close();
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     }
   }
 
@@ -322,13 +322,13 @@
         <FilterTabs options={typeTabs} counts={scanCounts} bind:value={scanType} />
         {#if scanType === 'emulator'}
           <label class="save-type">
-            <span>Emulator</span>
+            <span>{$t('home.scan.type.emulator')}</span>
             <select bind:value={saveType}>
               <option value="switch">Switch</option>
               <option value="emulator-eden">Eden</option>
               <option value="emulator-yuzu">Yuzu / Suyu</option>
               <option value="emulator-ryujinx">Ryujinx</option>
-              <option value="emulator-generic">Other emulator</option>
+              <option value="emulator-generic">{$t('home.saveType.otherEmulator')}</option>
             </select>
           </label>
         {/if}

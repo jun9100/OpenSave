@@ -41,6 +41,10 @@ func main() {
 		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 	}
 
+	// The tray and the native dialogs speak the system's language until the
+	// window says which one it settled on (lang.go).
+	initUILanguage()
+
 	// After a self-update this waits for the replaced process to exit (and
 	// removes its leftover binary) before claiming the single-instance lock.
 	cleanupReplacedBinary()

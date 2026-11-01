@@ -13,6 +13,7 @@
   import ImportDialog from './cloud/ImportDialog.svelte';
   import Skeleton from '../components/ui/Skeleton.svelte';
   import Cloud from 'lucide-svelte/icons/cloud';
+  import { t, tt, trError, segments } from '../lib/i18n.js';
 
   let config = null;
   // The provider and its details as last saved, to tell whether the ones on
@@ -46,7 +47,7 @@
       config = next;
       autoPull = !!s.cloudAutoPull;
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     }
   }
 
@@ -61,9 +62,9 @@
     try {
       settings.set(await api.post('/api/settings', { cloudSync: config }));
       savedConfig = structuredClone(config);
-      toast('Cloud provider saved', 'success');
+      toast(tt('cloud.backup.providerSaved'), 'success');
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy.set(false);
     }
@@ -82,7 +83,7 @@
       } catch (e) {
         undo();
         switchState = null;
-        toast(`Couldn't save that: ${e.message}`, 'error');
+        toast(tt('cloud.backup.couldntSave', { error: trError(e.message) }), 'error');
       }
     });
   }
@@ -104,13 +105,13 @@
   let importSource = '';
 
   async function pickImportFile() {
-    const src = await native.selectBackupFile('Select an .sscb backup to import');
+    const src = await native.selectBackupFile(tt('cloud.backup.selectImportFile'));
     if (src) importSource = src;
   }
 </script>
 
 <div class="head">
-  <h2 class="page-title">Cloud Backup</h2>
+  <h2 class="page-title">{$t('cloud.backup.title')}</h2>
 </div>
 
 {#if !config}
@@ -130,19 +131,16 @@
 
     {#if config.provider === 'google_drive'}
       <div class="field folder-id">
-        <label for="cb-driveid">Drive folder ID (optional)</label>
-        <input id="cb-driveid" bind:value={config.folderId} placeholder="Leave blank to use the OpenSave folder it creates" />
-        <span class="hint">
-          Only to keep snapshots in a particular existing Drive folder — the ID is the long code in
-          the folder's address.
-        </span>
+        <label for="cb-driveid">{$t('cloud.backup.driveFolderId')}</label>
+        <input id="cb-driveid" bind:value={config.folderId} placeholder={$t('cloud.backup.driveFolderIdPlaceholder')} />
+        <span class="hint">{$t('cloud.backup.driveFolderIdHint')}</span>
       </div>
     {/if}
 
     {#if providerDirty}
       <div class="actions">
-        <span class="unsaved">Not saved yet — backups still go to the provider saved before.</span>
-        <button class="btn primary" disabled={$busy} on:click={save}>Save provider</button>
+        <span class="unsaved">{$t('cloud.backup.notSavedYet')}</span>
+        <button class="btn primary" disabled={$busy} on:click={save}>{$t('cloud.backup.saveProvider')}</button>
       </div>
     {/if}
 
@@ -151,56 +149,45 @@
          it goes. These save as they are switched. -->
     <div class="auto">
       <h4>
-        Automatically
+        {$t('cloud.backup.automatically')}
         <span class="switch-state" aria-live="polite">
-          {#if switchState === 'saving'}Saving…{:else if switchState === 'saved'}Saved{/if}
+          {#if switchState === 'saving'}{$t('cloud.backup.saving')}{:else if switchState === 'saved'}{$t('cloud.backup.saved')}{/if}
         </span>
       </h4>
       <label class="check">
         <input type="checkbox" checked={config.enabled} on:change={(e) => setBackupAll(e.currentTarget.checked)} />
-        Back up every new snapshot to the cloud
+        {$t('cloud.backup.backUpEvery')}
       </label>
       <p class="hint">
-        Uploads begin once a provider is set up above. Snapshots are kept in an
-        <strong>OpenSave</strong> folder there.
+        {#each segments($t('cloud.backup.backUpEveryHint'), { folder: 'OpenSave' }, ['folder']) as part}{#if part.bold}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each}
       </p>
       <label class="check">
         <input type="checkbox" checked={autoPull} on:change={(e) => setAutoPull(e.currentTarget.checked)} />
-        Bring newer saves from my other devices
+        {$t('cloud.backup.autoPull')}
       </label>
-      <p class="hint">
-        When another device's backup carries on from the save this one has, and this one hasn't
-        changed since, it's put in place without asking — the way syncing between your devices
-        works. Anything else is asked about first, and this device's save is kept as a snapshot
-        either way.
-      </p>
+      <p class="hint">{$t('cloud.backup.autoPullHint')}</p>
     </div>
 
   </div>
 
-  <h3 class="section">Cloud snapshots</h3>
+  <h3 class="section">{$t('cloud.backup.cloudSnapshots')}</h3>
   <div class="card entry">
     <div>
-      <h3>Browse your cloud library</h3>
-      <p class="quiet">
-        Every game with snapshots in the cloud, as cover-art tiles — upload, restore, or delete per game.
-      </p>
+      <h3>{$t('cloud.backup.browseLibrary')}</h3>
+      <p class="quiet">{$t('cloud.backup.browseLibraryHint')}</p>
     </div>
-    <button class="btn primary" on:click={() => (browserOpen = true)}><Cloud size={16} />Browse cloud</button>
+    <button class="btn primary" on:click={() => (browserOpen = true)}><Cloud size={16} />{$t('cloud.backup.browseCloud')}</button>
   </div>
 
-  <h3 class="section">Backup file (.sscb)</h3>
+  <h3 class="section">{$t('cloud.backup.backupFile')}</h3>
   <div class="card entry">
     <div>
-      <h3>Export / import saves</h3>
-      <p class="quiet">
-        Pick any saves on this machine — tracked or just detected — and export them with their
-        locations into one file. Import adds them to snapshots, or fully restores them onto disk.
-      </p>
+      <h3>{$t('cloud.backup.exportImport')}</h3>
+      <p class="quiet">{$t('cloud.backup.exportImportHint')}</p>
     </div>
     <div class="entry-actions">
-      <button class="btn" disabled={$busy} on:click={pickImportFile}>Import .sscb</button>
-      <button class="btn primary" disabled={$busy} on:click={() => (exportOpen = true)}>Export saves…</button>
+      <button class="btn" disabled={$busy} on:click={pickImportFile}>{$t('cloud.backup.importSscb')}</button>
+      <button class="btn primary" disabled={$busy} on:click={() => (exportOpen = true)}>{$t('cloud.backup.exportSaves')}</button>
     </div>
   </div>
 {/if}

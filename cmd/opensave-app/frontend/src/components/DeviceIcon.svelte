@@ -3,6 +3,7 @@
   import Gamepad2 from 'lucide-svelte/icons/gamepad-2';
   import Monitor from 'lucide-svelte/icons/monitor';
   import { isHandheld } from '../lib/devices.js';
+  import { t } from '../lib/i18n.js';
 
   /** The device's reported type. */
   export let type = '';
@@ -10,7 +11,7 @@
   $: handheld = isHandheld(type);
 </script>
 
-<span class="device-icon" title={handheld ? 'Handheld' : 'Computer'}>
+<span class="device-icon" title={handheld ? $t('ui.device.handheld') : $t('ui.device.computer')}>
   <svelte:component this={handheld ? Gamepad2 : Monitor} size={19} />
 </span>
 

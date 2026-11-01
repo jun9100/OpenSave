@@ -3,6 +3,7 @@
   import { wsConnected, syncActivity, wanRoom, peers, showAbout, syncPause } from '../lib/stores.js';
   import { PAUSE_CHOICES, pauseSync, resumeSync, pauseShort, pauseLength } from '../lib/syncpause.js';
   import { openMenu } from '../lib/contextmenu.js';
+  import { t } from '../lib/i18n.js';
   import Pause from 'lucide-svelte/icons/pause';
   import Play from 'lucide-svelte/icons/play';
   import ArrowDownUp from 'lucide-svelte/icons/arrow-down-up';
@@ -34,7 +35,7 @@
   const pauseMenu = (e) =>
     openMenu(
       e,
-      PAUSE_CHOICES.map((c) => ({ label: `Pause syncing ${c.label}`, icon: Pause, run: () => pauseSync(c.minutes) }))
+      PAUSE_CHOICES.map((c) => ({ label: $t('statusBar.pauseFor', { length: c.label }), icon: Pause, run: () => pauseSync(c.minutes) }))
     );
 
   $: running = Object.entries($syncActivity).filter(([, s]) => s.state === 'running');
@@ -45,8 +46,8 @@
   $: lost = connectedOnce && !$wsConnected;
   $: onlinePeers = Object.values($peers).filter((p) => p.status === 'online').length;
   $: statusText = running.length
-    ? `Syncing ${running.length} game${running.length > 1 ? 's' : ''}…`
-    : 'No syncs in progress';
+    ? $t('statusBar.syncingGames', { n: running.length })
+    : $t('statusBar.noSyncs');
 </script>
 
 {#if $showAbout}
@@ -62,38 +63,38 @@
 <footer>
   <div class="left">
     {#if lost}
-      <span class="offline" title="The app has lost touch with its background service and is reconnecting">Reconnecting…</span>
+      <span class="offline" title={$t('statusBar.reconnectingTitle')}>{$t('statusBar.reconnecting')}</span>
     {:else if $syncPause.paused}
-      <span class="paused" title="Syncing is paused {pauseLength($syncPause, now)}. Snapshots are still taken.">
-        Syncing paused · {pauseShort($syncPause, now)}
+      <span class="paused" title={$t('statusBar.pausedTitle', { length: pauseLength($syncPause, now) })}>
+        {$t('statusBar.paused', { length: pauseShort($syncPause, now) })}
       </span>
-      <button class="bar-btn" on:click={resumeSync} title="Resume syncing and catch up"><Play size={11} />Resume</button>
+      <button class="bar-btn" on:click={resumeSync} title={$t('statusBar.resumeTitle')}><Play size={11} />{$t('statusBar.resume')}</button>
     {:else}
       <span>{statusText}</span>
       {#if running.length && running[0][1].percentage != null}
         <span class="pct">{running[0][1].percentage}%</span>
       {/if}
-      <button class="bar-btn icon" on:click={pauseMenu} title="Pause syncing" aria-label="Pause syncing"><Pause size={11} /></button>
+      <button class="bar-btn icon" on:click={pauseMenu} title={$t('statusBar.pause')} aria-label={$t('statusBar.pause')}><Pause size={11} /></button>
     {/if}
   </div>
   <div class="right">
     {#if $wanRoom?.connected}
-      <span class="wan">relay: {$wanRoom.roomCode}</span>
+      <span class="wan">{$t('statusBar.relay', { room: $wanRoom.roomCode })}</span>
     {/if}
-    <span>{onlinePeers} {onlinePeers === 1 ? 'device' : 'devices'} online</span>
+    <span>{$t('statusBar.devicesOnline', { n: onlinePeers })}</span>
     <button
       class="bar-btn"
       class:on={transfersOpen}
       on:click={() => (transfersOpen = !transfersOpen)}
-      title="What is moving between your devices"
+      title={$t('statusBar.transfersTitle')}
       aria-expanded={transfersOpen}
     >
-      <ArrowDownUp size={11} />Transfers{#if running.length}<span class="count">{running.length}</span>{/if}
+      <ArrowDownUp size={11} />{$t('statusBar.transfers')}{#if running.length}<span class="count">{running.length}</span>{/if}
     </button>
-    <button class="kbd-hint" on:click={() => paletteOpen.set(true)} title="Jump to a game, a page or an action">
+    <button class="kbd-hint" on:click={() => paletteOpen.set(true)} title={$t('statusBar.paletteTitle')}>
       <kbd>{modKey} K</kbd>
     </button>
-    <button class="ver" on:click={() => showAbout.set(true)} title="About OpenSave">OpenSave v{version}</button>
+    <button class="ver" on:click={() => showAbout.set(true)} title={$t('statusBar.aboutTitle')}>OpenSave v{version}</button>
   </div>
 </footer>
 

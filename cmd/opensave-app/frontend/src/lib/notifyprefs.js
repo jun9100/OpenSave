@@ -15,14 +15,16 @@
 // at their most unwelcome — the window jumping in front of a game can take
 // focus out of it. The banner or dialog is there when you come back.
 import { writable, get } from 'svelte/store';
+import { tt } from './i18n.js';
 
+// Labels are read when shown, so they are in the language chosen then.
 export const NOTIFY_EVENTS = {
-  pairing: { label: 'A device asks to pair', kind: 'attention' },
-  conflicts: { label: 'Two saves conflict', kind: 'attention' },
-  emptied: { label: 'Every save file of a game is deleted here', kind: 'attention' },
-  arrivals: { label: 'A save arrives from another device', kind: 'message' },
-  cloudPulled: { label: 'A newer save is brought from the cloud', kind: 'message' },
-  newGames: { label: 'A newly installed game is found', kind: 'message' }
+  pairing: { get label() { return tt('notifyPrefs.event.pairing'); }, kind: 'attention' },
+  conflicts: { get label() { return tt('notifyPrefs.event.conflicts'); }, kind: 'attention' },
+  emptied: { get label() { return tt('notifyPrefs.event.emptied'); }, kind: 'attention' },
+  arrivals: { get label() { return tt('notifyPrefs.event.arrivals'); }, kind: 'message' },
+  cloudPulled: { get label() { return tt('notifyPrefs.event.cloudPulled'); }, kind: 'message' },
+  newGames: { get label() { return tt('notifyPrefs.event.newGames'); }, kind: 'message' }
 };
 
 export const DEFAULT_NOTIFY = Object.freeze({

@@ -21,6 +21,8 @@
   import { slidingIndicator } from '../lib/motion.js';
   import { view, navigate, settings, stateLoaded, gameList, conflictCount, pairingRequests, syncActivity } from '../lib/stores.js';
   import { gameCover } from '../lib/api.js';
+  import { t } from '../lib/i18n.js';
+  import { folderHints } from '../lib/folderhint.js';
   import CoverImage from './CoverImage.svelte';
   import { visibleGames } from '../lib/gameactions.js';
   import { openGameMenu } from '../lib/contextmenu.js';
@@ -30,6 +32,7 @@
   import Activity from 'lucide-svelte/icons/activity';
   import Settings from 'lucide-svelte/icons/settings';
   import ScrollText from 'lucide-svelte/icons/scroll-text';
+  import CircleHelp from 'lucide-svelte/icons/circle-help';
   import Plus from 'lucide-svelte/icons/plus';
   import Search from 'lucide-svelte/icons/search';
   import Gamepad2 from 'lucide-svelte/icons/gamepad-2';
@@ -37,15 +40,18 @@
   let filter = '';
 
   const nav = [
-    { id: 'home', label: 'Home', icon: House },
-    { id: 'devices', label: 'Devices', icon: MonitorSmartphone },
-    { id: 'cloud', label: 'Cloud Backup', icon: Cloud },
-    { id: 'activity', label: 'Activity', icon: Activity },
-    { id: 'settings', label: 'Settings', icon: Settings },
-    { id: 'changelog', label: 'Changelog', icon: ScrollText }
+    { id: 'home', labelKey: 'nav.home', icon: House },
+    { id: 'devices', labelKey: 'nav.devices', icon: MonitorSmartphone },
+    { id: 'cloud', labelKey: 'nav.cloud', icon: Cloud },
+    { id: 'activity', labelKey: 'nav.activity', icon: Activity },
+    { id: 'settings', labelKey: 'nav.settings', icon: Settings },
+    { id: 'help', labelKey: 'nav.help', icon: CircleHelp },
+    { id: 'changelog', labelKey: 'nav.changelog', icon: ScrollText }
   ];
 
   $: deviceName = $settings?.deviceName ?? '…';
+  // Same-name games say which folder each is (lib/folderhint.js).
+  $: hints = folderHints($visibleGames);
   $: filteredGames = $visibleGames.filter((g) => g.name.toLowerCase().includes(filter.toLowerCase()));
   $: activeSyncs = Object.values($syncActivity).filter((s) => s.state === 'running').length;
 
@@ -65,7 +71,7 @@
     <div class="avatar">{initials(deviceName)}</div>
     <div class="who">
       <div class="name">{deviceName}</div>
-      <div class="sub">this device</div>
+      <div class="sub">{$t('sidebar.thisDevice')}</div>
     </div>
   </div>
 
@@ -73,7 +79,7 @@
     {#each nav as item}
       <button class:active={$view.name === item.id} on:click={() => navigate(item.id)}>
         <svelte:component this={item.icon} size={17} strokeWidth={1.8} />
-        <span>{item.label}</span>
+        <span>{$t(item.labelKey)}</span>
         {#if badgeFor(item.id)}
           <span class="nav-badge">{badgeFor(item.id)}</span>
         {/if}
@@ -82,13 +88,13 @@
   </nav>
 
   <div class="library-head">
-    <span>MY LIBRARY</span>
-    <button class="add" title="Track a game" aria-label="Track a game" on:click={() => navigate('home', { add: true })}><Plus size={15} /></button>
+    <span>{$t('sidebar.library')}</span>
+    <button class="add" title={$t('home.addGame.title')} aria-label={$t('home.addGame.title')} on:click={() => navigate('home', { add: true })}><Plus size={15} /></button>
   </div>
 
   <label class="filter">
     <Search size={14} />
-    <input placeholder="Filter library" aria-label="Filter library" data-find-fallback bind:value={filter} />
+    <input placeholder={$t('sidebar.filter')} aria-label={$t('sidebar.filter')} data-find-fallback bind:value={filter} />
   </label>
 
   <div class="library">
@@ -120,18 +126,20 @@
             revealed={revealed.has(game.id)}
           />
         </span>
-        <span class="game-name">{game.name}</span>
+        <span class="game-name" title={hints.has(game.id) ? game.savePath : null}
+          >{game.name}{#if hints.has(game.id)}<span class="game-hint">{hints.get(game.id)}</span>{/if}</span
+        >
         {#if game.playingSince}
-          <span class="session" title="In session"><Gamepad2 size={13} /></span>
+          <span class="session" title={$t('sidebar.inSession')}><Gamepad2 size={13} /></span>
         {/if}
         {#if $syncActivity[game.id]?.state === 'running'}
-          <span class="spin" title="Syncing"></span>
+          <span class="spin" title={$t('sidebar.syncing')}></span>
         {/if}
       </button>
     {:else}
       {#if $stateLoaded}
         <div class="library-empty">
-          {$gameList.length === 0 ? 'No games tracked yet' : 'No matches'}
+          {$gameList.length === 0 ? $t('sidebar.noGames') : $t('sidebar.noMatches')}
         </div>
       {/if}
     {/each}
@@ -140,7 +148,7 @@
   {#if activeSyncs > 0}
     <div class="sync-note">
       <span class="spin"></span>
-      {activeSyncs} sync{activeSyncs > 1 ? 's' : ''} in progress
+      {$t('sidebar.syncsInProgress', { n: activeSyncs })}
     </div>
   {/if}
 </aside>
@@ -391,6 +399,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .game-hint {
+    margin-left: 6px;
+    font-size: 0.72em;
+    color: var(--text-faint);
   }
   /* The game being played: its name and a controller, in green. */
   .game.insession .game-name {

@@ -2,17 +2,18 @@
 // what happened to every game's save — syncs with other devices, snapshots,
 // play sessions, restores — said as a person would say it.
 import { snapshotKind, whenLabel } from './snapshots.js';
-import { fmtSize, playLength, plural } from './format.js';
+import { fmtSize, playLength } from './format.js';
+import { tt } from './i18n.js';
 
 /** The filters over the timeline, and the kinds each shows. */
 // A conflict and an emptied save are things that happened to a sync, so they
 // are among the syncs; a filter of their own was nearly always empty, and
 // what is waiting on you now is the bell's to say.
 export const TIMELINE_FILTERS = {
-  all: { label: 'Everything', kinds: null },
-  syncs: { label: 'Syncs', kinds: ['received', 'sent', 'deleted', 'cloud-pulled', 'conflict', 'emptied'] },
-  snapshots: { label: 'Snapshots', kinds: ['snapshot', 'restored'] },
-  play: { label: 'Play', kinds: ['played'] }
+  all: { get label() { return tt('timeline.filter.all'); }, kinds: null },
+  syncs: { get label() { return tt('timeline.filter.syncs'); }, kinds: ['received', 'sent', 'deleted', 'cloud-pulled', 'conflict', 'emptied'] },
+  snapshots: { get label() { return tt('timeline.filter.snapshots'); }, kinds: ['snapshot', 'restored'] },
+  play: { get label() { return tt('timeline.filter.play'); }, kinds: ['played'] }
 };
 
 export function filterItems(items, filter = 'all', gameId = '') {
@@ -25,35 +26,44 @@ export function filterItems(items, filter = 'all', gameId = '') {
  * @returns {{icon: string, title: string, detail: string, tone: 'ok'|'warn'|'muted'}}
  */
 export function describe(item, now = new Date()) {
-  const files = item.files ? plural(item.files, 'file') : 'files';
-  const where = item.detail && item.kind !== 'restored' ? ` ${item.detail}` : '';
+  const files = item.files ? tt('timeline.files', { n: item.files }) : tt('timeline.someFiles');
+  const device = item.device;
+  const where = item.detail && item.kind !== 'restored' ? whereSaid(item.detail) : '';
   switch (item.kind) {
     case 'received':
-      return { icon: 'down', title: `Got ${files} from ${item.device}${where}`, detail: item.bytes ? fmtSize(item.bytes) : '', tone: 'ok' };
+      return { icon: 'down', title: tt('timeline.received', { files, device, where }), detail: item.bytes ? fmtSize(item.bytes) : '', tone: 'ok' };
     case 'sent':
-      return { icon: 'up', title: `${item.device} took ${files} from here`, detail: '', tone: 'ok' };
+      return { icon: 'up', title: tt('timeline.sent', { device, files }), detail: '', tone: 'ok' };
     case 'deleted':
-      return { icon: 'trash', title: `Deleted ${files} as ${item.device} did${where}`, detail: '', tone: 'muted' };
+      return { icon: 'trash', title: tt('timeline.deleted', { files, device, where }), detail: '', tone: 'muted' };
     case 'restored': {
       const [, at] = (item.detail ?? '').split('|');
-      return { icon: 'restore', title: at ? `Put back the snapshot of ${whenLabel(at, now)}` : 'Put back a snapshot', detail: '', tone: 'ok' };
+      return { icon: 'restore', title: at ? tt('timeline.restoredAt', { when: whenLabel(at, now) }) : tt('timeline.restored'), detail: '', tone: 'ok' };
     }
     case 'cloud-pulled':
-      return { icon: 'cloud', title: `Brought ${item.device}'s newer save from the cloud`, detail: '', tone: 'ok' };
+      return { icon: 'cloud', title: tt('timeline.cloudPulled', { device }), detail: '', tone: 'ok' };
     case 'emptied':
-      return { icon: 'alert', title: 'Every save file was deleted here', detail: item.files ? `${files} kept on your other devices until you chose` : '', tone: 'warn' };
+      return { icon: 'alert', title: tt('timeline.emptied'), detail: item.files ? tt('timeline.emptiedDetail', { files }) : '', tone: 'warn' };
     case 'conflict':
-      return { icon: 'alert', title: `Changed here and on ${item.device} at once`, detail: 'Needed a decision', tone: 'warn' };
+      return { icon: 'alert', title: tt('timeline.conflict', { device }), detail: tt('timeline.conflictDetail'), tone: 'warn' };
     case 'played':
-      return { icon: 'play', title: item.durationMs ? `Played for ${playLength(item.durationMs)}` : 'Played', detail: 'On this device', tone: 'ok' };
+      return { icon: 'play', title: item.durationMs ? tt('timeline.playedFor', { length: playLength(item.durationMs) }) : tt('timeline.played'), detail: tt('timeline.onThisDevice'), tone: 'ok' };
     case 'snapshot': {
-      if (item.device) return { icon: 'camera', title: `Kept a copy of ${item.device}'s save`, detail: '', tone: 'muted' };
+      if (item.device) return { icon: 'camera', title: tt('timeline.keptCopy', { device }), detail: '', tone: 'muted' };
       const why = snapshotKind({ comment: item.comment, isSystemAuto: item.auto }, now);
-      return { icon: 'camera', title: why.kind === 'manual' ? `Snapshot: ${why.title}` : why.title, detail: why.kind === 'manual' ? 'Taken by you' : '', tone: 'muted' };
+      return { icon: 'camera', title: why.kind === 'manual' ? tt('timeline.snapshotManual', { title: why.title }) : why.title, detail: why.kind === 'manual' ? tt('timeline.takenByYou') : '', tone: 'muted' };
     }
     default:
       return { icon: 'dot', title: item.kind, detail: '', tone: 'muted' };
   }
+}
+
+// The daemon says which of a game's save locations a sync touched as
+// `in its "Saves" location` (syncengine.locationDetail); said in the chosen
+// language, and anything else it sends is shown as it came.
+function whereSaid(detail) {
+  const m = /^in its "(.*)" location$/.exec(detail);
+  return m ? tt('timeline.inLocation', { name: m[1] }) : ` ${detail}`;
 }
 
 /**
@@ -94,13 +104,13 @@ export function byDay(list, now = new Date()) {
 function dayName(d, now) {
   const start = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diff = Math.round((start(now) - start(d)) / 86_400_000);
-  if (diff === 0) return 'Today';
-  if (diff === 1) return 'Yesterday';
+  if (diff === 0) return tt('timeline.today');
+  if (diff === 1) return tt('timeline.yesterday');
   return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) });
 }
 
 /** Where a game was last played, in words: this device, or another. */
 export function playedWhere(g, thisDevice) {
   if (!g?.lastPlayedAt) return '';
-  return g.lastPlayedOn ? g.lastPlayedOn : thisDevice ? `${thisDevice} (here)` : 'Here';
+  return g.lastPlayedOn ? g.lastPlayedOn : thisDevice ? tt('timeline.deviceHere', { device: thisDevice }) : tt('timeline.here');
 }

@@ -11,10 +11,11 @@
 // The language choice is 'system' until the user picks one, and only an
 // explicit pick is persisted — so an unpicked app keeps following the OS
 // language as it changes.
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 
 import en from '../locales/en.json';
 import zhCN from '../locales/zh-CN.json';
+import zhCNErrors from '../locales/zh-CN.errors.js';
 
 export const SYSTEM_LOCALE = 'system';
 
@@ -94,6 +95,34 @@ export const t = derived(locale, (l) => {
   const rules = pluralRulesFor(resolveLocale(l));
   return (key, params) => translate(catalog, key, params, rules);
 });
+
+/** The language actually shown ('system' settled), for keying whatever has to
+ *  be drawn again when it changes — App.svelte redraws the page under it, so
+ *  text worked out in lib/ code (statuses, menus) follows a switch too. */
+export const shownLocale = derived(locale, (l) => resolveLocale(l));
+
+/** `$t` for code outside a component — lib/ modules, toasts, confirmations.
+ *  Read when called, so it is in whatever language is chosen at that moment.
+ *  A module-level constant must not call it at import time: make the label a
+ *  getter, or keep an id and translate where it is shown. */
+export function tt(key, params) {
+  return get(t)(key, params);
+}
+
+// Errors from the background service come from all over the Go side, so
+// they cannot each be a catalog key. They are recognised by what they are
+// about instead (src/locales/<locale>.errors.js) and said in the chosen
+// language, with the original kept in brackets for a bug report.
+const ERROR_PATTERNS = { 'zh-CN': zhCNErrors };
+
+/** A daemon error message in the chosen language. */
+export function trError(message) {
+  const m = String(message ?? '');
+  const patterns = ERROR_PATTERNS[resolveLocale(get(locale))];
+  if (!m || !patterns) return m;
+  for (const [pattern, said] of patterns) if (pattern.test(m)) return `${said}（${m}）`;
+  return m;
+}
 
 /** Split a translated template on its {placeholders}, marking which filled
  *  parts should render in bold. Returns [{ text, bold }, …] in order. */

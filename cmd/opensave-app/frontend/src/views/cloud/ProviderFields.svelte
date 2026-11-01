@@ -2,60 +2,61 @@
   // Where a provider without a sign-in sends its backups.
   import { native } from '../../lib/api.js';
   import { GAME_SAVE_PROVIDER } from '../../lib/cloudproviders.js';
+  import { t, tt } from '../../lib/i18n.js';
 
   export let config;
 
   async function pickFolder() {
-    const dir = await native.selectDirectory('Select backup destination folder');
+    const dir = await native.selectDirectory(tt('cloud.fields.selectDestination'));
     if (dir) config.url = dir;
   }
 </script>
 
 {#if config.provider === 'local'}
   <div class="field">
-    <label for="cb-folder">Destination folder (e.g. a NAS mount)</label>
+    <label for="cb-folder">{$t('cloud.fields.destinationFolder')}</label>
     <div class="path-row">
       <input id="cb-folder" bind:value={config.url} placeholder="D:\Backups\OpenSave" />
-      <button class="btn" on:click={pickFolder}>Browse</button>
+      <button class="btn" on:click={pickFolder}>{$t('cloud.fields.browse')}</button>
     </div>
   </div>
 {:else if config.provider === 'webdav' || config.provider === GAME_SAVE_PROVIDER}
   <div class="field">
-    <label for="cb-url">{config.provider === GAME_SAVE_PROVIDER ? 'game-save service address' : 'WebDAV URL'}</label>
+    <label for="cb-url">{config.provider === GAME_SAVE_PROVIDER ? $t('cloud.fields.gameSaveAddress') : $t('cloud.fields.webdavUrl')}</label>
     <input
       id="cb-url"
       bind:value={config.url}
       placeholder={config.provider === GAME_SAVE_PROVIDER ? 'https://nas.example:8788' : 'https://nas.local/dav/opensave/'}
     />
     {#if config.provider === GAME_SAVE_PROVIDER}
-      <span class="hint">Use the game-save service address. OpenSave uses its native sync API; WebDAV is not used.</span>
+      <span class="hint">{$t('cloud.fields.gameSaveAddressHint')}</span>
     {/if}
   </div>
   <div class="two">
     {#if config.provider === GAME_SAVE_PROVIDER}
       <div class="field two-wide">
-        <label for="cb-pass">Sync key</label>
+        <label for="cb-pass">{$t('cloud.fields.syncKey')}</label>
         <input id="cb-pass" bind:value={config.password} autocomplete="off" />
-        <span class="hint">The game-save sync key. It is used directly for authenticated save synchronization.</span>
+        <span class="hint">{$t('cloud.fields.syncKeyHint')}</span>
       </div>
     {:else}
     <div class="field">
-      <label for="cb-user">Username</label>
+      <label for="cb-user">{$t('cloud.fields.username')}</label>
       <input id="cb-user" bind:value={config.username} />
     </div>
     <div class="field">
-      <label for="cb-pass">Password</label>
+      <label for="cb-pass">{$t('cloud.fields.password')}</label>
       <input id="cb-pass" bind:value={config.password} />
     </div>
     {/if}
   </div>
 {:else if config.provider === 'webhook'}
   <div class="field">
-    <label for="cb-hook">Webhook URL (receives multipart POST)</label>
+    <label for="cb-hook">{$t('cloud.fields.webhookUrl')}</label>
     <input id="cb-hook" bind:value={config.url} />
   </div>
   <div class="field">
-    <label for="cb-headers">Custom headers (JSON)</label>
+    <label for="cb-headers">{$t('cloud.fields.customHeaders')}</label>
     <input id="cb-headers" bind:value={config.headers} placeholder={'{"Authorization": "Bearer …"}'} />
   </div>
 {/if}

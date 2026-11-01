@@ -131,6 +131,23 @@ changed blocks are stored, so history is cheap). Open a game to:
   first, so it can be undone by switching back — and if that snapshot can't be
   taken, nothing is changed at all.
 
+### Batch actions
+
+Press **Select** above the library (or Ctrl-click / long-press a tile). Click
+tiles to pick them, Shift-click for a range; **Select all** takes what is
+shown — the filtered results when you have searched or filtered — **Whole
+library** takes every game, and **Invert** flips the picks. Then, for all of
+them at once: **Snapshot**, **Upload to cloud**, **Restore latest**, **Sync**,
+**Turn sync on / off**, **Favourite** or **Stop tracking**.
+
+A batch runs one game at a time with a progress bar and can be stopped between
+games. It ends with a summary — succeeded, failed (with the reason the
+background service gave) and skipped (with why: no snapshot to restore, sync
+already on, …) — which you can copy or retry the failed ones from. **Restore
+latest** and **Stop tracking** ask first; restoring keeps each current save as
+a snapshot, and stopping tracking deletes no save files, snapshots or cloud
+copies.
+
 ## 3. Syncing between devices
 
 ### On the same network (LAN)
@@ -160,9 +177,22 @@ from sync lineage (not clocks) and asks you to **keep yours, theirs, or both**
 ## 4. Cloud backup (optional)
 
 Open **Cloud Backup** to mirror snapshots to Google Drive, Dropbox, OneDrive,
-WebDAV, a webhook, or a local/NAS folder. Sign in, flip the toggle, and every
-new snapshot uploads in the background. Use **Browse cloud** to explore and
-restore snapshots per game.
+WebDAV, a self-hosted **game-save** service, a webhook, or a local/NAS folder.
+Sign in, flip the toggle, and every new snapshot uploads in the background.
+Use **Browse cloud** to explore and restore snapshots per game.
+
+**game-save (native API).** Choose **game-save** and enter the service
+address (e.g. `https://nas.example:8788`) and its sync key. OpenSave uses the
+service's native API under `/v1/opensave`, not WebDAV. Each game lives in its
+save type's namespace (`pc`, `switch`, `emulator-<name>`), and each has a
+version chain: a publish only advances the cloud head when this device's last
+confirmed head is still the newest, otherwise it is kept as a conflict copy
+rather than overwriting another device's progress. A game's **Cloud** tab shows
+the chain, its history and any conflict copies. From a terminal:
+`opensave cloud setup game-save --url <service-url> --password <sync-key>`.
+
+An upload that fails reports why — in the message, in **Activity**, and per
+game in a batch upload — instead of being counted as "skipped".
 
 > **Google Drive** uses shared built-in credentials from an app still in
 > testing, so it can ask you to sign in again weekly. Open **Use your own
@@ -177,6 +207,11 @@ restore snapshots per game.
 > Dropbox, WebDAV and a local/NAS folder need none of this.
 
 ## 5. Settings
+
+**Language.** English or Simplified Chinese, following the system by default;
+change it under **General → Appearance → Language**. The tray menu follows the
+window's choice.
+
 
 - **General** — device name/type shown to peers, start-on-boot.
 - **Sync** — auto-sync on track, bandwidth limit, relay URL, relay hosting.

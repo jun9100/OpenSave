@@ -140,6 +140,12 @@ Click tiles to select them, then **Track selected**. If OpenSave listed two
 folders separately that you know are one game, tick both and use **Track as one
 game** instead.
 
+Once they are tracked, the library does the same for everyday work: press
+**Select**, pick games (or **Select all** for everything the current filter
+shows), and snapshot, upload, restore, switch syncing on or off, or stop
+tracking them together. You get a progress bar and, at the end, a list of what
+worked, what failed and why, and what was skipped.
+
 ## 5. Adding your second device
 
 Install and open OpenSave on the other machine too, then pick whichever
@@ -353,7 +359,12 @@ same Wi-Fi they will find each other; otherwise use a room code.
 
 Everything above works with no cloud at all. If you also want an off-site copy
 — against a dead drive or a stolen laptop — open **Cloud Backup** and connect
-Google Drive, Dropbox, OneDrive, WebDAV, a webhook, or just a folder on a NAS.
+Google Drive, Dropbox, OneDrive, WebDAV, your own **game-save** service, a
+webhook, or just a folder on a NAS.
+
+Running a game-save service? Pick **game-save**, paste its address and sync
+key. Each game is kept under its save type (PC, Switch, an emulator), apart
+from the other kinds of saves on the same server.
 
 Every new snapshot then uploads in the background. **Browse cloud** lets you
 explore and restore from there.

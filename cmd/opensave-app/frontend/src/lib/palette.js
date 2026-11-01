@@ -6,6 +6,7 @@
 // "elden" finds "Elden Ring". Entries whose label starts with what was typed
 // come first; among equals, a game comes before an action on it and a
 // shorter label before a longer one.
+import { tt } from './i18n.js';
 
 const words = (s) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
@@ -58,7 +59,7 @@ export function snapshotEntries(games) {
         if (!words) continue;
         out.push({
           label: `${words} — ${g.name}`,
-          kind: 'Snapshot',
+          kind: tt('palette.kind.snapshot'),
           weight: -2,
           keywords: [g.name, 'snapshot', ...(note && comment ? [comment] : [])],
           gameId: g.id,

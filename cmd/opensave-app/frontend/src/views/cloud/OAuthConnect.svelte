@@ -9,6 +9,7 @@
   import ProviderIcon from './ProviderIcon.svelte';
   import Spinner from '../../components/ui/Spinner.svelte';
   import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
+  import { t, tt, trError, segments } from '../../lib/i18n.js';
 
   export let config;
   export let connected = null;
@@ -32,10 +33,10 @@
     authInProgress = false;
     showManualCode = false;
     if (ev.success) {
-      toast(`Connected as ${ev.userEmail}`, 'success');
+      toast(tt('cloud.oauth.connectedAs', { email: ev.userEmail }), 'success');
       reload();
     } else {
-      toast(ev.error ?? 'Sign-in failed', 'error');
+      toast(ev.error != null ? trError(ev.error) : tt('cloud.oauth.signInFailed'), 'error');
     }
   });
   onDestroy(unsubAuth);
@@ -49,12 +50,12 @@
       authAuto = !!res.autoCallback;
       showManualCode = !authAuto;
       if (authAuto) {
-        toast('Finish signing in — OpenSave connects automatically.');
+        toast(tt('cloud.oauth.finishSigningIn'));
       } else {
-        toast('Sign in using the browser window, then paste the code from the redirect URL here.');
+        toast(tt('cloud.oauth.signInManual'));
       }
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy.set(false);
     }
@@ -70,13 +71,13 @@
     busy.set(true);
     try {
       const res = await api.post('/api/auth/callback', { code: authCode.trim() });
-      toast(`Connected as ${res.userEmail}`, 'success');
+      toast(tt('cloud.oauth.connectedAs', { email: res.userEmail }), 'success');
       authInProgress = false;
       showManualCode = false;
       authCode = '';
       await reload();
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy.set(false);
     }
@@ -86,10 +87,10 @@
     busy.set(true);
     try {
       await api.post('/api/auth/disconnect');
-      toast('Disconnected');
+      toast(tt('cloud.oauth.disconnected'));
       await reload();
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy.set(false);
     }
@@ -101,54 +102,51 @@
     <div class="acct">
       <div class="acct-icon"><ProviderIcon provider={current} size={26} /></div>
       <div class="acct-info">
-        <div class="acct-title">Connected to {current?.label}</div>
+        <div class="acct-title">{$t('cloud.oauth.connectedTo', { provider: current?.label })}</div>
         <div class="acct-sub">
           <span class="acct-dot"></span>
-          {isEmail(config.tokens.userEmail) ? config.tokens.userEmail : 'Signed in — new snapshots upload automatically'}
+          {isEmail(config.tokens.userEmail) ? config.tokens.userEmail : $t('cloud.oauth.signedInAuto')}
         </div>
       </div>
-      <button class="btn small danger" disabled={$busy} on:click={disconnect}>Disconnect</button>
+      <button class="btn small danger" disabled={$busy} on:click={disconnect}>{$t('cloud.oauth.disconnect')}</button>
     </div>
   {:else}
     {#if connected}
       <p class="quiet" style="margin-bottom: 10px;">
-        You're currently connected to {providerById(connected)?.label} — signing in
-        here will replace that connection.
+        {$t('cloud.oauth.replaceConnection', { provider: providerById(connected)?.label })}
       </p>
     {/if}
     {#if !authInProgress}
       <button class="btn primary" disabled={$busy} on:click={startAuth}>
-        Sign in with {current?.label}
+        {$t('cloud.oauth.signInWith', { provider: current?.label })}
       </button>
       {#if config.provider === 'google_drive'}
         <p class="quiet" style="margin-top: 10px;">
-          <TriangleAlert size={14} class="inline-icon warn-icon" />On Google's consent screen, <strong>tick the checkbox</strong> allowing OpenSave to access
-          its own Drive files — without it, uploads fail with "insufficient permissions".
+          <TriangleAlert size={14} class="inline-icon warn-icon" />{#each segments($t('cloud.oauth.googleConsent'), { tick: $t('cloud.oauth.tickCheckbox') }, ['tick']) as part}{#if part.bold}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each}
         </p>
       {/if}
     {:else}
       <div class="waiting">
         <Spinner size={16} />
         <div class="waiting-text">
-          <strong>Waiting for you to finish signing in…</strong>
-          <span class="quiet">Approve access in your browser — OpenSave connects by itself.</span>
+          <strong>{$t('cloud.oauth.waiting')}</strong>
+          <span class="quiet">{$t('cloud.oauth.approveInBrowser')}</span>
         </div>
-        <button class="btn small" on:click={cancelAuth}>Cancel</button>
+        <button class="btn small" on:click={cancelAuth}>{$t('common.cancel')}</button>
       </div>
       {#if !showManualCode && authAuto}
         <button class="linkish" on:click={() => (showManualCode = true)}>
-          Having trouble? Paste the code manually
+          {$t('cloud.oauth.pasteManually')}
         </button>
       {/if}
       {#if showManualCode}
         <div class="code">
           <p class="quiet">
-            After approving access, the browser lands on a localhost page. Copy the <code>code</code> value
-            from its address bar and paste it here:
+            {#each segments($t('cloud.oauth.pasteCodeHint'), { code: 'code' }, ['code']) as part}{#if part.bold}<code>{part.text}</code>{:else}{part.text}{/if}{/each}
           </p>
           <div class="path-row">
             <input placeholder="4/0AY0e-g7…" bind:value={authCode} />
-            <button class="btn primary" disabled={!authCode || $busy} on:click={finishAuth}>Connect</button>
+            <button class="btn primary" disabled={!authCode || $busy} on:click={finishAuth}>{$t('cloud.oauth.connect')}</button>
           </div>
         </div>
       {/if}

@@ -6,6 +6,7 @@
   import { toast, gameList } from '../../lib/stores.js';
   import { native, gameCover } from '../../lib/api.js';
   import BellRing from 'lucide-svelte/icons/bell-ring';
+  import { t, tt, trError } from '../../lib/i18n.js';
 
   // How each kind shows, played through once: a message in the corner with a
   // new entry behind the bell, then — a moment later — the chime that comes
@@ -16,11 +17,11 @@
   let showing = false;
   function showMe() {
     showing = true;
-    toast('Hades: got 3 files from Steam Deck — an example', 'info', { action: { label: 'Open', run: () => {} } });
+    toast(tt('notifyPrefs.demo.toast'), 'info', { action: { label: tt('notifyPrefs.demo.open'), run: () => {} } });
     exampleEvents.update((list) => [exampleEvent(), ...list]);
     setTimeout(() => {
       playChime();
-      toast('That chime is for something that needs you — a conflict, an emptied save, a device asking to pair. OpenSave also comes to the front for it.', 'warning', { ttl: 9000 });
+      toast(tt('notifyPrefs.demo.chime'), 'warning', { ttl: 9000 });
     }, 2200);
     setTimeout(async () => {
       showing = false;
@@ -28,11 +29,11 @@
       const game = $gameList[0];
       const why = await native.desktopNotify({
         title: game?.name ?? 'Hades',
-        body: 'Got 3 files from Steam Deck — an example',
+        body: tt('notifyPrefs.demo.desktopBody'),
         image: game ? gameCover(game) : '',
         open: JSON.stringify(game ? { view: 'game', params: { gameId: game.id } } : { view: 'settings', params: {} })
       });
-      toast(why ? `A desktop notification could not be shown: ${why}` : 'And that one is from the desktop, for when OpenSave is not in front. Click it to open the game.', why ? 'error' : 'info', { ttl: 9000 });
+      toast(why ? tt('notifyPrefs.demo.desktopFailed', { reason: trError(why) }) : tt('notifyPrefs.demo.desktopShown'), why ? 'error' : 'info', { ttl: 9000 });
     }, 4800);
   }
 
@@ -44,11 +45,11 @@
 <div class="notif">
 <div class="demo">
   <p class="hint">
-    Everything also goes behind the bell at the top of the window, which counts what's new and what is waiting on you.
+    {$t('notifyPrefs.bellHint')}
   </p>
-  <button class="btn small" disabled={showing} on:click={showMe}><BellRing size={14} />Show me</button>
+  <button class="btn small" disabled={showing} on:click={showMe}><BellRing size={14} />{$t('notifyPrefs.showMe')}</button>
 </div>
-<p class="lead">Chime and bring OpenSave to the front when…</p>
+<p class="lead">{$t('notifyPrefs.leadAttention')}</p>
 {#each attention as [key, e]}
   <label class="check">
     <input type="checkbox" checked={$notifyPrefs[key]} on:change={() => toggle(key)} />
@@ -56,7 +57,7 @@
   </label>
 {/each}
 
-<p class="lead">Show a message when…</p>
+<p class="lead">{$t('notifyPrefs.leadMessages')}</p>
 {#each messages as [key, e]}
   <label class="check">
     <input type="checkbox" checked={$notifyPrefs[key]} on:change={() => toggle(key)} />
@@ -66,18 +67,18 @@
 
 <label class="check quiet">
   <input type="checkbox" checked={$notifyPrefs.desktop} on:change={() => toggle('desktop')} />
-  Show them on the desktop when OpenSave isn't in front
+  {$t('notifyPrefs.desktop')}
 </label>
 <p class="hint">
-  As the system's own notification, with the game's cover. Clicking one opens it in OpenSave.
+  {$t('notifyPrefs.desktopHint')}
 </p>
 
 <label class="check quiet">
   <input type="checkbox" checked={$notifyPrefs.quietWhilePlaying} on:change={() => toggle('quietWhilePlaying')} />
-  Stay quiet while a full-screen game is running
+  {$t('notifyPrefs.quiet')}
 </label>
 <p class="hint">
-  No chime, no desktop notification and no window in front of your game. Whatever it was waits behind the bell for when you come back.
+  {$t('notifyPrefs.quietHint')}
 </p>
 </div>
 

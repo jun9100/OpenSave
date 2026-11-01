@@ -1,7 +1,7 @@
 // Small formatters shared by the views.
 
 import { get } from 'svelte/store';
-import { locale, pluralRulesFor } from './i18n.js';
+import { locale, pluralRulesFor, tt } from './i18n.js';
 
 /** Bytes as B, KB, MB or GB, one decimal past bytes: "185 B", "3.2 KB",
  *  "1.4 MB", "9.5 GB". GB so free space on a drive reads as "9.5 GB" and not
@@ -31,6 +31,6 @@ export function playLength(ms) {
   const minutes = Math.round((ms ?? 0) / 60000);
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  if (h === 0) return `${m} min`;
-  return m ? `${h} h ${m} min` : `${h} h`;
+  if (h === 0) return tt('format.minutes', { m });
+  return m ? tt('format.hoursMinutes', { h, m }) : tt('format.hours', { h });
 }

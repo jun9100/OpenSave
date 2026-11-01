@@ -1,4 +1,5 @@
 // The cloud backup providers and the rules for what each card says.
+import { tt } from './i18n.js';
 
 // This is a persisted compatibility identifier. It is intentionally kept out
 // of all labels so users only encounter the product name, game-save.
@@ -8,10 +9,31 @@ export const providers = [
   { id: 'google_drive', label: 'Google Drive', oauth: true, img: 'cloud/googledrive.png' },
   { id: 'onedrive', label: 'OneDrive', oauth: true, img: 'cloud/onedrive.png' },
   { id: 'dropbox', label: 'Dropbox', oauth: true, img: 'cloud/dropbox.png' },
-  { id: 'local', label: 'Local Folder', oauth: false, icon: 'folder' },
-  { id: 'webdav', label: 'WebDAV Server', oauth: false, icon: 'cloud' },
+  {
+    id: 'local',
+    get label() {
+      return tt('cloud.providers.local');
+    },
+    oauth: false,
+    icon: 'folder'
+  },
+  {
+    id: 'webdav',
+    get label() {
+      return tt('cloud.providers.webdav');
+    },
+    oauth: false,
+    icon: 'cloud'
+  },
   { id: GAME_SAVE_PROVIDER, label: 'game-save', oauth: false, icon: 'server' },
-  { id: 'webhook', label: 'HTTP Webhook', oauth: false, icon: 'webhook' }
+  {
+    id: 'webhook',
+    get label() {
+      return tt('cloud.providers.webhook');
+    },
+    oauth: false,
+    icon: 'webhook'
+  }
 ];
 
 export const providerById = (id) => providers.find((p) => p.id === id);
@@ -27,7 +49,7 @@ export const cloudTileKey = (gameId, saveType = 'pc') => `${saveType || 'pc'}\u0
 export function saveTypeLabel(saveType) {
   switch (saveType || 'pc') {
     case 'pc':
-      return 'PC game';
+      return tt('cloud.providers.saveType.pc');
     case 'switch':
       return 'Switch';
     case 'emulator-eden':
@@ -37,7 +59,7 @@ export function saveTypeLabel(saveType) {
     case 'emulator-ryujinx':
       return 'Ryujinx';
     case 'emulator-generic':
-      return 'Other emulator';
+      return tt('cloud.providers.saveType.otherEmulator');
     default:
       return saveType?.startsWith('emulator-') ? saveType.slice('emulator-'.length) : saveType;
   }
@@ -65,11 +87,11 @@ export function providerStatus(id, connected, cfg) {
   if (!cfg) return '';
   if (id === connected) {
     const email = cfg.tokens?.userEmail;
-    return isEmail(email) ? email : 'Connected';
+    return isEmail(email) ? email : tt('cloud.providers.status.connected');
   }
-  if (isOAuth(id)) return 'Click to sign in';
-  if (id === cfg.provider && cfg.url) return 'Configured';
-  return 'Not configured';
+  if (isOAuth(id)) return tt('cloud.providers.status.signIn');
+  if (id === cfg.provider && cfg.url) return tt('cloud.providers.status.configured');
+  return tt('cloud.providers.status.notConfigured');
 }
 
 /** Tracked games and games only in the cloud, one tile each, so the cloud

@@ -5,6 +5,7 @@
 import { writable } from 'svelte/store';
 import { api } from './api.js';
 import { onCollections, toast } from './stores.js';
+import { tt, trError } from './i18n.js';
 
 export const FAVOURITES = 'favourites';
 
@@ -50,7 +51,7 @@ async function call(fn, success) {
     if (success) toast(success, 'success');
     return out;
   } catch (e) {
-    toast(e.message, 'error');
+    toast(trError(e.message), 'error');
     return null;
   }
 }
@@ -62,7 +63,7 @@ export function toggleFavourite(all, game) {
   const on = !isFavourite(all, game.id);
   return call(
     () => api.post(`/api/collections/${FAVOURITES}/games`, { gameId: game.id, in: on }),
-    on ? `${game.name} added to Favourites` : `${game.name} removed from Favourites`
+    tt(on ? 'collections.addedToFavourites' : 'collections.removedFromFavourites', { name: game.name })
   );
 }
 

@@ -284,7 +284,7 @@ func (a *App) DaemonAddr() map[string]string {
 // SelectDirectory opens the native folder picker.
 func (a *App) SelectDirectory(title string) string {
 	if title == "" {
-		title = "Select folder"
+		title = T("Select folder")
 	}
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: title})
 	if err != nil {
@@ -296,13 +296,13 @@ func (a *App) SelectDirectory(title string) string {
 // SelectFile opens the native file picker (executables for game launch).
 func (a *App) SelectFile(title string) string {
 	if title == "" {
-		title = "Select file"
+		title = T("Select file")
 	}
 	file, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: title,
 		Filters: []runtime.FileFilter{
-			{DisplayName: "Programs (*.exe;*.bat)", Pattern: "*.exe;*.bat"},
-			{DisplayName: "All files", Pattern: "*.*"},
+			{DisplayName: T("Programs (*.exe;*.bat)"), Pattern: "*.exe;*.bat"},
+			{DisplayName: T("All files"), Pattern: "*.*"},
 		},
 	})
 	if err != nil {
@@ -315,13 +315,13 @@ func (a *App) SelectFile(title string) string {
 // backup files (import source).
 func (a *App) SelectBackupFile(title string) string {
 	if title == "" {
-		title = "Select backup file"
+		title = T("Select backup file")
 	}
 	file, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: title,
 		Filters: []runtime.FileFilter{
-			{DisplayName: "OpenSave backup (*.sscb)", Pattern: "*.sscb"},
-			{DisplayName: "All files", Pattern: "*.*"},
+			{DisplayName: T("OpenSave backup (*.sscb)"), Pattern: "*.sscb"},
+			{DisplayName: T("All files"), Pattern: "*.*"},
 		},
 	})
 	if err != nil {
@@ -336,7 +336,7 @@ func (a *App) SelectSaveFile(title, defaultName string) string {
 		Title:           title,
 		DefaultFilename: defaultName,
 		Filters: []runtime.FileFilter{
-			{DisplayName: "OpenSave backup (*.sscb)", Pattern: "*.sscb"},
+			{DisplayName: T("OpenSave backup (*.sscb)"), Pattern: "*.sscb"},
 		},
 	})
 	if err != nil {
@@ -374,7 +374,7 @@ func (a *App) OpenFolder(path string) string {
 		cmd = exec.Command("xdg-open", dir)
 	}
 	if err := cmd.Start(); err != nil {
-		return "Could not open the file manager: " + err.Error()
+		return T("Could not open the file manager: ") + err.Error()
 	}
 	// Explorer exits non-zero even when it succeeded, so the result is
 	// deliberately not waited on or inspected.
@@ -388,14 +388,14 @@ func (a *App) OpenFolder(path string) string {
 // A save tracked as a single file resolves to its containing folder.
 func revealTargetDir(path string) (dir, problem string) {
 	if strings.TrimSpace(path) == "" {
-		return "", "No save location set for this game."
+		return "", T("No save location set for this game.")
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", "That folder no longer exists on this device."
+			return "", T("That folder no longer exists on this device.")
 		}
-		return "", "Could not open the folder: " + err.Error()
+		return "", T("Could not open the folder: ") + err.Error()
 	}
 	if info.IsDir() {
 		return filepath.Clean(path), ""

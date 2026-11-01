@@ -9,5 +9,10 @@ export default defineConfig({
     // The default warning is about download time on the web. This bundle is
     // embedded in the app and read from disk, so size matters far less.
     chunkSizeWarningLimit: 1500
+  },
+  test: {
+    // The tests assert English wording; without this they would follow the
+    // language of whichever machine runs them (src/test-setup.js).
+    setupFiles: ['./src/test-setup.js']
   }
 });

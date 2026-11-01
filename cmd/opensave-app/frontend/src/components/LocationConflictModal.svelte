@@ -13,6 +13,7 @@
   import { visited } from '../lib/later.js';
   import { api } from '../lib/api.js';
   import { demandAttention } from '../lib/notify.js';
+  import { t, tt, segments, trError } from '../lib/i18n.js';
   import Chevron from './ui/Chevron.svelte';
   import Gamepad2 from 'lucide-svelte/icons/gamepad-2';
   import Monitor from 'lucide-svelte/icons/monitor';
@@ -42,7 +43,7 @@
   $: pending = ($locationConflicts ?? []).filter((c) => !applying.has(keyOf(c)) && !later.has(keyOf(c)));
   $: current = pending[0]; // one at a time, like the whole-game screen
   $: gameName = current ? ($games[current.gameId]?.name ?? current.gameId) : '';
-  $: peerName = current ? (current.peer?.name ?? current.peer?.Name ?? 'the other device') : '';
+  $: peerName = current ? (current.peer?.name ?? current.peer?.Name ?? $t('locationConflict.otherDevice')) : '';
   $: peerType = current ? $peers[current.peer?.id ?? current.peer?.ID]?.deviceType : '';
   $: localIcon = isHandheld($settings?.deviceType) ? Gamepad2 : Monitor;
   $: peerIcon = isHandheld(peerType) ? Gamepad2 : Monitor;
@@ -54,9 +55,9 @@
     const fresh = list.filter((c) => !seen.has(keyOf(c)));
     if (fresh.length > 0) {
       const game = $games[fresh[0].gameId];
-      const name = game?.name ?? 'a game';
-      demandAttention('conflicts', { title: name, body: `Its “${fresh[0].root}” folder differs on both devices — choose which to keep.`, game });
-      toast(`The “${fresh[0].root}” folder of “${name}” differs on both devices`, 'error');
+      const name = game?.name ?? tt('locationConflict.aGame');
+      demandAttention('conflicts', { title: name, body: tt('locationConflict.notify.body', { root: fresh[0].root }), game });
+      toast(tt('locationConflict.toast.differs', { root: fresh[0].root, game: name }), 'error');
     }
     seen = new Set(list.map(keyOf));
     // Forget in-flight markers for conflicts that are gone.
@@ -83,22 +84,26 @@
       });
       applying = new Set(applying).add(keyOf(c));
       if (resolution === 'keep-remote') {
-        toast(`Bringing ${peerName}'s “${c.root}” folder over…`, 'info');
+        toast(tt('locationConflict.toast.bringing', { peer: peerName, root: c.root }), 'info');
       }
       showDiff = false;
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy = false;
     }
   }
 
-  const fmtMs = (ms) => (ms ? new Date(ms).toLocaleString() : 'unknown');
+  $: fmtMs = (ms) => (ms ? new Date(ms).toLocaleString() : $t('locationConflict.unknown'));
   const fmtSize = (n) =>
     n < 0 ? '—' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
   const diffIcon = (s) => (s === 'changed' ? '✱' : s === 'only-remote' ? '+' : '−');
-  const diffLabel = (s) =>
-    s === 'changed' ? 'differs' : s === 'only-remote' ? `only on ${peerName}` : 'only on this device';
+  $: diffLabel = (s) =>
+    s === 'changed'
+      ? $t('locationConflict.diff.changed')
+      : s === 'only-remote'
+        ? $t('locationConflict.diff.onlyRemote', { peer: peerName })
+        : $t('locationConflict.diff.onlyLocal');
 
   $: localMs = current?.localStats?.latestMtimeMs ?? 0;
   $: remoteMs = current?.remoteStats?.latestMtimeMs ?? 0;
@@ -109,12 +114,12 @@
   $: onlyLocalCount = diffFiles.filter((d) => d.status === 'only-local').length;
   $: onlyRemoteCount = diffFiles.filter((d) => d.status === 'only-remote').length;
 
-  function sideSummary(stats) {
+  $: sideSummary = (stats) => {
     const files = stats?.files;
-    if (files === 0) return 'folder is empty';
+    if (files === 0) return $t('locationConflict.folderEmpty');
     if (typeof files !== 'number') return '';
-    return `whole folder: ${files} file${files === 1 ? '' : 's'} · ${fmtSize(stats?.totalBytes ?? -1)}`;
-  }
+    return $t('locationConflict.wholeFolder', { n: files, size: fmtSize(stats?.totalBytes ?? -1) });
+  };
 </script>
 
 <svelte:window on:keydown={onKey} />
@@ -122,49 +127,51 @@
 {#if current}
   <div class="overlay" out:dialogOut|global>
     <div class="modal card">
-      <h3 class="with-icon"><FolderOpen size={20} /> “{current.root}” folder — {gameName}</h3>
+      <h3 class="with-icon"><FolderOpen size={20} /> {$t('locationConflict.title', { root: current.root, game: gameName })}</h3>
       <p class="desc">
-        This is one of {gameName}'s extra save folders, and it changed on both this device and
-        <strong>{peerName}</strong>. The game's main save is unaffected and keeps syncing; only this
-        folder is waiting on you.
+        {#each segments($t('locationConflict.desc'), { game: gameName, peer: peerName }, ['peer']) as part}{#if part.bold}<strong
+              >{part.text}</strong
+            >{:else}{part.text}{/if}{/each}
       </p>
 
       <div class="versions">
         <div class="version" class:newer={newerSide === 'local'}>
           <div class="v-head">
-            <span class="v-title with-icon"><svelte:component this={localIcon} size={16} /> This device</span>
-            {#if newerSide === 'local'}<span class="v-badge">changed more recently</span>{/if}
+            <span class="v-title with-icon"><svelte:component this={localIcon} size={16} /> {$t('locationConflict.thisDevice')}</span>
+            {#if newerSide === 'local'}<span class="v-badge">{$t('locationConflict.changedMoreRecently')}</span>{/if}
           </div>
           <div class="v-diff">
-            <strong>{changedCount + onlyLocalCount}</strong>
-            file{changedCount + onlyLocalCount === 1 ? '' : 's'} differ{changedCount + onlyLocalCount === 1 ? 's' : ''} here
+            {#each segments($t('locationConflict.filesDifferHere', { n: changedCount + onlyLocalCount, count: '{count}' }), { count: changedCount + onlyLocalCount }, ['count']) as part}{#if part.bold}<strong
+                  >{part.text}</strong
+                >{:else}{part.text}{/if}{/each}
           </div>
           {#if onlyLocalCount > 0}
-            <div class="v-only">{onlyLocalCount} only on this device</div>
+            <div class="v-only">{$t('locationConflict.onlyHereCount', { count: onlyLocalCount })}</div>
           {/if}
           <div class="v-stats">{sideSummary(current.localStats)}</div>
-          <div class="v-time">last change {fmtMs(localMs)}</div>
+          <div class="v-time">{$t('locationConflict.lastChange', { time: fmtMs(localMs) })}</div>
         </div>
         <div class="version" class:newer={newerSide === 'remote'}>
           <div class="v-head">
             <span class="v-title with-icon"><svelte:component this={peerIcon} size={16} /> {peerName}</span>
-            {#if newerSide === 'remote'}<span class="v-badge">changed more recently</span>{/if}
+            {#if newerSide === 'remote'}<span class="v-badge">{$t('locationConflict.changedMoreRecently')}</span>{/if}
           </div>
           <div class="v-diff">
-            <strong>{changedCount + onlyRemoteCount}</strong>
-            file{changedCount + onlyRemoteCount === 1 ? '' : 's'} differ{changedCount + onlyRemoteCount === 1 ? 's' : ''} there
+            {#each segments($t('locationConflict.filesDifferThere', { n: changedCount + onlyRemoteCount, count: '{count}' }), { count: changedCount + onlyRemoteCount }, ['count']) as part}{#if part.bold}<strong
+                  >{part.text}</strong
+                >{:else}{part.text}{/if}{/each}
           </div>
           {#if onlyRemoteCount > 0}
-            <div class="v-only">{onlyRemoteCount} only on {peerName}</div>
+            <div class="v-only">{$t('locationConflict.onlyThereCount', { count: onlyRemoteCount, peer: peerName })}</div>
           {/if}
           <div class="v-stats">{sideSummary(current.remoteStats)}</div>
-          <div class="v-time">last change {fmtMs(remoteMs)}</div>
+          <div class="v-time">{$t('locationConflict.lastChange', { time: fmtMs(remoteMs) })}</div>
         </div>
       </div>
 
       {#if current.diffTotal > 0}
         <button class="diff-toggle" on:click={() => (showDiff = !showDiff)}>
-          <Chevron open={showDiff} /> What's different ({current.diffTotal} file{current.diffTotal === 1 ? '' : 's'})
+          <Chevron open={showDiff} /> {$t('locationConflict.whatsDifferent', { n: current.diffTotal })}
         </button>
         {#if showDiff}
           <div class="diff-list">
@@ -176,30 +183,29 @@
               </div>
             {/each}
             {#if current.diffTotal > diffFiles.length}
-              <div class="diff-more">…and {current.diffTotal - diffFiles.length} more</div>
+              <div class="diff-more">{$t('locationConflict.andMore', { count: current.diffTotal - diffFiles.length })}</div>
             {/if}
           </div>
         {/if}
       {/if}
 
       <div class="actions">
-        <button class="btn ghost later" disabled={busy} on:click={putOff} title="Nothing of this folder syncs until you decide. Open the game to decide.">Decide later</button>
+        <button class="btn ghost later" disabled={busy} on:click={putOff} title={$t('locationConflict.decideLaterHint')}>{$t('locationConflict.decideLater')}</button>
         <button class="btn" disabled={busy} on:click={() => resolve('keep-remote')}>
-          Use {peerName}'s
+          {$t('locationConflict.useTheirs', { peer: peerName })}
         </button>
         <button class="btn primary" disabled={busy} on:click={() => resolve('keep-local')}>
-          Keep mine
+          {$t('locationConflict.keepMine')}
         </button>
       </div>
       <p class="hint-line">
-        <History size={15} class="inline-icon" /> A snapshot of every one of this game's folders is taken before either choice is applied,
-        so both are undoable from the Snapshots tab. <strong>“Keep mine”</strong> makes this
-        device's copy the shared one and asks {peerName} to take it — {peerName} gets its own say if
-        it has newer work. <strong>“Use {peerName}'s”</strong> brings their copy here.
+        <History size={15} class="inline-icon" />
+        {#each segments($t('locationConflict.hint.choices'), { keepMine: $t('locationConflict.hint.keepMine'), useTheirs: $t('locationConflict.hint.useTheirs', { peer: peerName }), peer: peerName }, ['keepMine', 'useTheirs']) as part}{#if part.bold}<strong
+              >{part.text}</strong
+            >{:else}{part.text}{/if}{/each}
       </p>
       <p class="hint-line">
-        There is no “keep both” for a folder: that option puts the other copy on a branch, and
-        branches cover the whole game rather than one of its folders.
+        {$t('locationConflict.hint.noKeepBoth')}
       </p>
     </div>
   </div>

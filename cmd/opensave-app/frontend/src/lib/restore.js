@@ -5,6 +5,7 @@
 // internal/snapshot/preview.go); the question now shows that, so the answer
 // is given knowing what it does.
 import { writable, get } from 'svelte/store';
+import { tt } from './i18n.js';
 
 /** {game, snap, resolve} while the restore dialog is open. */
 export const restoreRequest = writable(null);
@@ -45,10 +46,9 @@ export function summarize(preview) {
 
 /** "2 files change, 1 comes back, 1 is removed" — only the parts that apply. */
 export function describeSummary(s) {
-  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   const parts = [];
-  if (s.changed) parts.push(n(s.changed, 'file changes', 'files change'));
-  if (s.restored) parts.push(`${s.restored} ${s.restored === 1 ? 'comes' : 'come'} back`);
-  if (s.removed) parts.push(`${s.removed} ${s.removed === 1 ? 'is' : 'are'} removed`);
-  return parts.join(', ');
+  if (s.changed) parts.push(tt('restore.summary.changed', { n: s.changed }));
+  if (s.restored) parts.push(tt('restore.summary.restored', { n: s.restored }));
+  if (s.removed) parts.push(tt('restore.summary.removed', { n: s.removed }));
+  return parts.join(tt('restore.listSeparator'));
 }

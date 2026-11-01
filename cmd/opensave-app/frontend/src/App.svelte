@@ -5,7 +5,7 @@
   import { applyMessage, wsConnected, view, appUpdate, toast, showAbout, cloudOffers, newGames, navigate, settings, games, availableUpdate } from './lib/stores.js';
   import { startController, controllerOn, padUsed, pageStep } from './lib/controller.js';
   import { appearance } from './lib/appearance.js';
-  import { locale, resolveLocale } from './lib/i18n.js';
+  import { locale, resolveLocale, shownLocale, t, tt, trError, segments } from './lib/i18n.js';
   import { paletteOpen } from './lib/shortcuts.js';
   import { newlyEmptied } from './lib/emptied.js';
   import { demandAttention } from './lib/notify.js';
@@ -33,6 +33,8 @@
   import CloudBackup from './views/CloudBackup.svelte';
   import Settings from './views/Settings.svelte';
   import Changelog from './views/Changelog.svelte';
+  import Help from './views/Help.svelte';
+  import BulkDialog from './components/BulkDialog.svelte';
   import WhatsNewModal from './components/WhatsNewModal.svelte';
   import ActivityLog from './views/ActivityLog.svelte';
   import Download from 'lucide-svelte/icons/download';
@@ -53,7 +55,7 @@
     installStarted = true;
     const err = await native.installFromUrl(update.assetUrl);
     if (err) {
-      toast(err, 'error');
+      toast(trError(err), 'error');
       installStarted = false;
     }
   }
@@ -108,13 +110,13 @@
     const { now, fresh } = newlyEmptied(emptiedBefore, all);
     emptiedBefore = now;
     for (const g of fresh) {
-      toast(`Every save file of ${g.name} was deleted here. Your other devices keep theirs until you choose.`, 'warning', {
+      toast(tt('app.emptied.toast', { name: g.name }), 'warning', {
         ttl: 15000,
-        action: { label: 'Choose', run: () => navigate('game', { gameId: g.id }) }
+        action: { label: tt('app.emptied.choose'), run: () => navigate('game', { gameId: g.id }) }
       });
       demandAttention('emptied', {
         title: g.name,
-        body: 'Every save file was deleted here. Your other devices keep theirs until you choose.',
+        body: tt('app.emptied.body'),
         game: g
       });
     }
@@ -173,6 +175,7 @@
     cloud: CloudBackup,
     settings: Settings,
     changelog: Changelog,
+    help: Help,
     activity: ActivityLog
   };
 
@@ -187,6 +190,9 @@
     if (shownPage) mainEl.scrollTop = 0;
     shownPage = $view.name;
   }
+
+  // Where the log is kept, inside the user's home folder.
+  const LOG_PATH = '.opensave\\opensave.log';
 </script>
 
 <div class="shell">
@@ -195,34 +201,34 @@
     <div class="update-banner installing">
       <span class="with-icon">
         {#if $appUpdate.state === 'downloading'}
-          <Download size={16} /> Updating OpenSave — downloading {$appUpdate.percentage ?? 0}%…
+          <Download size={16} /> {$t('app.update.downloading', { percent: $appUpdate.percentage ?? 0 })}
         {:else if $appUpdate.state === 'installing'}
-          <Wrench size={16} /> Installing update…
+          <Wrench size={16} /> {$t('app.update.installing')}
         {:else}
-          <RefreshCw size={16} /> Restarting with the new version…
+          <RefreshCw size={16} /> {$t('app.update.restarting')}
         {/if}
-        <em>The app restarts itself when done — your games keep syncing.</em>
+        <em>{$t('app.update.restartNote')}</em>
       </span>
     </div>
   {:else if update}
     <div class="update-banner">
-      <span class="with-icon"><Sparkles size={16} /> OpenSave {update.latest} is available — you're on {update.current}.</span>
+      <span class="with-icon"><Sparkles size={16} /> {$t('app.update.available', { latest: update.latest, current: update.current })}</span>
       <div class="update-actions">
         {#if update.notes}
           <button class="btn small ghost" on:click={() => (showNotes = !showNotes)}>
-            {showNotes ? 'Hide notes' : "What's new"}
+            {showNotes ? $t('app.update.hideNotes') : $t('app.update.whatsNew')}
           </button>
         {/if}
         {#if update.assetUrl}
           <button class="btn small primary" disabled={installStarted} on:click={installRelease}>
-            {installStarted ? 'Starting…' : 'Install & restart'}
+            {installStarted ? $t('app.update.starting') : $t('app.update.install')}
           </button>
         {:else if update.flatpak}
-          <button class="btn small primary" on:click={() => native.openExternal(update.url)}>Get .flatpak</button>
+          <button class="btn small primary" on:click={() => native.openExternal(update.url)}>{$t('app.update.getFlatpak')}</button>
         {:else}
-          <button class="btn small primary" on:click={() => native.openExternal(update.url)}>Download</button>
+          <button class="btn small primary" on:click={() => native.openExternal(update.url)}>{$t('app.update.download')}</button>
         {/if}
-        <button class="btn small ghost icon" on:click={() => (update = null)} aria-label="Dismiss" title="Dismiss"><X size={15} /></button>
+        <button class="btn small ghost icon" on:click={() => (update = null)} aria-label={$t('ui.dismiss')} title={$t('ui.dismiss')}><X size={15} /></button>
       </div>
     </div>
     {#if showNotes && update.notes}
@@ -230,10 +236,10 @@
     {/if}
   {:else if updatedTo}
     <div class="update-banner">
-      <span class="with-icon"><Sparkles size={16} /> OpenSave was updated to v{updatedTo}.</span>
+      <span class="with-icon"><Sparkles size={16} /> {$t('app.updated', { version: updatedTo })}</span>
       <div class="update-actions">
-        <button class="btn small primary" on:click={openWhatsNew}>What's new</button>
-        <button class="btn small ghost icon" on:click={() => (updatedTo = '')} aria-label="Dismiss" title="Dismiss"><X size={15} /></button>
+        <button class="btn small primary" on:click={openWhatsNew}>{$t('app.update.whatsNew')}</button>
+        <button class="btn small ghost icon" on:click={() => (updatedTo = '')} aria-label={$t('ui.dismiss')} title={$t('ui.dismiss')}><X size={15} /></button>
       </div>
     </div>
   {/if}
@@ -245,17 +251,21 @@
       onClose={() => (showWhatsNew = false)}
     />
   {/if}
+  <!-- Drawn again when the language changes: most text follows $t by
+       itself, but what lib/ code worked out (statuses, menus, summaries) is
+       only said again when it is asked for again. -->
+  {#key $shownLocale}
   <div class="body">
     {#if bootError}
       <div class="boot-error">
         <img class="boot-logo" src={logoUrl} alt="OpenSave" />
-        <h2>OpenSave failed to start</h2>
-        <p>{bootError}</p>
+        <h2>{$t('app.boot.failed')}</h2>
+        <p>{trError(bootError)}</p>
         <button class="btn primary" disabled={retrying} on:click={boot}>
-          {retrying ? 'Retrying…' : 'Retry'}
+          {retrying ? $t('app.boot.retrying') : $t('app.boot.retry')}
         </button>
         <p class="boot-hint">
-          Details are saved to <code>.opensave\opensave.log</code> in your user folder.
+          {#each segments($t('app.boot.logHint'), { path: LOG_PATH }, ['path']) as part}{#if part.bold}<code>{part.text}</code>{:else}{part.text}{/if}{/each}
         </p>
       </div>
     {:else if ready}
@@ -287,14 +297,16 @@
     {:else}
       <div class="boot-loading">
         <img class="boot-logo pulse" src={logoUrl} alt="OpenSave" />
-        <span>Starting OpenSave…</span>
+        <span>{$t('app.boot.starting')}</span>
       </div>
     {/if}
   </div>
   <StatusBar />
+  {/key}
   <Toasts />
   <ConflictModal />
   <LocationConflictModal />
+  <BulkDialog />
   <ConfirmDialog />
   <ContextMenu />
   <Shortcuts />

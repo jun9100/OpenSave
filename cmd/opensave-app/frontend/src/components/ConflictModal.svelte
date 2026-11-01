@@ -5,6 +5,7 @@
   import { visited } from '../lib/later.js';
   import { api } from '../lib/api.js';
   import { demandAttention } from '../lib/notify.js';
+  import { t, tt, trError, segments } from '../lib/i18n.js';
   import Chevron from './ui/Chevron.svelte';
   import Gamepad2 from 'lucide-svelte/icons/gamepad-2';
   import Monitor from 'lucide-svelte/icons/monitor';
@@ -58,7 +59,7 @@
   }
   $: gameName = current ? ($games[current[0]]?.name ?? current[0]) : '';
   $: conflict = current ? current[1] : null;
-  $: peerName = conflict ? (conflict.peer.Name ?? conflict.peer.name ?? 'the other device') : '';
+  $: peerName = conflict ? (conflict.peer.Name ?? conflict.peer.name ?? $t('conflict.otherDevice')) : '';
   $: peerType = conflict ? $peers[conflict.peer.ID ?? conflict.peer.id]?.deviceType : '';
   $: localIcon = isHandheld($settings?.deviceType) ? Gamepad2 : Monitor;
   $: peerIcon = isHandheld(peerType) ? Gamepad2 : Monitor;
@@ -71,9 +72,9 @@
     const fresh = list.filter(([gid]) => !seen.has(gid));
     if (fresh.length > 0) {
       const game = $games[fresh[0][0]];
-      const name = game?.name ?? 'a game';
-      demandAttention('conflicts', { title: name, body: 'Its save changed here and on another device at once — choose which to keep.', game });
-      toast(`Save conflict for “${name}” — choose which version to keep`, 'error');
+      const name = game?.name ?? tt('conflict.aGame');
+      demandAttention('conflicts', { title: name, body: tt('conflict.notifyBody'), game });
+      toast(tt('conflict.toast', { game: name }), 'error');
     }
     seen = new Set(list.map(([gid]) => gid));
     // Housekeeping: forget "applying" markers for conflicts that no longer
@@ -127,12 +128,13 @@
   // count of what differs, and an unlabelled "3 files" below "2 files differ
   // here" reads as the panel contradicting itself rather than as two
   // different measurements.
-  function sideSummary(stats) {
+  // Reactive so the text follows a language switch.
+  $: sideSummary = (stats) => {
     const files = stats?.files;
-    if (files === 0) return 'save folder is empty';
+    if (files === 0) return $t('conflict.saveFolderEmpty');
     if (typeof files !== 'number') return '';
-    return `whole save: ${files} file${files === 1 ? '' : 's'} · ${fmtSize(stats?.totalBytes ?? -1)}`;
-  }
+    return $t('conflict.wholeSave', { n: files, size: fmtSize(stats?.totalBytes ?? -1) });
+  };
 
   async function resolve(resolution) {
     if (!current || busy) return;
@@ -149,23 +151,27 @@
       });
       applying = new Set(applying).add(gameId);
       if (resolution !== 'keep-local') {
-        toast(`Applying your choice for “${name}” — transferring ${peerName}'s files…`, 'info');
+        toast(tt('conflict.applying', { game: name, peer: peerName }), 'info');
       }
       showDiff = false;
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     } finally {
       busy = false;
     }
   }
 
   const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '—');
-  const fmtMs = (ms) => (ms ? new Date(ms).toLocaleString() : 'unknown');
+  $: fmtMs = (ms) => (ms ? new Date(ms).toLocaleString() : $t('conflict.unknownTime'));
   const fmtSize = (n) =>
     n < 0 ? '—' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
   const diffIcon = (s) => (s === 'changed' ? '✱' : s === 'only-remote' ? '+' : '−');
-  const diffLabel = (s) =>
-    s === 'changed' ? 'differs' : s === 'only-remote' ? `only on ${peerName}` : 'only on this device';
+  $: diffLabel = (s) =>
+    s === 'changed'
+      ? $t('conflict.diff.differs')
+      : s === 'only-remote'
+        ? $t('conflict.diff.onlyOn', { peer: peerName })
+        : $t('conflict.diff.onlyHere');
 </script>
 
 <svelte:window on:keydown={onKey} />
@@ -173,59 +179,54 @@
 {#if current && conflict}
   <div class="overlay" out:dialogOut|global>
     <div class="modal card">
-      <h3 class="with-icon"><GitCompareArrows size={20} /> Save conflict — {gameName}</h3>
+      <h3 class="with-icon"><GitCompareArrows size={20} /> {$t('conflict.title', { game: gameName })}</h3>
       <p class="desc">
-        Both this device and <strong>{peerName}</strong> changed this save since the last sync.
-        Pick which version to play from.
+        {#each segments($t('conflict.desc'), { peer: peerName }, ['peer']) as part}{#if part.bold}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each}
       </p>
 
       <div class="versions">
         <div class="version" class:newer={newerSide === 'local'}>
           <div class="v-head">
-            <span class="v-title with-icon"><svelte:component this={localIcon} size={16} /> This device</span>
-            {#if newerSide === 'local'}<span class="v-badge">played more recently</span>{/if}
+            <span class="v-title with-icon"><svelte:component this={localIcon} size={16} /> {$t('conflict.thisDevice')}</span>
+            {#if newerSide === 'local'}<span class="v-badge">{$t('conflict.playedMoreRecently')}</span>{/if}
           </div>
           <div class="v-diff">
             <strong>{changedCount + onlyLocalCount}</strong>
-            file{changedCount + onlyLocalCount === 1 ? '' : 's'} differ{changedCount + onlyLocalCount === 1
-              ? 's'
-              : ''} here
+            {$t('conflict.filesDifferHere', { n: changedCount + onlyLocalCount })}
             {#if localDiffBytes > 0}<span class="v-diff-bytes">· {fmtSize(localDiffBytes)}</span>{/if}
           </div>
           {#if onlyLocalCount > 0}
-            <div class="v-only">{onlyLocalCount} only on this device</div>
+            <div class="v-only">{$t('conflict.onlyHereCount', { count: onlyLocalCount })}</div>
           {/if}
           <div class="v-stats">{sideSummary(conflict.localStats)}</div>
-          <div class="v-time">last change {fmtMs(localMs)}</div>
+          <div class="v-time">{$t('conflict.lastChange', { time: fmtMs(localMs) })}</div>
         </div>
         <div class="version" class:newer={newerSide === 'remote'}>
           <div class="v-head">
             <span class="v-title with-icon"><svelte:component this={peerIcon} size={16} /> {peerName}</span>
-            {#if newerSide === 'remote'}<span class="v-badge">played more recently</span>{/if}
+            {#if newerSide === 'remote'}<span class="v-badge">{$t('conflict.playedMoreRecently')}</span>{/if}
           </div>
           <div class="v-diff">
             <strong>{changedCount + onlyRemoteCount}</strong>
-            file{changedCount + onlyRemoteCount === 1 ? '' : 's'} differ{changedCount + onlyRemoteCount === 1
-              ? 's'
-              : ''} there
+            {$t('conflict.filesDifferThere', { n: changedCount + onlyRemoteCount })}
             {#if remoteDiffBytes > 0}<span class="v-diff-bytes">· {fmtSize(remoteDiffBytes)}</span>{/if}
           </div>
           {#if onlyRemoteCount > 0}
-            <div class="v-only">{onlyRemoteCount} only on {peerName}</div>
+            <div class="v-only">{$t('conflict.onlyOnCount', { count: onlyRemoteCount, peer: peerName })}</div>
           {/if}
           <div class="v-stats">{sideSummary(conflict.remoteStats)}</div>
-          <div class="v-time">last change {fmtMs(remoteMs)}</div>
+          <div class="v-time">{$t('conflict.lastChange', { time: fmtMs(remoteMs) })}</div>
         </div>
       </div>
       {#if diffCapped}
         <p class="diff-capped">
-          Counts above cover the first {diffFiles.length} of {diffTotal} differing files.
+          {$t('conflict.diffCapped', { shown: diffFiles.length, total: diffTotal })}
         </p>
       {/if}
 
       {#if conflict.diffTotal > 0}
         <button class="diff-toggle" on:click={() => (showDiff = !showDiff)}>
-          <Chevron open={showDiff} /> What's different ({conflict.diffTotal} file{conflict.diffTotal === 1 ? '' : 's'})
+          <Chevron open={showDiff} /> {$t('conflict.whatsDifferent', { n: conflict.diffTotal })}
         </button>
         {#if showDiff}
           <div class="diff-list">
@@ -241,27 +242,23 @@
               </div>
             {/each}
             {#if conflict.diffTotal > conflict.diffFiles.length}
-              <div class="diff-more">…and {conflict.diffTotal - conflict.diffFiles.length} more</div>
+              <div class="diff-more">{$t('conflict.diffMore', { count: conflict.diffTotal - conflict.diffFiles.length })}</div>
             {/if}
           </div>
         {/if}
       {/if}
 
       <div class="actions">
-        <button class="btn ghost later" disabled={busy} on:click={putOff} title="Nothing of this game syncs until you decide. Open the game to decide.">Decide later</button>
-        <button class="btn" disabled={busy} on:click={() => resolve('keep-local')}>Keep mine</button>
-        <button class="btn" disabled={busy} on:click={() => resolve('keep-remote')}>Keep theirs</button>
+        <button class="btn ghost later" disabled={busy} on:click={putOff} title={$t('conflict.decideLaterTitle')}>{$t('conflict.decideLater')}</button>
+        <button class="btn" disabled={busy} on:click={() => resolve('keep-local')}>{$t('conflict.keepMine')}</button>
+        <button class="btn" disabled={busy} on:click={() => resolve('keep-remote')}>{$t('conflict.keepTheirs')}</button>
         <button class="btn primary" disabled={busy} on:click={() => resolve('merge-branch')}>
-          Keep both (recommended)
+          {$t('conflict.keepBothRecommended')}
         </button>
       </div>
       <p class="hint-line">
-        <History size={15} class="inline-icon" /> Nothing is lost whichever you pick. <strong>“Keep both”</strong> (recommended) keeps
-        playing yours — {peerName} receives it too — and keeps {peerName}'s version here on a branch you can switch
-        to. <strong>“Keep mine”</strong> makes your
-        version the shared one — {peerName} receives it (their old save is snapshotted first).
-        <strong>“Keep theirs”</strong> adopts {peerName}'s version here, snapshotting yours first.
-        Restore anything from the game's Snapshots / Branches tabs.
+        <History size={15} class="inline-icon" />
+        {#each segments($t('conflict.hint.body'), { peer: peerName, keepBoth: $t('conflict.hint.keepBoth'), keepMine: $t('conflict.hint.keepMine'), keepTheirs: $t('conflict.hint.keepTheirs') }, ['keepBoth', 'keepMine', 'keepTheirs']) as part}{#if part.bold}<strong>{part.text}</strong>{:else}{part.text}{/if}{/each}
       </p>
     </div>
   </div>

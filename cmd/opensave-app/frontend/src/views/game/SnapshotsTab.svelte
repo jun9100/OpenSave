@@ -8,6 +8,7 @@
   import { groupByDay, snapshotKind, whenLabel } from '../../lib/snapshots.js';
   import { askRestore } from '../../lib/restore.js';
   import { timeAgo } from '../../lib/timeago.js';
+  import { t, tt, trError } from '../../lib/i18n.js';
   import Camera from 'lucide-svelte/icons/camera';
   import Pin from 'lucide-svelte/icons/pin';
   import PinOff from 'lucide-svelte/icons/pin-off';
@@ -54,10 +55,10 @@
   $: latestId = allSnapshots.find((s) => s.branch === game.activeBranch)?.id;
 
   // How a snapshot is named in a question about it.
-  const named = (snap) => `the snapshot from ${whenLabel(snap.timestamp, now)}`;
+  const named = (snap) => tt('game.snapshots.named', { when: whenLabel(snap.timestamp, now) });
 
   const takeSnapshot = () =>
-    run('Snapshot created', async () => {
+    run(tt('game.snapshots.created'), async () => {
       await api.post(`/api/games/${game.id}/snapshot`, { comment });
       comment = '';
     });
@@ -65,13 +66,13 @@
   // Asked with what it would change; see lib/restore.js.
   const rollback = async (snap) => {
     if (!(await askRestore(game, snap))) return;
-    return run('Snapshot restored', () => api.post(`/api/games/${game.id}/rollback`, { snapshotId: snap.id }));
+    return run(tt('game.snapshots.restored'), () => api.post(`/api/games/${game.id}/rollback`, { snapshotId: snap.id }));
   };
 
   // Pinned: no limit, age rule or clean-up removes it. Not a lock — deleting
   // it by hand still works, and says so first.
   const togglePin = (snap) =>
-    run(snap.pinned ? 'Unpinned — the limits apply to it again' : 'Pinned — kept through every limit and clean-up', () =>
+    run(snap.pinned ? tt('game.snapshots.unpinnedToast') : tt('game.snapshots.pinnedToast'), () =>
       api.patch(`/api/games/${game.id}/snapshot/${snap.id}`, { pinned: !snap.pinned })
     );
 
@@ -100,9 +101,9 @@
   }
 
   async function deleteSnapshot(snap) {
-    const pinnedLine = snap.pinned ? ' It is pinned, so nothing else would ever have removed it.' : '';
-    if (!(await askConfirm(`Delete ${named(snap)}?${pinnedLine} This can't be undone; your current save isn't affected.`, { title: 'Delete snapshot?', confirmText: 'Delete', danger: true }))) return;
-    run('Snapshot deleted', () => api.del(`/api/games/${game.id}/snapshot/${snap.id}`));
+    const pinnedLine = snap.pinned ? tt('game.snapshots.deletePinnedLine') : '';
+    if (!(await askConfirm(tt('game.snapshots.deleteConfirm', { snapshot: named(snap), pinned: pinnedLine }), { title: tt('game.snapshots.deleteTitle'), confirmText: tt('game.snapshots.delete'), danger: true }))) return;
+    run(tt('game.snapshots.deleted'), () => api.del(`/api/games/${game.id}/snapshot/${snap.id}`));
   }
 
   async function browseSnapshot(snap) {
@@ -110,34 +111,34 @@
       const files = await api.get(`/api/games/${game.id}/snapshot/${snap.id}/files`);
       browsing = { snap, files };
     } catch (e) {
-      toast(e.message, 'error');
+      toast(trError(e.message), 'error');
     }
   }
 
   const restoreFile = async (relPath) => {
-    if (!(await askConfirm(`Put "${relPath}" back from ${named(browsing.snap)}, over the file there now? The current file is kept in a snapshot first.`, { title: 'Restore file?', confirmText: 'Restore' }))) return;
-    return run(`Restored ${relPath}`, () =>
+    if (!(await askConfirm(tt('game.snapshots.restoreFileConfirm', { file: relPath, snapshot: named(browsing.snap) }), { title: tt('game.snapshots.restoreFileTitle'), confirmText: tt('game.snapshots.restore') }))) return;
+    return run(tt('game.snapshots.restoredFile', { file: relPath }), () =>
       api.post(`/api/games/${game.id}/snapshot/${browsing.snap.id}/restore-file`, { relPath })
     );
   };
 </script>
 
 <div class="card snap-new">
-  <input placeholder="Snapshot comment (optional)" bind:value={comment} on:keydown={(e) => e.key === 'Enter' && takeSnapshot()} />
-  <button class="btn primary" disabled={$busy} on:click={takeSnapshot}><Camera size={16} />Snapshot now</button>
+  <input placeholder={$t('game.snapshots.commentPlaceholder')} bind:value={comment} on:keydown={(e) => e.key === 'Enter' && takeSnapshot()} />
+  <button class="btn primary" disabled={$busy} on:click={takeSnapshot}><Camera size={16} />{$t('game.snapshots.snapshotNow')}</button>
 </div>
 
 {#if browsing}
   <div class="card browse">
     <div class="browse-head">
-      <h3>Files in {named(browsing.snap)}</h3>
-      <button class="btn small" on:click={() => (browsing = null)}>Close</button>
+      <h3>{$t('game.snapshots.filesIn', { snapshot: named(browsing.snap) })}</h3>
+      <button class="btn small" on:click={() => (browsing = null)}>{$t('game.snapshots.close')}</button>
     </div>
     {#each browsing.files.filter((f) => !f.isDir) as f}
       <div class="file-row">
         <span class="file-path">{f.path}</span>
         <span class="file-size">{fmtSize(f.size)}</span>
-        <button class="btn small" disabled={$busy} on:click={() => restoreFile(f.path)}>Restore file</button>
+        <button class="btn small" disabled={$busy} on:click={() => restoreFile(f.path)}>{$t('game.snapshots.restoreFile')}</button>
       </div>
     {/each}
   </div>
@@ -148,7 +149,7 @@
 {/if}
 
 {#if allSnapshots.length === 0}
-  <div class="empty"><h3>No snapshots yet</h3><p>Snapshots are created automatically when your save changes.</p></div>
+  <div class="empty"><h3>{$t('game.snapshots.emptyTitle')}</h3><p>{$t('game.snapshots.emptyText')}</p></div>
 {:else}
   <div bind:this={listEl}>
   {#each groups as group (group.day)}
@@ -164,24 +165,24 @@
           <div class="info">
             <div class="title">
               <span class="title-text">{k.title}</span>
-              {#if snap.id === latestId}<span class="tag latest">Latest</span>{/if}
-              {#if snap.problem}<span class="tag damaged" title={snap.problem}>Damaged</span>{/if}
+              {#if snap.id === latestId}<span class="tag latest">{$t('game.snapshots.latest')}</span>{/if}
+              {#if snap.problem}<span class="tag damaged" title={trError(snap.problem)}>{$t('game.snapshots.damaged')}</span>{/if}
             </div>
             {#if noting === snap.id}
               <input
                 id="note-{snap.id}"
                 class="note-input"
-                placeholder="A note about this snapshot"
+                placeholder={$t('game.snapshots.notePlaceholder')}
                 maxlength="500"
                 bind:value={noteDraft}
                 on:keydown={(e) => noteKeydown(e, snap)}
                 on:blur={() => saveNote(snap)}
               />
             {:else if snap.note}
-              <button class="note" title="Edit the note" on:click={() => startNote(snap)}>{snap.note}</button>
+              <button class="note" title={$t('game.snapshots.editNote')} on:click={() => startNote(snap)}>{snap.note}</button>
             {/if}
             <div class="meta">
-              {#if snap.pinned}<span class="tag pinned"><Pin size={10} strokeWidth={2.6} />Pinned</span>{/if}
+              {#if snap.pinned}<span class="tag pinned"><Pin size={10} strokeWidth={2.6} />{$t('game.snapshots.pinned')}</span>{/if}
               <span class="tag kind">{k.label}</span>
               {#if branchCount > 1}<span class="tag">{snap.branch}</span>{/if}
               <span>{fmtSize(snap.sizeBytes)}</span>
@@ -192,34 +193,34 @@
               class="btn small ghost icon"
               class:on={snap.pinned}
               disabled={$busy}
-              title={snap.pinned ? 'Unpin: let the snapshot limits apply to it again' : 'Pin: keep it through every limit and clean-up'}
-              aria-label={snap.pinned ? 'Unpin' : 'Pin'}
+              title={snap.pinned ? $t('game.snapshots.unpinTitle') : $t('game.snapshots.pinTitle')}
+              aria-label={snap.pinned ? $t('game.snapshots.unpin') : $t('game.snapshots.pin')}
               aria-pressed={snap.pinned}
               on:click={() => togglePin(snap)}
             >
               <svelte:component this={snap.pinned ? PinOff : Pin} size={14} />
             </button>
-            <button class="btn small ghost icon" title={snap.note ? 'Edit the note' : 'Add a note'} aria-label="Note" on:click={() => startNote(snap)}>
+            <button class="btn small ghost icon" title={snap.note ? $t('game.snapshots.editNote') : $t('game.snapshots.addNote')} aria-label={$t('game.snapshots.note')} on:click={() => startNote(snap)}>
               <Pencil size={13} />
             </button>
             {#if allSnapshots.length > 1}
               <button
                 class="btn small ghost icon"
-                title="Compare with another snapshot"
-                aria-label="Compare"
+                title={$t('game.snapshots.compareTitle')}
+                aria-label={$t('game.snapshots.compare')}
                 on:click={() => (comparing = snap)}
               >
                 <GitCompareArrows size={14} />
               </button>
             {/if}
-            <button class="btn small" on:click={() => browseSnapshot(snap)}>Files</button>
+            <button class="btn small" on:click={() => browseSnapshot(snap)}>{$t('game.snapshots.files')}</button>
             <button
               class="btn small"
               disabled={$busy || !!snap.problem}
-              title={snap.problem ? `This snapshot can't be restored: ${snap.problem}` : undefined}
-              on:click={() => rollback(snap)}>Restore</button
+              title={snap.problem ? $t('game.snapshots.cantRestore', { problem: trError(snap.problem) }) : undefined}
+              on:click={() => rollback(snap)}>{$t('game.snapshots.restore')}</button
             >
-            <button class="btn small ghost-danger" disabled={$busy} title="Delete this snapshot" on:click={() => deleteSnapshot(snap)}>Delete</button>
+            <button class="btn small ghost-danger" disabled={$busy} title={$t('game.snapshots.deleteThis')} on:click={() => deleteSnapshot(snap)}>{$t('game.snapshots.delete')}</button>
           </div>
         </div>
       {/each}
