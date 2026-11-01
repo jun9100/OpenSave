@@ -49,6 +49,8 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jun9100.opensave.BackTarget
@@ -74,6 +76,8 @@ import com.jun9100.opensave.ui.settings.SourceManagementPage
 @Composable
 internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
     val state by sourceViewModel.uiState.collectAsStateWithLifecycle()
+    // Back from an emulator: saves may have changed, so the status badges re-read their signatures.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { sourceViewModel.refreshSaveSignatures() }
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { uri -> uri?.let(sourceViewModel::onTreeSelected) },

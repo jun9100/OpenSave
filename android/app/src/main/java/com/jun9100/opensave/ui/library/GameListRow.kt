@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.CoverRepository
 import com.jun9100.opensave.GamePresentation
+import com.jun9100.opensave.GameSyncStatus
 import com.jun9100.opensave.LibraryRowHistory
 import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.SourceGameEntry
@@ -36,10 +37,12 @@ import com.jun9100.opensave.ui.preview.PreviewData
 import com.jun9100.opensave.ui.preview.PreviewSurface
 
 /**
- * One compact library row (60dp, plan §3.4). The whole row is the single focus
- * stop: click shows the game in the detail pane or page, long press toggles the
- * batch selection. The checkbox stays tappable by touch but is skipped by D-pad;
- * pad users toggle it with Select or the X menu.
+ * One compact library row (60dp, plan §3.4) with its status badge at the end.
+ * The whole row is the single focus stop: click shows the game in the detail
+ * pane or page (in selection mode the caller makes it toggle instead), long
+ * press selects it and enters selection mode. The checkbox only shows in
+ * selection mode; it stays tappable by touch but is skipped by D-pad, pad
+ * users toggle with A or Select.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -54,6 +57,9 @@ internal fun GameListRow(
     /** Whether the selection can change right now (nothing is running). */
     batchEnabled: Boolean,
     current: Boolean,
+    /** Null while the status is not known yet (nothing scanned). */
+    status: GameSyncStatus?,
+    selectionMode: Boolean,
     onClick: () -> Unit,
     onBatchCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -73,17 +79,19 @@ internal fun GameListRow(
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = if (selectable) ({ onBatchCheckedChange(!batchChecked) }) else null,
-                onLongClickLabel = if (batchChecked) "移出批量选择" else "加入批量选择",
+                onLongClickLabel = if (batchChecked) "取消选择" else "选择",
             )
-            .padding(end = 12.dp),
+            .padding(start = if (selectionMode) 0.dp else 12.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Checkbox(
-            checked = batchChecked,
-            onCheckedChange = onBatchCheckedChange,
-            enabled = selectable,
-            modifier = Modifier.focusProperties { canFocus = false },
-        )
+        if (selectionMode) {
+            Checkbox(
+                checked = batchChecked,
+                onCheckedChange = onBatchCheckedChange,
+                enabled = selectable,
+                modifier = Modifier.focusProperties { canFocus = false },
+            )
+        }
         if (coverRepository != null) {
             GameArtwork(presentation = presentation, coverRepository = coverRepository, modifier = Modifier.size(40.dp))
         } else {
@@ -107,8 +115,34 @@ internal fun GameListRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        status?.let { GameStatusBadge(it, Modifier.padding(start = 8.dp), short = true) }
     }
 }
+
+/** "● 已同步"-style status label; [short] is the row badge, otherwise the detail wording. */
+@Composable
+internal fun GameStatusBadge(status: GameSyncStatus, modifier: Modifier = Modifier, short: Boolean = false) {
+    Text(
+        "${status.symbol} ${if (short) status.shortLabel else status.label}",
+        modifier = modifier,
+        style = MaterialTheme.typography.labelSmall,
+        color = statusColor(status),
+        maxLines = 1,
+    )
+}
+
+@Composable
+private fun statusColor(status: GameSyncStatus): Color = when (status) {
+    GameSyncStatus.SYNCED, GameSyncStatus.LOCAL_ONLY -> MaterialTheme.colorScheme.primary
+    GameSyncStatus.CLOUD_NEWER -> MaterialTheme.colorScheme.primary
+    GameSyncStatus.LOCAL_CHANGED -> MaterialTheme.colorScheme.tertiary
+    GameSyncStatus.NOT_UPLOADED -> MaterialTheme.colorScheme.secondary
+    GameSyncStatus.NEVER_BACKED_UP -> MaterialTheme.colorScheme.onSurfaceVariant
+    GameSyncStatus.CONFLICT -> MaterialTheme.colorScheme.error
+}
+
+/** Where the row text starts: the divider under a row is indented this far. */
+internal fun gameRowTextStart(selectionMode: Boolean) = if (selectionMode) 98.dp else 62.dp
 
 internal val GAME_ROW_HEIGHT = 60.dp
 
@@ -126,6 +160,8 @@ private fun GameListRowPreview() {
                 batchEligible = true,
                 batchEnabled = true,
                 current = true,
+                status = GameSyncStatus.SYNCED,
+                selectionMode = true,
                 onClick = {},
                 onBatchCheckedChange = {},
             )
@@ -138,6 +174,8 @@ private fun GameListRowPreview() {
                 batchEligible = true,
                 batchEnabled = true,
                 current = false,
+                status = GameSyncStatus.NEVER_BACKED_UP,
+                selectionMode = true,
                 onClick = {},
                 onBatchCheckedChange = {},
             )

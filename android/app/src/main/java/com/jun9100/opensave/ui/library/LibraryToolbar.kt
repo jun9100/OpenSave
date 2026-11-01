@@ -10,17 +10,23 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,7 +35,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.jun9100.opensave.LibraryStatusFilter
+import com.jun9100.opensave.PrimaryBackup
 import com.jun9100.opensave.ui.LIBRARY_TOOLBAR_TAG
+import com.jun9100.opensave.ui.LibrarySelectionActions
 import com.jun9100.opensave.ui.input.busyDimmed
 import com.jun9100.opensave.ui.input.handheldFocusRing
 import com.jun9100.opensave.ui.input.whenIdle
@@ -38,7 +47,13 @@ import com.jun9100.opensave.ui.preview.PreviewSurface
 
 /**
  * The fixed library toolbar above the list; it never scrolls away. Landscape
- * fits it into one 52dp row, portrait uses a chip row and an action row.
+ * fits it into one 52dp row, portrait uses a chip row and an action row. The
+ * chips are the save type filter, then the status filter (plan §5.2).
+ *
+ * Browsing shows the game count, "选择" and the main button ("备份有变更 (N)",
+ * or "备份所选 (N)" with a selection); selection mode replaces them with the
+ * contextual bar ✕ · 已选 N · 全选当前筛选 · 清除 · 备份所选 (plan §5.1).
+ *
  * It is one focus group: coming back from the list returns to the control
  * used last. While [enabled] is false (an operation runs) the controls stay
  * focusable and dimmed and ignore clicks, so D-pad focus does not drop.
@@ -47,48 +62,59 @@ import com.jun9100.opensave.ui.preview.PreviewSurface
 internal fun LibraryToolbar(
     typeOptions: List<Pair<String, String>>,
     selectedTypeId: String,
+    statusCounts: Map<LibraryStatusFilter, Int>,
+    selectedStatus: LibraryStatusFilter,
     visibleCount: Int,
+    selectionMode: Boolean,
     selectedCount: Int,
-    eligibleCount: Int,
+    primary: PrimaryBackup,
     enabled: Boolean,
     singleRow: Boolean,
     onTypeSelected: (String) -> Unit,
-    onToggleAll: () -> Unit,
-    onBackupSelected: () -> Unit,
+    onStatusSelected: (LibraryStatusFilter) -> Unit,
+    selection: LibrarySelectionActions,
+    onPrimaryBackup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val chips: @Composable (Modifier) -> Unit = { chipModifier ->
+        LibraryFilterBar(
+            typeOptions = typeOptions,
+            selectedTypeId = selectedTypeId,
+            statusCounts = statusCounts,
+            selectedStatus = selectedStatus,
+            enabled = enabled,
+            onTypeSelected = onTypeSelected,
+            onStatusSelected = onStatusSelected,
+            modifier = chipModifier,
+        )
+    }
+    val actions: @Composable RowScope.(Boolean) -> Unit = { fill ->
+        if (selectionMode) {
+            SelectionActions(selectedCount, primary, enabled, selection, onPrimaryBackup, fill)
+        } else {
+            BrowseActions(visibleCount, primary, enabled, selection.onEnter, onPrimaryBackup, fill)
+        }
+    }
     Surface(
         modifier = modifier.fillMaxWidth().testTag(LIBRARY_TOOLBAR_TAG).focusRestorer().focusGroup(),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = if (selectionMode) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
     ) {
         if (singleRow) {
             Row(
                 modifier = Modifier.fillMaxWidth().height(52.dp).padding(end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SaveTypeFilterBar(
-                    options = typeOptions,
-                    selectedTypeId = selectedTypeId,
-                    enabled = enabled,
-                    onSelected = onTypeSelected,
-                    modifier = Modifier.weight(1f),
-                )
-                BatchActions(visibleCount, selectedCount, eligibleCount, enabled, onToggleAll, onBackupSelected)
+                chips(Modifier.weight(1f))
+                actions(false)
             }
         } else {
             Column {
-                SaveTypeFilterBar(
-                    options = typeOptions,
-                    selectedTypeId = selectedTypeId,
-                    enabled = enabled,
-                    onSelected = onTypeSelected,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                chips(Modifier.fillMaxWidth())
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, bottom = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BatchActions(visibleCount, selectedCount, eligibleCount, enabled, onToggleAll, onBackupSelected, fill = true)
+                    actions(true)
                 }
             }
         }
@@ -96,50 +122,98 @@ internal fun LibraryToolbar(
 }
 
 @Composable
-private fun RowScope.BatchActions(
+private fun RowScope.BrowseActions(
     visibleCount: Int,
-    selectedCount: Int,
-    eligibleCount: Int,
+    primary: PrimaryBackup,
     enabled: Boolean,
-    onToggleAll: () -> Unit,
-    onBackupSelected: () -> Unit,
-    fill: Boolean = false,
+    onEnterSelection: () -> Unit,
+    onPrimaryBackup: () -> Unit,
+    fill: Boolean,
 ) {
-    val allSelected = eligibleCount > 0 && selectedCount == eligibleCount
     Text(
-        "$visibleCount 款 · 已选 $selectedCount/$eligibleCount",
-        modifier = if (fill) Modifier.weight(1f) else Modifier.padding(horizontal = 8.dp),
+        "$visibleCount 款",
+        modifier = if (fill) Modifier.weight(1f).padding(start = 8.dp) else Modifier.padding(horizontal = 8.dp),
         style = MaterialTheme.typography.labelLarge,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
     TextButton(
-        onClick = whenIdle(!enabled, onToggleAll),
-        enabled = eligibleCount > 0,
+        onClick = whenIdle(!enabled, onEnterSelection),
         modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(!enabled),
     ) {
-        Text(if (allSelected) "取消全选" else "全选", maxLines = 1)
+        Icon(Icons.Outlined.Checklist, contentDescription = null, modifier = Modifier.size(18.dp))
+        Text("选择", modifier = Modifier.padding(start = 4.dp), maxLines = 1)
     }
-    // TODO(plan §5.2): becomes "备份有变更 (N)" once change detection exists.
-    // Content-hash dedup (§5.3) already skips unchanged games, but knowing N
-    // needs every game's saves copied and hashed, so the label stays honest.
+    PrimaryBackupButton(primary, enabled, onPrimaryBackup)
+}
+
+@Composable
+private fun RowScope.SelectionActions(
+    selectedCount: Int,
+    primary: PrimaryBackup,
+    enabled: Boolean,
+    selection: LibrarySelectionActions,
+    onPrimaryBackup: () -> Unit,
+    fill: Boolean,
+) {
+    // Leaving selection mode is not an operation; it stays available while busy.
+    IconButton(
+        onClick = selection.onExit,
+        modifier = Modifier.size(40.dp).handheldFocusRing(CircleShape),
+    ) {
+        Icon(Icons.Outlined.Close, contentDescription = "退出选择模式")
+    }
+    Text(
+        "已选 $selectedCount",
+        modifier = if (fill) Modifier.weight(1f) else Modifier.padding(end = 4.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSecondaryContainer,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+    TextButton(
+        onClick = whenIdle(!enabled, selection.onSelectAll),
+        modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(!enabled),
+        contentPadding = PaddingValues(horizontal = 8.dp),
+    ) {
+        Text("全选当前筛选", maxLines = 1)
+    }
+    TextButton(
+        onClick = whenIdle(!enabled, selection.onClear),
+        modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(!enabled),
+        contentPadding = PaddingValues(horizontal = 8.dp),
+    ) {
+        Text("清除", maxLines = 1)
+    }
+    PrimaryBackupButton(primary, enabled, onPrimaryBackup)
+}
+
+@Composable
+private fun PrimaryBackupButton(primary: PrimaryBackup, enabled: Boolean, onClick: () -> Unit) {
     Button(
-        onClick = whenIdle(!enabled, onBackupSelected),
-        enabled = selectedCount > 0,
-        modifier = Modifier.height(40.dp).handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(!enabled),
+        onClick = whenIdle(!enabled, onClick),
+        enabled = primary.enabled,
+        modifier = Modifier
+            .height(40.dp)
+            .testTag(PRIMARY_BACKUP_TAG)
+            .handheldFocusRing(RoundedCornerShape(20.dp))
+            .busyDimmed(!enabled),
         contentPadding = PaddingValues(horizontal = 14.dp),
     ) {
         Icon(Icons.Outlined.Save, contentDescription = null)
-        Text("备份所选 ($selectedCount)", modifier = Modifier.padding(start = 6.dp), maxLines = 1)
+        Text(primary.label, modifier = Modifier.padding(start = 6.dp), maxLines = 1)
     }
 }
 
 @Composable
-private fun SaveTypeFilterBar(
-    options: List<Pair<String, String>>,
+private fun LibraryFilterBar(
+    typeOptions: List<Pair<String, String>>,
     selectedTypeId: String,
+    statusCounts: Map<LibraryStatusFilter, Int>,
+    selectedStatus: LibraryStatusFilter,
     enabled: Boolean,
-    onSelected: (String) -> Unit,
+    onTypeSelected: (String) -> Unit,
+    onStatusSelected: (LibraryStatusFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -149,22 +223,47 @@ private fun SaveTypeFilterBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        options.forEach { (id, label) ->
+        // A single "全部" type means there is nothing to filter by type.
+        if (typeOptions.size > 1) {
+            typeOptions.forEach { (id, label) ->
+                FilterChip(
+                    selected = selectedTypeId == id,
+                    onClick = whenIdle(!enabled) { onTypeSelected(id) },
+                    modifier = Modifier.handheldFocusRing(RoundedCornerShape(8.dp)).busyDimmed(!enabled),
+                    label = { Text(label, maxLines = 1) },
+                )
+            }
+            VerticalDivider(modifier = Modifier.height(24.dp))
+        }
+        LibraryStatusFilter.entries.forEach { filter ->
+            val count = statusCounts[filter] ?: 0
             FilterChip(
-                selected = selectedTypeId == id,
-                onClick = whenIdle(!enabled) { onSelected(id) },
+                selected = selectedStatus == filter,
+                onClick = whenIdle(!enabled) { onStatusSelected(filter) },
                 modifier = Modifier.handheldFocusRing(RoundedCornerShape(8.dp)).busyDimmed(!enabled),
-                label = { Text(label, maxLines = 1) },
+                label = {
+                    Text(if (filter == LibraryStatusFilter.ALL) filter.label else "${filter.label} $count", maxLines = 1)
+                },
             )
         }
     }
 }
+
+internal const val PRIMARY_BACKUP_TAG = "primary-backup"
 
 private val PreviewTypeOptions = listOf(
     "all" to "全部",
     "switch" to "Switch 游戏",
     "pc" to "PC 游戏",
     "emulator-ppsspp" to "PPSSPP",
+)
+
+private val PreviewStatusCounts = mapOf(
+    LibraryStatusFilter.ALL to 87,
+    LibraryStatusFilter.CHANGED to 5,
+    LibraryStatusFilter.NOT_UPLOADED to 2,
+    LibraryStatusFilter.NEVER_BACKED_UP to 7,
+    LibraryStatusFilter.CONFLICT to 0,
 )
 
 @ComponentPreviews
@@ -174,14 +273,18 @@ private fun LibraryToolbarPreview() {
         LibraryToolbar(
             typeOptions = PreviewTypeOptions,
             selectedTypeId = "switch",
+            statusCounts = PreviewStatusCounts,
+            selectedStatus = LibraryStatusFilter.ALL,
             visibleCount = 12,
-            selectedCount = 3,
-            eligibleCount = 10,
+            selectionMode = false,
+            selectedCount = 0,
+            primary = PrimaryBackup("备份有变更 (12)", setOf("a"), fromSelection = false),
             enabled = true,
             singleRow = false,
             onTypeSelected = {},
-            onToggleAll = {},
-            onBackupSelected = {},
+            onStatusSelected = {},
+            selection = LibrarySelectionActions(),
+            onPrimaryBackup = {},
         )
     }
 }
@@ -191,17 +294,39 @@ private fun LibraryToolbarPreview() {
 @Composable
 private fun LibraryToolbarLandscapePreview() {
     PreviewSurface {
-        LibraryToolbar(
-            typeOptions = PreviewTypeOptions,
-            selectedTypeId = "all",
-            visibleCount = 87,
-            selectedCount = 0,
-            eligibleCount = 80,
-            enabled = true,
-            singleRow = true,
-            onTypeSelected = {},
-            onToggleAll = {},
-            onBackupSelected = {},
-        )
+        Column {
+            LibraryToolbar(
+                typeOptions = PreviewTypeOptions,
+                selectedTypeId = "all",
+                statusCounts = PreviewStatusCounts,
+                selectedStatus = LibraryStatusFilter.CHANGED,
+                visibleCount = 5,
+                selectionMode = false,
+                selectedCount = 0,
+                primary = PrimaryBackup("备份有变更 (12)", setOf("a"), fromSelection = false),
+                enabled = true,
+                singleRow = true,
+                onTypeSelected = {},
+                onStatusSelected = {},
+                selection = LibrarySelectionActions(),
+                onPrimaryBackup = {},
+            )
+            LibraryToolbar(
+                typeOptions = PreviewTypeOptions,
+                selectedTypeId = "all",
+                statusCounts = PreviewStatusCounts,
+                selectedStatus = LibraryStatusFilter.ALL,
+                visibleCount = 87,
+                selectionMode = true,
+                selectedCount = 3,
+                primary = PrimaryBackup("备份所选 (3)", setOf("a", "b", "c"), fromSelection = true),
+                enabled = true,
+                singleRow = true,
+                onTypeSelected = {},
+                onStatusSelected = {},
+                selection = LibrarySelectionActions(),
+                onPrimaryBackup = {},
+            )
+        }
     }
 }

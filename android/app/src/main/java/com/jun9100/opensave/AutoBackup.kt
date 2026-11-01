@@ -208,6 +208,8 @@ class AutoBackupWorker(
         val selectedGame = game.copy(saves = saves)
         val cloudIdentity = GameCloudNaming.identity(source, sourceId, selectedGame)
         val workspace = File(applicationContext.filesDir, AUTO_GAME_WORKSPACE_DIRECTORY)
+        // Read before the copy: content changed during it reads as a change next time, never the reverse.
+        val signature = runCatching { SaveSignatureReader(storage, rootStorage).read(source, game) }.getOrNull()
         try {
             when (source) {
                 is SourceSelection.Saf -> storage.copyGameLocations(source.uri, manifest.locations, workspace)
@@ -296,6 +298,7 @@ class AutoBackupWorker(
                 contentHash = fingerprint.contentHash,
                 currentManifestHash = fingerprint.manifestHash,
             )
+            if (existing != null && signature != null) repository.setSaveSignature(existing.id, signature)
             if (nativeDecision == null && existing?.uploaded == true) {
                 return publishCurrentHead(config, cloudIdentity, existing, repository.fileFor(existing))
             }
@@ -309,6 +312,7 @@ class AutoBackupWorker(
                 repository = repository,
                 cloudIdentity = cloudIdentity,
             )
+            if (pending == null && signature != null) repository.setSaveSignature(record.id, signature)
 
             if (nativeDecision != null) {
                 return publishNativeCurrentHead(native, cloudIdentity, record, repository.fileFor(record), repository)

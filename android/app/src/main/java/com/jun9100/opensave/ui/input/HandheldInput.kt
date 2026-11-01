@@ -15,6 +15,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.OpenSavePage
+import com.jun9100.opensave.PrimaryBackup
 import kotlin.math.abs
 import kotlin.math.sign
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -49,10 +50,10 @@ enum class HandheldCommand {
     /** Y: the command panel (scan, cloud, filter, select all). */
     COMMAND_PANEL,
 
-    /** Select: add the current game to the batch selection, or take it out. */
+    /** Select: add the current game to the selection (entering selection mode), or take it out. */
     TOGGLE_SELECTION,
 
-    /** Start: back up the selection, or the current game when nothing is selected. */
+    /** Start: the toolbar's main button, "备份所选" or "备份有变更". */
     BACKUP,
 }
 
@@ -183,19 +184,21 @@ object HandheldDispatch {
         targetKey: String?,
         targetEligible: Boolean,
         targetSelected: Boolean,
-        selectedKeys: Set<String>,
+        primary: PrimaryBackup,
+        selectionMode: Boolean,
     ): LibraryHandheldAction = when (command) {
         HandheldCommand.GAME_MENU -> targetKey?.let(LibraryHandheldAction::OpenMenu) ?: LibraryHandheldAction.None
-        HandheldCommand.TOGGLE_SELECTION -> if (targetKey != null && targetEligible) {
-            LibraryHandheldAction.SetSelected(targetKey, !targetSelected)
-        } else {
-            LibraryHandheldAction.None
+        HandheldCommand.TOGGLE_SELECTION -> when {
+            targetKey != null && targetEligible -> LibraryHandheldAction.SetSelected(targetKey, !targetSelected)
+            // A row batch backup skips still opens selection mode, with nothing checked.
+            !selectionMode -> LibraryHandheldAction.EnterSelection
+            else -> LibraryHandheldAction.None
         }
-        // Same as the toolbar's "备份所选 (N)"; with nothing selected, the game in front of the user.
-        HandheldCommand.BACKUP -> when {
-            selectedKeys.isNotEmpty() -> LibraryHandheldAction.BackupSelected(selectedKeys)
-            targetKey != null -> LibraryHandheldAction.BackupGame(targetKey)
-            else -> LibraryHandheldAction.BackupSelected(emptySet())
+        // Exactly the toolbar's main button: "备份所选 (N)" or "备份有变更 (N)".
+        HandheldCommand.BACKUP -> if (primary.enabled) {
+            LibraryHandheldAction.BackupSelected(primary.keys)
+        } else {
+            LibraryHandheldAction.NothingToBackup
         }
         HandheldCommand.PAGE_UP -> LibraryHandheldAction.Page(forward = false)
         HandheldCommand.PAGE_DOWN -> LibraryHandheldAction.Page(forward = true)
@@ -217,8 +220,9 @@ sealed interface LibraryHandheldAction {
     data object None : LibraryHandheldAction
     data class OpenMenu(val key: String) : LibraryHandheldAction
     data class SetSelected(val key: String, val selected: Boolean) : LibraryHandheldAction
+    data object EnterSelection : LibraryHandheldAction
     data class BackupSelected(val keys: Set<String>) : LibraryHandheldAction
-    data class BackupGame(val key: String) : LibraryHandheldAction
+    data object NothingToBackup : LibraryHandheldAction
     data class Page(val forward: Boolean) : LibraryHandheldAction
 }
 

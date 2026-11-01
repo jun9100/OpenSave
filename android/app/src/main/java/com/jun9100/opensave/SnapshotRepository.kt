@@ -28,6 +28,8 @@ data class SnapshotRecord(
     val contentHash: String = "",
     /** [ContentHash.VERSION] that produced [contentHash]; 0 when there is none. */
     val hashVersion: Int = 0,
+    /** Encoded [SaveSignature] of the game's locations when it was captured; blank when unknown. */
+    val saveSignature: String = "",
 ) {
     /** A pre-restore / pre-write-back copy, not a backup the user made; it carries a comment. */
     val isSafetyCopy: Boolean get() = comment.isNotBlank()
@@ -63,6 +65,13 @@ class SnapshotRepository(private val root: File) {
             if (record.id == id) record.copy(uploaded = uploaded) else record
         }
         writeRecords(records)
+    }
+
+    /** Remembers what the save locations looked like when [id] was captured or last matched. */
+    fun setSaveSignature(id: String, signature: String) = synchronized(lock) {
+        val records = readRecords()
+        if (records.none { it.id == id && it.saveSignature != signature }) return@synchronized
+        writeRecords(records.map { record -> if (record.id == id) record.copy(saveSignature = signature) else record })
     }
 
     /**
@@ -176,6 +185,7 @@ class SnapshotRepository(private val root: File) {
         record.cloudGameId,
         record.contentHash,
         record.hashVersion.toString(),
+        record.saveSignature,
     ).joinToString("\t", transform = ::encodeField)
 
     private fun decode(line: String): SnapshotRecord? {
@@ -201,6 +211,7 @@ class SnapshotRepository(private val root: File) {
                 cloudGameId = fields.getOrNull(13).orEmpty(),
                 contentHash = fields.getOrNull(14).orEmpty(),
                 hashVersion = fields.getOrNull(15)?.toIntOrNull() ?: 0,
+                saveSignature = fields.getOrNull(16).orEmpty(),
             )
         }.getOrNull()
     }
@@ -217,8 +228,8 @@ class SnapshotRepository(private val root: File) {
         private const val TEMPORARY_PREFIX = ".index-"
         private const val TEMPORARY_SUFFIX = ".part"
 
-        /** Older builds wrote 10, 12 or 14 columns; 16 adds the content hash and its version. */
-        private val RECORD_FIELD_COUNTS = setOf(10, 12, 14, 16)
+        /** Older builds wrote 10, 12, 14 or 16 columns; 16 added the content hash, 17 the save signature. */
+        private val RECORD_FIELD_COUNTS = setOf(10, 12, 14, 16, 17)
 
         private val locks = ConcurrentHashMap<String, Any>()
         private val instances = ConcurrentHashMap<String, SnapshotRepository>()

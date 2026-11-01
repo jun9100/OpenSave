@@ -8,6 +8,34 @@ data class LibraryRowHistory(
     val latestUploaded: Boolean? = null,
 )
 
+/** Status chips of the library toolbar; combined with the save type filter. */
+enum class LibraryStatusFilter(val label: String) {
+    ALL("全部状态"),
+    CHANGED("有变更"),
+    NOT_UPLOADED("未上传"),
+    NEVER_BACKED_UP("从未备份"),
+    CONFLICT("冲突"),
+    ;
+
+    fun matches(status: GameSyncStatus?): Boolean = when (this) {
+        ALL -> true
+        CHANGED -> status == GameSyncStatus.LOCAL_CHANGED
+        NOT_UPLOADED -> status == GameSyncStatus.NOT_UPLOADED
+        NEVER_BACKED_UP -> status == GameSyncStatus.NEVER_BACKED_UP
+        CONFLICT -> status == GameSyncStatus.CONFLICT
+    }
+}
+
+/** The toolbar's main button and Start (plan §5.1): the selection if any, else the games with changes. */
+data class PrimaryBackup(
+    val label: String,
+    val keys: Set<String>,
+    /** True for "备份所选", false for "备份有变更". */
+    val fromSelection: Boolean,
+) {
+    val enabled: Boolean get() = keys.isNotEmpty()
+}
+
 /** Where the back key goes; see [LibraryView.backTarget]. */
 enum class BackTarget {
     /** Portrait full-screen game detail -> game list. */
@@ -38,6 +66,44 @@ object LibraryView {
 
     fun filter(games: List<SourceGameEntry>, typeId: String): List<SourceGameEntry> =
         if (typeId == ALL_TYPES) games else games.filter { it.saveType.id == typeId }
+
+    /** Rows of [games] whose status [filter] takes; a game without a status yet only shows under "全部状态". */
+    fun filterByStatus(
+        games: List<SourceGameEntry>,
+        statuses: Map<String, GameSyncStatus>,
+        filter: LibraryStatusFilter,
+    ): List<SourceGameEntry> =
+        if (filter == LibraryStatusFilter.ALL) games else games.filter { filter.matches(statuses[it.libraryKey]) }
+
+    /** How many of [games] each status chip would show. */
+    fun statusCounts(games: List<SourceGameEntry>, statuses: Map<String, GameSyncStatus>): Map<LibraryStatusFilter, Int> =
+        LibraryStatusFilter.entries.associateWith { filter -> filterByStatus(games, statuses, filter).size }
+
+    /** Eligible games "备份有变更" takes: never backed up, or saves changed since the newest backup. */
+    fun changedKeys(eligibleKeys: List<String>, statuses: Map<String, GameSyncStatus>): List<String> =
+        eligibleKeys.filter { statuses[it]?.needsBackup == true }
+
+    /**
+     * "备份所选 (N)" whenever something is selected or selection mode is on,
+     * otherwise "备份有变更 (N)" over [changedKeys].
+     */
+    fun primaryBackup(selectedKeys: Set<String>, changedKeys: Collection<String>, selectionMode: Boolean): PrimaryBackup =
+        if (selectionMode || selectedKeys.isNotEmpty()) {
+            PrimaryBackup("备份所选 (${selectedKeys.size})", selectedKeys, fromSelection = true)
+        } else {
+            PrimaryBackup("备份有变更 (${changedKeys.size})", changedKeys.toSet(), fromSelection = false)
+        }
+
+    /**
+     * The local versions kept in the UI state: up to [perGame] newest of every
+     * game, so a game backed up long ago still has a status, plus [other]
+     * newest whole-source snapshots. [records] are newest first.
+     */
+    fun retainedSnapshots(records: List<SnapshotRecord>, perGame: Int, other: Int): List<SnapshotRecord> {
+        val (games, sources) = records.partition { it.gameKey != null }
+        return (games.groupBy { "${it.sourceId}::${it.gameKey}" }.values.flatMap { it.take(perGame) } + sources.take(other))
+            .sortedByDescending(SnapshotRecord::createdAtMillis)
+    }
 
     /**
      * The game the detail pane shows. Landscape always shows one when the list is
@@ -70,10 +136,10 @@ object LibraryView {
         }
 
     /**
-     * Second line of a compact row: last backup time, `本地 N · 已上传/未上传`,
-     * then the source. The status comes first because the landscape list
-     * column is narrow and the ellipsis should cut the long source label.
-     * Rows that batch backup skips say why.
+     * Second line of a compact row: last backup time and `本地 N`, then the
+     * source; the sync state is the row's status badge. The time comes first
+     * because the landscape list column is narrow and the ellipsis should cut
+     * the long source label. Rows that batch backup skips say why.
      */
     fun rowSecondary(
         sourceLabel: String,
@@ -88,7 +154,6 @@ object LibraryView {
         } else {
             append(formatTime(lastBackup))
             append(" · 本地 ").append(history.localCount)
-            append(if (history.latestUploaded == true) " · 已上传" else " · 未上传")
         }
         append(" · ").append(sourceLabel)
     }

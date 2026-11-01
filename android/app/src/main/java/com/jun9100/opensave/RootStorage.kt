@@ -117,6 +117,42 @@ class RootStorage(private val context: Context) {
         }
     }
 
+    /**
+     * [SaveSignature] of each of [relativePaths] below [rawRootPath] in one su
+     * call, null for a missing location. Uses `find -printf '%s %T@'`, and
+     * `find -exec stat -c '%s %Y'` where toybox find has no -printf (plan §5.2).
+     */
+    suspend fun saveSignatures(rawRootPath: String, relativePaths: List<String>): Result<Map<String, SaveSignature?>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val root = RootPathPolicy.canonicalizeForScan(rawRootPath)
+                val paths = relativePaths.distinct()
+                if (paths.isEmpty()) return@runCatching emptyMap()
+                val rootPrefix = root.trimEnd('/') + "/"
+                val absolute = paths.map { relative ->
+                    File(root, GameSnapshotManifest.safeRelativePath(relative)).path.also {
+                        require(it.startsWith(rootPrefix)) { "存档路径超出已扫描目录" }
+                    }
+                }
+                val section = RootCommand.shellQuote(SaveSignature.SECTION_MARKER)
+                val missing = RootCommand.shellQuote(SaveSignature.MISSING_MARKER)
+                val script = buildString {
+                    append("if find / -maxdepth 0 -printf '' >/dev/null 2>&1; then P=1; else P=0; fi; ")
+                    append("for p in ${absolute.joinToString(" ") { RootCommand.shellQuote(it) }}; do ")
+                    append("printf '%s\\n' $section; ")
+                    append("if [ -z \"\$(find \"\$p\" -maxdepth 0 -type d -print 2>/dev/null)\" ]; then printf '%s\\n' $missing; continue; fi; ")
+                    append("if [ \$P = 1 ]; then find \"\$p\" -type f -printf '%s %T@\\n' 2>/dev/null; ")
+                    append("else find \"\$p\" -type f -exec stat -c '%s %Y' {} + 2>/dev/null; fi; ")
+                    append("done")
+                }
+                val result = RootCommand.execute(script)
+                require(result.exitCode == 0) { "Root signature listing failed (${result.exitCode})" }
+                val sections = SaveSignature.parseRootListing(result.output)
+                require(sections.size == paths.size) { "Root signature listing is incomplete" }
+                paths.zip(sections).toMap()
+            }
+        }
+
     suspend fun copyGameLocations(
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,

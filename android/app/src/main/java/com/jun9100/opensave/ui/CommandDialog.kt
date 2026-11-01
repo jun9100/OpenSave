@@ -3,6 +3,7 @@ package com.jun9100.opensave.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import com.jun9100.opensave.LibraryStatusFilter
 import com.jun9100.opensave.ui.dialogs.HandheldMenuDialog
 import com.jun9100.opensave.ui.dialogs.MenuEntry
 
@@ -31,25 +32,23 @@ internal fun libraryCommands(
     busy: Boolean,
     typeOptions: List<Pair<String, String>>,
     selectedTypeId: String,
+    selectedStatus: LibraryStatusFilter,
+    selectionMode: Boolean,
     selectedCount: Int,
-    eligibleCount: Int,
     onScan: () -> Unit,
-    onToggleAll: () -> Unit,
+    selection: LibrarySelectionActions,
     onCheckCloudUpdates: () -> Unit,
     onTypeSelected: (String) -> Unit,
+    onStatusSelected: (LibraryStatusFilter) -> Unit,
     onOpenManagement: () -> Unit,
 ): List<MenuEntry> = buildList {
     add(MenuEntry("扫描游戏", detail = "重新扫描已选的存档来源", enabled = !busy, onClick = onScan))
-    if (eligibleCount > 0) {
-        val allSelected = selectedCount == eligibleCount
-        add(
-            MenuEntry(
-                if (allSelected) "取消全选" else "全选当前筛选",
-                detail = "已选 $selectedCount/$eligibleCount",
-                enabled = !busy,
-                onClick = onToggleAll,
-            ),
-        )
+    if (selectionMode) {
+        add(MenuEntry("全选当前筛选", detail = "已选 $selectedCount", enabled = !busy, onClick = selection.onSelectAll))
+        add(MenuEntry("清除选择", enabled = !busy, onClick = selection.onClear))
+        add(MenuEntry("退出选择模式", detail = "B 键也可退出", onClick = selection.onExit))
+    } else {
+        add(MenuEntry("进入选择模式", detail = "Select 键或长按游戏也可进入", enabled = !busy, onClick = selection.onEnter))
     }
     add(MenuEntry("检查跨设备更新", detail = "结果显示在“备份与设置”", enabled = !busy, onClick = onCheckCloudUpdates))
     // A single "全部" option means there is nothing to filter.
@@ -58,8 +57,19 @@ internal fun libraryCommands(
             add(MenuEntry("筛选：$label", enabled = !busy, checked = id == selectedTypeId) { onTypeSelected(id) })
         }
     }
+    LibraryStatusFilter.entries.forEach { filter ->
+        add(MenuEntry("状态：${filter.label}", enabled = !busy, checked = filter == selectedStatus) { onStatusSelected(filter) })
+    }
     add(MenuEntry("前往 备份与设置", onClick = onOpenManagement))
 }
+
+/** What the selection controls of the toolbar and the command panel call; previews pass no-ops. */
+internal class LibrarySelectionActions(
+    val onEnter: () -> Unit = {},
+    val onExit: () -> Unit = {},
+    val onSelectAll: () -> Unit = {},
+    val onClear: () -> Unit = {},
+)
 
 /** Commands of the backup and settings page. */
 internal fun managementCommands(

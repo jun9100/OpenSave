@@ -1,5 +1,6 @@
 package com.jun9100.opensave.ui.input
 
+import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.OpenSavePage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -65,19 +66,32 @@ class HandheldDispatchTest {
             LibraryHandheldAction.SetSelected("b", false),
             action(HandheldCommand.TOGGLE_SELECTION, target = "b", selected = true),
         )
-        assertEquals(LibraryHandheldAction.None, action(HandheldCommand.TOGGLE_SELECTION, target = "b", eligible = false))
-        assertEquals(LibraryHandheldAction.None, action(HandheldCommand.TOGGLE_SELECTION, target = null))
+        // A row batch backup skips (or none) only opens selection mode, once.
+        assertEquals(LibraryHandheldAction.EnterSelection, action(HandheldCommand.TOGGLE_SELECTION, target = "b", eligible = false))
+        assertEquals(LibraryHandheldAction.EnterSelection, action(HandheldCommand.TOGGLE_SELECTION, target = null))
+        assertEquals(
+            LibraryHandheldAction.None,
+            action(HandheldCommand.TOGGLE_SELECTION, target = "b", eligible = false, selectionMode = true),
+        )
     }
 
     @Test
-    fun startBacksUpTheSelectionElseTheTarget() {
+    fun startFollowsTheToolbarMainButton() {
         assertEquals(
             LibraryHandheldAction.BackupSelected(setOf("a", "c")),
-            action(HandheldCommand.BACKUP, target = "b", selection = setOf("a", "c")),
+            action(HandheldCommand.BACKUP, target = "b", selection = setOf("a", "c"), changed = setOf("d")),
         )
-        assertEquals(LibraryHandheldAction.BackupGame("b"), action(HandheldCommand.BACKUP, target = "b"))
-        // Nothing at all: the ViewModel answers with "请选择至少一款…".
-        assertEquals(LibraryHandheldAction.BackupSelected(emptySet()), action(HandheldCommand.BACKUP, target = null))
+        // Nothing selected: the games with changes, not the focused one.
+        assertEquals(
+            LibraryHandheldAction.BackupSelected(setOf("d")),
+            action(HandheldCommand.BACKUP, target = "b", changed = setOf("d")),
+        )
+        assertEquals(LibraryHandheldAction.NothingToBackup, action(HandheldCommand.BACKUP, target = "b"))
+        // Selection mode with nothing checked never falls back to the changed games.
+        assertEquals(
+            LibraryHandheldAction.NothingToBackup,
+            action(HandheldCommand.BACKUP, target = "b", changed = setOf("d"), selectionMode = true),
+        )
     }
 
     @Test
@@ -112,5 +126,14 @@ class HandheldDispatchTest {
         eligible: Boolean = true,
         selected: Boolean = false,
         selection: Set<String> = emptySet(),
-    ) = HandheldDispatch.libraryAction(command, target, eligible, selected, selection)
+        changed: Set<String> = emptySet(),
+        selectionMode: Boolean = false,
+    ) = HandheldDispatch.libraryAction(
+        command = command,
+        targetKey = target,
+        targetEligible = eligible,
+        targetSelected = selected,
+        primary = LibraryView.primaryBackup(selection, changed, selectionMode),
+        selectionMode = selectionMode,
+    )
 }

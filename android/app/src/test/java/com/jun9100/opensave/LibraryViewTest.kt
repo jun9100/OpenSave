@@ -1,6 +1,8 @@
 package com.jun9100.opensave
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -80,17 +82,81 @@ class LibraryViewTest {
     }
 
     @Test
-    fun rowSecondaryShowsSourceLastBackupAndUploadState() {
+    fun rowSecondaryShowsSourceAndLastBackup() {
         val time: (Long) -> String = { "T$it" }
         assertEquals("从未备份 · Eden", LibraryView.rowSecondary("Eden", null, batchEligible = true, formatTime = time))
+        // The upload state is the row's status badge now.
         assertEquals(
-            "T300 · 本地 2 · 未上传 · Eden",
+            "T300 · 本地 2 · Eden",
             LibraryView.rowSecondary("Eden", LibraryRowHistory(2, 300, false), batchEligible = true, formatTime = time),
         )
         assertEquals(
-            "仅待确认位置 · T5 · 本地 1 · 已上传 · Eden",
+            "仅待确认位置 · T5 · 本地 1 · Eden",
             LibraryView.rowSecondary("Eden", LibraryRowHistory(1, 5, true), batchEligible = false, formatTime = time),
         )
+    }
+
+    @Test
+    fun statusFilterCombinesWithTypeAndCountsEachChip() {
+        val (a, b, c) = games.map { it.libraryKey }
+        val statuses = mapOf(
+            a to GameSyncStatus.LOCAL_CHANGED,
+            b to GameSyncStatus.NEVER_BACKED_UP,
+            c to GameSyncStatus.LOCAL_CHANGED,
+        )
+        val pcType = games.first { it.game.gameKey == "pc:test-a" }.saveType.id
+        val pcGames = LibraryView.filter(games, pcType)
+        val changed = LibraryView.filterByStatus(pcGames, statuses, LibraryStatusFilter.CHANGED)
+        assertEquals(pcGames.filter { statuses[it.libraryKey] == GameSyncStatus.LOCAL_CHANGED }, changed)
+        assertEquals(games, LibraryView.filterByStatus(games, statuses, LibraryStatusFilter.ALL))
+        assertEquals(emptyList<SourceGameEntry>(), LibraryView.filterByStatus(games, statuses, LibraryStatusFilter.CONFLICT))
+
+        val counts = LibraryView.statusCounts(games, statuses)
+        assertEquals(3, counts[LibraryStatusFilter.ALL])
+        assertEquals(2, counts[LibraryStatusFilter.CHANGED])
+        assertEquals(1, counts[LibraryStatusFilter.NEVER_BACKED_UP])
+        assertEquals(0, counts[LibraryStatusFilter.NOT_UPLOADED])
+        // A game without a status yet is only under "全部状态".
+        assertEquals(1, LibraryView.filterByStatus(games, mapOf(a to GameSyncStatus.LOCAL_CHANGED), LibraryStatusFilter.CHANGED).size)
+    }
+
+    @Test
+    fun changedKeysAreNeverBackedUpOrLocallyChanged() {
+        val statuses = mapOf(
+            "a" to GameSyncStatus.LOCAL_CHANGED,
+            "b" to GameSyncStatus.NEVER_BACKED_UP,
+            "c" to GameSyncStatus.SYNCED,
+            "d" to GameSyncStatus.CONFLICT,
+            "e" to GameSyncStatus.NOT_UPLOADED,
+        )
+        assertEquals(listOf("a", "b"), LibraryView.changedKeys(listOf("a", "b", "c", "d", "e", "f"), statuses))
+    }
+
+    @Test
+    fun primaryBackupIsTheSelectionElseTheChangedGames() {
+        val changed = LibraryView.primaryBackup(emptySet(), listOf("a", "b"), selectionMode = false)
+        assertEquals(PrimaryBackup("备份有变更 (2)", setOf("a", "b"), fromSelection = false), changed)
+        assertTrue(changed.enabled)
+
+        val selected = LibraryView.primaryBackup(setOf("c"), listOf("a", "b"), selectionMode = false)
+        assertEquals(PrimaryBackup("备份所选 (1)", setOf("c"), fromSelection = true), selected)
+
+        // Selection mode with nothing checked offers an empty "备份所选", never the changed games.
+        val empty = LibraryView.primaryBackup(emptySet(), listOf("a"), selectionMode = true)
+        assertEquals("备份所选 (0)", empty.label)
+        assertFalse(empty.enabled)
+        assertFalse(LibraryView.primaryBackup(emptySet(), emptyList(), selectionMode = false).enabled)
+    }
+
+    @Test
+    fun retainedSnapshotsKeepEveryGamesNewestVersions() {
+        // Newest first, as the repository lists them: game a has many recent versions.
+        val records = (10 downTo 1).map { record("a$it", gameKey = "pc:test-a", createdAt = 100L + it, uploaded = true) } +
+            record("b1", gameKey = "pc:test-b", createdAt = 50, uploaded = true) +
+            record("s2", gameKey = null, createdAt = 40, uploaded = true) +
+            record("s1", gameKey = null, createdAt = 30, uploaded = true)
+        val kept = LibraryView.retainedSnapshots(records, perGame = 3, other = 1)
+        assertEquals(listOf("a10", "a9", "a8", "b1", "s2"), kept.map { it.id })
     }
 
     @Test

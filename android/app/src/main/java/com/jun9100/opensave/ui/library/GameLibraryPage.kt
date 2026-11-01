@@ -63,6 +63,9 @@ import com.jun9100.opensave.CoverRepository
 import com.jun9100.opensave.GameCloudNaming
 import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.GamePresentation
+import com.jun9100.opensave.GameStatusResolver
+import com.jun9100.opensave.GameSyncStatus
+import com.jun9100.opensave.LibraryStatusFilter
 import com.jun9100.opensave.LibraryRowHistory
 import com.jun9100.opensave.LibrarySelection
 import com.jun9100.opensave.LibraryView
@@ -76,6 +79,7 @@ import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.SteamMetadataRepository
 import com.jun9100.opensave.ui.CommandDialog
 import com.jun9100.opensave.ui.GameActionMenu
+import com.jun9100.opensave.ui.LibrarySelectionActions
 import com.jun9100.opensave.ui.LocalAdaptiveLayout
 import com.jun9100.opensave.ui.ProvideAdaptiveLayout
 import com.jun9100.opensave.ui.StatusStrip
@@ -103,7 +107,13 @@ import kotlinx.coroutines.launch
 /** Everything the library page can ask for; the ViewModel in the app, no-ops in previews. */
 internal class LibraryActions(
     val onTypeSelected: (String) -> Unit = {},
-    val onToggleAll: (List<String>) -> Unit = {},
+    val onStatusSelected: (LibraryStatusFilter) -> Unit = {},
+    val onEnterSelection: () -> Unit = {},
+    val onExitSelection: () -> Unit = {},
+    val onSelectAll: (List<String>) -> Unit = {},
+    val onClearSelection: () -> Unit = {},
+    /** Start or the main button with nothing to back up; true when in selection mode. */
+    val onNothingToBackup: (Boolean) -> Unit = {},
     val onBackupSelected: (Set<String>) -> Unit = {},
     val onBatchSelected: (String, Boolean) -> Unit = { _, _ -> },
     /** Landscape: show the game in the right pane. */
@@ -154,7 +164,12 @@ internal fun GameLibraryPage(
     val actions = remember(viewModel, onOpenManagement) {
         LibraryActions(
             onTypeSelected = viewModel::setLibraryTypeFilter,
-            onToggleAll = viewModel::toggleLibrarySelection,
+            onStatusSelected = viewModel::setLibraryStatusFilter,
+            onEnterSelection = viewModel::enterSelectionMode,
+            onExitSelection = viewModel::exitSelectionMode,
+            onSelectAll = viewModel::selectAllLibraryGames,
+            onClearSelection = viewModel::clearLibrarySelection,
+            onNothingToBackup = viewModel::reportNothingToBackup,
             onBackupSelected = viewModel::requestBatchGameBackup,
             onBatchSelected = viewModel::setLibrarySelected,
             onSelectGame = viewModel::selectGame,
@@ -192,8 +207,9 @@ internal fun GameLibraryPage(
  *
  * Pad (plan §4): toolbar, list and detail are focus groups that remember their
  * last child; the list gets focus when the page opens or loses it (rescan,
- * closed detail); X opens the game menu, Y the command panel, Select toggles
- * the batch selection, Start backs up, L2/R2 page and the right stick scrolls.
+ * closed detail); X opens the game menu, Y the command panel, Select selects
+ * the game (entering selection mode, where A toggles and B leaves), Start is
+ * the toolbar's main button, L2/R2 page and the right stick scrolls.
  */
 @Composable
 internal fun GameLibraryContent(
@@ -209,14 +225,45 @@ internal fun GameLibraryContent(
     val games = remember(state.sourceScans) { GameLibrary.sourceGames(state.sourceScans) }
     val typeOptions = remember(games) { LibraryView.typeOptions(games) }
     val typeId = LibraryView.effectiveTypeId(state.libraryTypeFilter, typeOptions)
-    val visibleGames = remember(games, typeId) { LibraryView.filter(games, typeId) }
+    val statuses = remember(games, state.snapshots, state.saveSignatures, state.cloudUpdates, state.gameSaveEnabled) {
+        GameStatusResolver.resolveAll(
+            entries = games,
+            snapshots = state.snapshots,
+            signatures = state.saveSignatures,
+            cloudActions = GameStatusResolver.cloudActions(state.cloudUpdates),
+            cloudEnabled = state.gameSaveEnabled,
+        )
+    }
+    val typeGames = remember(games, typeId) { LibraryView.filter(games, typeId) }
+    val statusCounts = remember(typeGames, statuses) { LibraryView.statusCounts(typeGames, statuses) }
+    val visibleGames = remember(typeGames, statuses, state.libraryStatusFilter) {
+        LibraryView.filterByStatus(typeGames, statuses, state.libraryStatusFilter)
+    }
     val visibleKeys = remember(visibleGames) { visibleGames.map { it.libraryKey } }
     val visibleEligibleKeys = remember(visibleGames) {
         GameLibrary.batchBackupEligibleEntries(visibleGames).map { it.libraryKey }
     }
-    // Selection lives in the ViewModel: nothing is selected by default, and a
-    // rescan or rotation keeps what the user chose.
-    val visibleSelectedKeys = LibrarySelection.effective(state.librarySelection, visibleEligibleKeys)
+    val eligibleKeys = remember(games) { GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey } }
+    // "备份有变更" follows the type filter only: it is a status set of its own.
+    val changedKeys = remember(typeGames, statuses) {
+        LibraryView.changedKeys(GameLibrary.batchBackupEligibleEntries(typeGames).map { it.libraryKey }, statuses)
+    }
+    // Selection lives in the ViewModel: nothing is selected by default, a rescan
+    // or rotation keeps what the user chose, and a filter only hides choices.
+    val selectedKeys = LibrarySelection.effective(state.librarySelection, eligibleKeys)
+    val selecting = state.selectionMode || selectedKeys.isNotEmpty()
+    val primary = LibraryView.primaryBackup(selectedKeys, changedKeys, selecting)
+    val selectionActions = remember(actions, visibleEligibleKeys) {
+        LibrarySelectionActions(
+            onEnter = actions.onEnterSelection,
+            onExit = actions.onExitSelection,
+            onSelectAll = { actions.onSelectAll(visibleEligibleKeys) },
+            onClear = actions.onClearSelection,
+        )
+    }
+    val runPrimary: () -> Unit = {
+        if (primary.enabled) actions.onBackupSelected(primary.keys) else actions.onNothingToBackup(selecting)
+    }
     val history = remember(state.snapshots) { LibraryView.historyIndex(state.snapshots) }
     // Steam names resolved for rows are shared with the detail pane and its backup.
     val presentations = remember { mutableStateMapOf<String, GamePresentation>() }
@@ -298,6 +345,10 @@ internal fun GameLibraryContent(
         focus.pendingDetailFocus = null
     }
 
+    // B leaves selection mode (plan §4.1). Registered first, so the detail
+    // pane's own B (back to its row) still comes before it.
+    BackHandler(enabled = selecting && !showingPortraitDetail) { actions.onExitSelection() }
+
     // B in the landscape detail pane returns to the row it belongs to (plan §4.1).
     BackHandler(enabled = landscape && focus.detailHasFocus && detail != null) {
         detail?.let { scope.launch { focusRow(it.libraryKey) } }
@@ -321,16 +372,17 @@ internal fun GameLibraryContent(
             targetKey = target,
             targetEligible = targetEntry?.let { GameLibrary.canBatchBackup(it.game) } == true,
             targetSelected = target in state.librarySelection,
-            selectedKeys = visibleSelectedKeys,
+            primary = primary,
+            selectionMode = selecting,
         )
         when (action) {
             LibraryHandheldAction.None -> Unit
             is LibraryHandheldAction.OpenMenu -> menuKey = action.key
             is LibraryHandheldAction.SetSelected ->
                 whenIdle(state.busy) { actions.onBatchSelected(action.key, action.selected) }()
+            LibraryHandheldAction.EnterSelection -> whenIdle(state.busy, actions.onEnterSelection)()
             is LibraryHandheldAction.BackupSelected -> whenIdle(state.busy) { actions.onBackupSelected(action.keys) }()
-            is LibraryHandheldAction.BackupGame ->
-                whenIdle(state.busy) { targetEntry?.let { actions.onBackupGame(presented(it)) } }()
+            LibraryHandheldAction.NothingToBackup -> whenIdle(state.busy) { actions.onNothingToBackup(selecting) }()
             is LibraryHandheldAction.Page -> scope.launch {
                 if (showingPortraitDetail) {
                     val step = detailScroll.viewportSize * PAGE_SCROLL_FRACTION
@@ -371,12 +423,14 @@ internal fun GameLibraryContent(
                 busy = state.busy,
                 typeOptions = typeOptions,
                 selectedTypeId = typeId,
-                selectedCount = visibleSelectedKeys.size,
-                eligibleCount = visibleEligibleKeys.size,
+                selectedStatus = state.libraryStatusFilter,
+                selectionMode = selecting,
+                selectedCount = selectedKeys.size,
                 onScan = actions.onScan,
-                onToggleAll = { actions.onToggleAll(visibleEligibleKeys) },
+                selection = selectionActions,
                 onCheckCloudUpdates = actions.onCheckCloudUpdates,
                 onTypeSelected = actions.onTypeSelected,
+                onStatusSelected = actions.onStatusSelected,
                 onOpenManagement = actions.onOpenManagement,
             ),
             busy = state.busy,
@@ -393,6 +447,7 @@ internal fun GameLibraryContent(
                 state = state,
                 actions = actions,
                 coverRepository = coverRepository,
+                status = statuses[detail.libraryKey],
                 tab = detailTab,
                 onTabChange = { detailTab = it },
                 scrollState = detailScroll,
@@ -408,14 +463,18 @@ internal fun GameLibraryContent(
             LibraryToolbar(
                 typeOptions = typeOptions,
                 selectedTypeId = typeId,
+                statusCounts = statusCounts,
+                selectedStatus = state.libraryStatusFilter,
                 visibleCount = visibleGames.size,
-                selectedCount = visibleSelectedKeys.size,
-                eligibleCount = visibleEligibleKeys.size,
+                selectionMode = selecting,
+                selectedCount = selectedKeys.size,
+                primary = primary,
                 enabled = !state.busy,
                 singleRow = landscape,
                 onTypeSelected = actions.onTypeSelected,
-                onToggleAll = { actions.onToggleAll(visibleEligibleKeys) },
-                onBackupSelected = { actions.onBackupSelected(visibleSelectedKeys) },
+                onStatusSelected = actions.onStatusSelected,
+                selection = selectionActions,
+                onPrimaryBackup = runPrimary,
             )
         }
         // Landscape keeps the whole list height (plan S1/S2): messages and the
@@ -427,6 +486,8 @@ internal fun GameLibraryContent(
                 games = games,
                 visibleGames = visibleGames,
                 history = history,
+                statuses = statuses,
+                selectionMode = selecting,
                 presentations = presentations,
                 currentKey = detail?.libraryKey.takeIf { landscape },
                 listState = listState,
@@ -435,7 +496,12 @@ internal fun GameLibraryContent(
                 actions = actions,
                 focus = focus,
                 onRowClick = { key ->
-                    if (landscape) {
+                    val eligible = key in eligibleKeys
+                    if (selecting && eligible) {
+                        // Selection mode: A or a tap toggles the row (plan §4.1).
+                        whenIdle(state.busy) { actions.onBatchSelected(key, key !in state.librarySelection) }()
+                        if (landscape) actions.onSelectGame(key)
+                    } else if (landscape) {
                         actions.onSelectGame(key)
                         // Pad: A on a row moves to the pane's [备份], so A A backs it up (plan §4.1).
                         if (handheld) focus.pendingDetailFocus = key
@@ -467,6 +533,7 @@ internal fun GameLibraryContent(
                             state = state,
                             actions = actions,
                             coverRepository = coverRepository,
+                            status = statuses[detail.libraryKey],
                             tab = detailTab,
                             onTabChange = { detailTab = it },
                             scrollState = detailScroll,
@@ -499,6 +566,8 @@ private fun GameList(
     games: List<SourceGameEntry>,
     visibleGames: List<SourceGameEntry>,
     history: Map<String, LibraryRowHistory>,
+    statuses: Map<String, GameSyncStatus>,
+    selectionMode: Boolean,
     presentations: MutableMap<String, GamePresentation>,
     currentKey: String?,
     listState: LazyListState,
@@ -564,6 +633,14 @@ private fun GameList(
                     onPickFolder = actions.onPickFolder,
                 )
             }
+            visibleGames.isEmpty() -> item(key = "empty") {
+                Text(
+                    "当前筛选下没有游戏。",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             else -> items(visibleGames, key = { it.libraryKey }) { entry ->
                 val key = entry.libraryKey
                 if (metadataRepository != null) {
@@ -585,6 +662,8 @@ private fun GameList(
                     batchEligible = GameLibrary.canBatchBackup(entry.game),
                     batchEnabled = !state.busy,
                     current = key == currentKey,
+                    status = statuses[key],
+                    selectionMode = selectionMode,
                     onClick = { onRowClick(key) },
                     onFocused = {
                         focus.lastFocusedKey = key
@@ -593,7 +672,7 @@ private fun GameList(
                     onBatchCheckedChange = { selected -> actions.onBatchSelected(key, selected) },
                     focusRequester = requester,
                 )
-                HorizontalDivider(modifier = Modifier.padding(start = 98.dp))
+                HorizontalDivider(modifier = Modifier.padding(start = gameRowTextStart(selectionMode)))
             }
         }
     }
@@ -645,6 +724,7 @@ private fun GameDetailFor(
     state: SourceUiState,
     actions: LibraryActions,
     coverRepository: CoverRepository?,
+    status: GameSyncStatus?,
     tab: DetailTab,
     onTabChange: (DetailTab) -> Unit,
     scrollState: ScrollState,
@@ -672,6 +752,7 @@ private fun GameDetailFor(
         scrollState = scrollState,
         primaryFocusRequester = primaryFocusRequester,
         modifier = modifier,
+        status = status,
     )
 }
 
@@ -721,7 +802,8 @@ private fun LibrarySummary(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 buildString {
-                    append("$availableSources 个来源已扫描 · 跳过 ${skippedSources.size} 个")
+                    append("$availableSources 个来源已扫描")
+                    if (skippedSources.isNotEmpty()) append(" · 跳过 ${skippedSources.size} 个")
                     if (gameHubLocations > 0) append(" · PC 容器 $gameHubLocations 个位置")
                     if (candidateLocations > 0) append(" · 候选 $candidateLocations 个")
                 },

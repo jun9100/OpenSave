@@ -31,14 +31,18 @@ class SnapshotRepositoryTest {
                 cloudGameId = "android-emu-1234567890abcdef",
                 contentHash = "c".repeat(64),
                 hashVersion = ContentHash.VERSION,
+                saveSignature = "s1:3:1024:1700000000",
             )
             val repository = SnapshotRepository(root)
             repository.add(record)
             repository.markUploaded(record.id)
+            repository.setSaveSignature(record.id, "s1:4:2048:1700000001")
+            // Unknown ids are ignored.
+            repository.setSaveSignature("missing", "s1:1:1:1")
 
             val reloaded = SnapshotRepository(File(root.absolutePath))
             val actual = reloaded.list().single()
-            assertEquals(record.copy(uploaded = true), actual)
+            assertEquals(record.copy(uploaded = true, saveSignature = "s1:4:2048:1700000001"), actual)
             assertTrue(reloaded.fileFor(actual).path.endsWith(actual.localPath))
         } finally {
             root.deleteRecursively()

@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -103,8 +104,13 @@ data class SourceUiState(
     val selectedGameKey: String? = null,
     /** Portrait only: the full-screen game detail is on top of the list. */
     val gameDetailOpen: Boolean = false,
+    /** Explicit selection mode: rows toggle on A or tap and the toolbar shows the selection actions. */
+    val selectionMode: Boolean = false,
     /** Save type id of the library filter chip, or [LibraryView.ALL_TYPES]. */
     val libraryTypeFilter: String = LibraryView.ALL_TYPES,
+    val libraryStatusFilter: LibraryStatusFilter = LibraryStatusFilter.ALL,
+    /** Encoded [SaveSignature] of each game's locations now, by libraryKey; missing while unknown. */
+    val saveSignatures: Map<String, String> = emptyMap(),
     val sourceDetailsExpanded: Boolean = false,
 )
 
@@ -122,6 +128,9 @@ class SourceViewModel(
     private val gameSaveStore = GameSaveConfigStore(application)
     private val gameSaveDevice = GameSaveDeviceStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
+    private val signatureReader = SaveSignatureReader(storage, rootStorage)
+    private var signatureJob: Job? = null
+    private var signaturesReadAtMillis = 0L
     private val state = MutableStateFlow(restoreUiState(SourceUiState()))
     private val sourceRescan = Debouncer(viewModelScope, SOURCE_RESCAN_DEBOUNCE_MILLIS)
     val uiState: StateFlow<SourceUiState> = state.asStateFlow()
@@ -260,6 +269,54 @@ class SourceViewModel(
 
     fun setLibraryTypeFilter(typeId: String) = updateState { copy(libraryTypeFilter = typeId) }
 
+    fun setLibraryStatusFilter(filter: LibraryStatusFilter) = updateState { copy(libraryStatusFilter = filter) }
+
+    fun enterSelectionMode() = updateState { copy(selectionMode = true) }
+
+    /** Leaving selection mode drops the selection, so nothing hidden stays selected for "备份所选". */
+    fun exitSelectionMode() = updateState { copy(selectionMode = false, librarySelection = LibrarySelection.initial) }
+
+    fun selectAllLibraryGames(keys: Collection<String>) =
+        updateState { copy(selectionMode = true, librarySelection = LibrarySelection.selectAll(librarySelection, keys)) }
+
+    fun clearLibrarySelection() = updateState { copy(librarySelection = LibrarySelection.initial) }
+
+    /** Start with nothing to back up says so instead of silently doing nothing. */
+    fun reportNothingToBackup(selectionMode: Boolean) = updateState {
+        copy(
+            messages = messages.with(
+                OpenSavePage.LIBRARY,
+                action = if (selectionMode) "未选择游戏：按 A 或 Select 勾选后再按 Start" else "没有需要备份的变更",
+            ),
+        )
+    }
+
+    /**
+     * Re-reads the cheap change signatures of the scanned games, e.g. when the
+     * app comes back from an emulator. Skipped while an operation runs and
+     * when the last read is only seconds old.
+     */
+    fun refreshSaveSignatures() {
+        val current = state.value
+        if (current.busy || current.sourceScans.isEmpty()) return
+        if (System.currentTimeMillis() - signaturesReadAtMillis < SIGNATURE_REFRESH_MIN_MILLIS) return
+        readSaveSignatures(GameLibrary.sourceGames(current.sourceScans))
+    }
+
+    private fun readSaveSignatures(entries: List<SourceGameEntry>) {
+        signatureJob?.cancel()
+        signaturesReadAtMillis = System.currentTimeMillis()
+        val revision = state.value.scanRevision
+        signatureJob = viewModelScope.launch {
+            val signatures = withContext(Dispatchers.IO) {
+                runCatching { signatureReader.read(GameLibrary.batchBackupEligibleEntries(entries)) }.getOrNull()
+            } ?: return@launch
+            // A newer scan replaced the rows; its own read follows.
+            if (state.value.scanRevision != revision) return@launch
+            updateState { copy(saveSignatures = signatures) }
+        }
+    }
+
     fun setSourceDetailsExpanded(expanded: Boolean) = updateState { copy(sourceDetailsExpanded = expanded) }
 
     /** Handles the back key; false means the system should handle it. */
@@ -285,6 +342,10 @@ class SourceViewModel(
         selectedGameKey = savedState.get<String>(KEY_SELECTED_GAME),
         gameDetailOpen = savedState.get<Boolean>(KEY_DETAIL_OPEN) ?: false,
         libraryTypeFilter = savedState.get<String>(KEY_TYPE_FILTER) ?: initial.libraryTypeFilter,
+        libraryStatusFilter = savedState.get<String>(KEY_STATUS_FILTER)
+            ?.let { name -> LibraryStatusFilter.entries.firstOrNull { it.name == name } }
+            ?: initial.libraryStatusFilter,
+        selectionMode = savedState.get<Boolean>(KEY_SELECTION_MODE) ?: false,
         sourceDetailsExpanded = savedState.get<Boolean>(KEY_SOURCE_DETAILS) ?: false,
         librarySelection = savedState.get<ArrayList<String>>(KEY_SELECTION)?.toSet() ?: initial.librarySelection,
     )
@@ -294,6 +355,8 @@ class SourceViewModel(
         savedState[KEY_SELECTED_GAME] = current.selectedGameKey
         savedState[KEY_DETAIL_OPEN] = current.gameDetailOpen
         savedState[KEY_TYPE_FILTER] = current.libraryTypeFilter
+        savedState[KEY_STATUS_FILTER] = current.libraryStatusFilter.name
+        savedState[KEY_SELECTION_MODE] = current.selectionMode
         savedState[KEY_SOURCE_DETAILS] = current.sourceDetailsExpanded
         if (savedState.get<ArrayList<String>>(KEY_SELECTION)?.toSet() != current.librarySelection) {
             savedState[KEY_SELECTION] = ArrayList(current.librarySelection)
@@ -537,7 +600,10 @@ class SourceViewModel(
             val eligibleKeys = GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey }
             state.value = state.value.finished(
                 page,
-                action = "扫描完成：${games.size} 个游戏条目，$availableSourceCount 个来源可读，跳过 $skippedSourceCount 个",
+                action = buildString {
+                    append("扫描完成：${games.size} 个游戏条目，$availableSourceCount 个来源可读")
+                    if (skippedSourceCount > 0) append("，跳过 $skippedSourceCount 个")
+                },
             ).copy(
                 rootAvailable = rootAvailable,
                 rootChecked = true,
@@ -546,7 +612,10 @@ class SourceViewModel(
                 scanRevision = state.value.scanRevision + 1,
                 scan = activeScan,
                 librarySelection = LibrarySelection.effective(state.value.librarySelection, eligibleKeys),
+                // Signatures of games that are gone would never be read again.
+                saveSignatures = state.value.saveSignatures.filterKeys { it in eligibleKeys },
             )
+            readSaveSignatures(games)
         }
     }
 
@@ -607,11 +676,13 @@ class SourceViewModel(
         }
     }
 
-    fun setLibrarySelected(libraryKey: String, selected: Boolean) =
-        updateState { copy(librarySelection = LibrarySelection.set(librarySelection, libraryKey, selected)) }
-
-    fun toggleLibrarySelection(visibleEligibleKeys: Collection<String>) =
-        updateState { copy(librarySelection = LibrarySelection.toggleAll(librarySelection, visibleEligibleKeys)) }
+    /** Selecting a game (long press, Select, the X menu, the detail pane) enters selection mode. */
+    fun setLibrarySelected(libraryKey: String, selected: Boolean) = updateState {
+        copy(
+            librarySelection = LibrarySelection.set(librarySelection, libraryKey, selected),
+            selectionMode = selectionMode || selected,
+        )
+    }
 
     /** Asks for confirmation before the private workspace replaces the saved source directory. */
     fun requestWorkspaceWriteBack() {
@@ -728,6 +799,9 @@ class SourceViewModel(
                     }
                 }
                 result.onSuccess { captured ->
+                    captured.saveSignature?.let { signature ->
+                        updateState { copy(saveSignatures = saveSignatures + (entry.libraryKey to signature)) }
+                    }
                     if (captured.reused) unchanged++ else completed++
                     captured.uploadError?.let { uploadFailures += "${game.presentation.primaryName}：$it" }
                     captured.syncNotice?.let { syncNotices += "${game.presentation.primaryName}：$it" }
@@ -739,7 +813,13 @@ class SourceViewModel(
 
             state.value = state.value.finished(
                 OpenSavePage.LIBRARY,
-                action = "批量备份完成：新建快照 $completed 款，$UNCHANGED_SKIPPED $unchanged 款，失败 ${failures.size} 款，云端上传失败 ${uploadFailures.size} 款，跨设备待处理 ${cloudUpdates.size} 款",
+                action = BatchSummary.backup(
+                    created = completed,
+                    unchanged = unchanged,
+                    failed = failures.size,
+                    uploadFailed = uploadFailures.size,
+                    cloudPending = cloudUpdates.size,
+                ),
                 error = (failures + uploadFailures + syncNotices).take(6).takeIf { it.isNotEmpty() }?.joinToString("\n"),
             ).copy(
                 snapshots = currentSnapshots(),
@@ -785,6 +865,9 @@ class SourceViewModel(
                 ).copy(
                     snapshots = currentSnapshots(),
                     cloudUpdates = mergeCloudUpdates(state.value.cloudUpdates, listOfNotNull(captured.cloudUpdate)),
+                    saveSignatures = captured.saveSignature
+                        ?.let { state.value.saveSignatures + (entry.libraryKey to it) }
+                        ?: state.value.saveSignatures,
                 )
             }.onFailure { error ->
                 state.value = state.value.finished(OpenSavePage.LIBRARY, error = "备份 ${manifest.gameName} 失败：${error.message}")
@@ -802,6 +885,8 @@ class SourceViewModel(
         )
         val cloudIdentity = GameCloudNaming.identity(source, entry.sourceId, selectedGame)
         val workspace = File(app.filesDir, GAME_WORKSPACE_DIRECTORY)
+        // Read before the copy: content changed during it reads as a change next time, never the reverse.
+        val saveSignature = runCatching { signatureReader.read(source, entry.game) }.getOrNull()
         try {
             copyGameLocations(source, manifest.locations, workspace).getOrThrow()
             val manifestFile = File(workspace, GameSnapshotManifest.FILE_NAME)
@@ -817,12 +902,14 @@ class SourceViewModel(
                 contentHash = contentFingerprint.contentHash,
                 currentManifestHash = contentFingerprint.manifestHash,
             )
+            if (reusable != null && saveSignature != null) snapshotRepository.setSaveSignature(reusable.id, saveSignature)
             if (reusable?.uploaded == true) {
                 return GameCaptureOutcome(
                     record = reusable,
                     fileCount = contentFingerprint.dataFileCount,
                     uploadError = null,
                     reused = true,
+                    saveSignature = saveSignature,
                 )
             }
             val record: SnapshotRecord
@@ -861,6 +948,7 @@ class SourceViewModel(
                     cloudGameId = cloudIdentity.gameId,
                     contentHash = contentFingerprint.contentHash,
                     hashVersion = if (contentFingerprint.contentHash.isBlank()) 0 else ContentHash.VERSION,
+                    saveSignature = saveSignature.orEmpty(),
                 )
                 snapshotRepository.add(record)
                 fileCount = build.fileCount
@@ -939,6 +1027,7 @@ class SourceViewModel(
                 reused = reusable != null,
                 // Only a reused record that had never been uploaded gets here.
                 uploadedReused = reusable != null && finalRecord.uploaded,
+                saveSignature = saveSignature,
             )
         } finally {
             workspace.deleteRecursively()
@@ -1181,9 +1270,12 @@ class SourceViewModel(
                             update.remote?.name == request.remote?.name
                     },
                 )
+                // The restored saves differ from what the signatures last saw.
+                readSaveSignatures(GameLibrary.sourceGames(state.value.sourceScans))
             }.onFailure { error ->
                 state.value = state.value.finished(page, error = "恢复快照失败：${error.message}")
                     .copy(snapshots = currentSnapshots())
+                readSaveSignatures(GameLibrary.sourceGames(state.value.sourceScans))
             }
         }
     }
@@ -1581,10 +1673,13 @@ class SourceViewModel(
         "$SNAPSHOT_DIRECTORY/remote-${remote.type}-${Hashing.sha256(remote.name).take(16)}.zip",
     )
 
-    private fun currentSnapshots(): List<SnapshotRecord> =
+    /** Every game keeps its own newest versions, so status and history never drop a game backed up long ago. */
+    private fun currentSnapshots(): List<SnapshotRecord> = LibraryView.retainedSnapshots(
         snapshotRepository.list()
-            .filter { record -> runCatching { snapshotRepository.fileFor(record).isFile }.getOrDefault(false) }
-            .take(MAX_HISTORY)
+            .filter { record -> runCatching { snapshotRepository.fileFor(record).isFile }.getOrDefault(false) },
+        perGame = MAX_GAME_HISTORY,
+        other = MAX_HISTORY,
+    )
 
     private fun mergeCloudUpdates(
         existing: List<GameSaveCloudUpdate>,
@@ -1639,6 +1734,8 @@ class SourceViewModel(
         val reused: Boolean = false,
         /** True when a reused snapshot that had never been uploaded was uploaded now. */
         val uploadedReused: Boolean = false,
+        /** Encoded [SaveSignature] read before the capture; null when it could not be read. */
+        val saveSignature: String? = null,
     )
 
     private data class CloudCheckResult(
@@ -1657,6 +1754,8 @@ class SourceViewModel(
         const val GAME_WORKSPACE_DIRECTORY = "game-workspace"
         const val UNCHANGED_SKIPPED = "无变化，已跳过"
         const val MAX_HISTORY = 40
+        const val MAX_GAME_HISTORY = 100
+        const val SIGNATURE_REFRESH_MIN_MILLIS = 5_000L
         const val SOURCE_RESCAN_DEBOUNCE_MILLIS = 300L
         const val KEY_PAGE = "ui.page"
         const val KEY_SELECTED_GAME = "ui.selectedGameKey"
@@ -1664,5 +1763,7 @@ class SourceViewModel(
         const val KEY_TYPE_FILTER = "ui.libraryTypeFilter"
         const val KEY_SOURCE_DETAILS = "ui.sourceDetailsExpanded"
         const val KEY_SELECTION = "ui.librarySelection"
+        const val KEY_SELECTION_MODE = "ui.selectionMode"
+        const val KEY_STATUS_FILTER = "ui.libraryStatusFilter"
     }
 }

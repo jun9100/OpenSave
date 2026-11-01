@@ -21,6 +21,9 @@ object LibrarySelection {
         }
     }
 
+    /** "全选当前筛选": adds every key of the current filter and keeps choices hidden by it. */
+    fun selectAll(selection: Set<String>, keys: Collection<String>): Set<String> = selection + keys
+
     fun effective(selection: Set<String>, eligibleKeys: Collection<String>): Set<String> =
         selection.intersect(eligibleKeys.toSet())
 }

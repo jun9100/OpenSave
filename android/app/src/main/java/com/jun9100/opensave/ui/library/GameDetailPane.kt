@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.CoverRepository
 import com.jun9100.opensave.GamePresentation
+import com.jun9100.opensave.GameSyncStatus
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SourceGameEntry
@@ -90,6 +91,8 @@ internal fun GameDetailPane(
     onTabChange: (DetailTab) -> Unit = {},
     scrollState: ScrollState = rememberScrollState(),
     primaryFocusRequester: FocusRequester? = null,
+    /** The game's sync status (plan §5.2); null while unknown. */
+    status: GameSyncStatus? = null,
 ) {
     val game = entry.game
     var localTab by rememberSaveable(entry.libraryKey) { mutableStateOf(DetailTab.VERSIONS) }
@@ -124,6 +127,7 @@ internal fun GameDetailPane(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                status?.let { GameStatusBadge(it, Modifier.padding(vertical = 2.dp)) }
                 Text(
                     "${entry.sourceLabel} · ${entry.saveType.label} · ${sourceAccessLabel(entry.sourceAccess)}",
                     style = MaterialTheme.typography.labelSmall,
@@ -334,6 +338,7 @@ private fun GameDetailPanePreview() {
             onBackup = {},
             onRestoreLocal = {},
             onRestoreRemote = {},
+            status = GameSyncStatus.NOT_UPLOADED,
         )
     }
 }
