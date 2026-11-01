@@ -8,6 +8,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.jun9100.opensave.batch.BatchCenter
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -47,6 +48,29 @@ class AutoBackupScheduler(context: Context) {
     }
 }
 
+/**
+ * Games the user switched automatic backup off for (plan §5.4), by libraryKey
+ * (`sourceId::gameKey`). Kept on this device only.
+ */
+class AutoBackupExclusions(context: Context) {
+    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    fun excluded(): Set<String> = preferences.getStringSet(EXCLUDED_KEY, emptySet()).orEmpty().toSet()
+
+    fun setIncluded(libraryKeys: Collection<String>, included: Boolean): Set<String> {
+        val updated = AutoBackupPolicy.withIncluded(excluded(), libraryKeys, included)
+        val editor = preferences.edit()
+        if (updated.isEmpty()) editor.remove(EXCLUDED_KEY) else editor.putStringSet(EXCLUDED_KEY, updated)
+        editor.apply()
+        return updated
+    }
+
+    private companion object {
+        const val PREFERENCES = "opensave_automation"
+        const val EXCLUDED_KEY = "auto_backup_excluded_games"
+    }
+}
+
 internal data class AutoBackupFingerprint(
     val manifestHash: String,
     val dataFileCount: Int,
@@ -61,6 +85,19 @@ internal object AutoBackupPolicy {
      */
     fun eligibleGames(scan: SaveScanReport): List<DetectedGame> =
         GameLibrary.batchBackupEligible(GameLibrary.group(scan.detected))
+
+    /** [games] of source [sourceId] the user did not switch automatic backup off for. */
+    fun includedGames(sourceId: String, games: List<DetectedGame>, excluded: Set<String>): List<DetectedGame> =
+        games.filter { "$sourceId::${it.gameKey}" !in excluded }
+
+    fun withIncluded(excluded: Set<String>, libraryKeys: Collection<String>, included: Boolean): Set<String> =
+        if (included) excluded - libraryKeys.toSet() else excluded + libraryKeys
+
+    /**
+     * A user batch has priority: the periodic worker skips its round (success,
+     * not retry, whose backoff would spend the retry budget) while one runs.
+     */
+    fun shouldYield(batchRunning: Boolean): Boolean = batchRunning
 
     fun fingerprint(workspace: File): AutoBackupFingerprint {
         require(workspace.isDirectory) { "自动备份工作区不存在" }
@@ -91,9 +128,17 @@ class AutoBackupWorker(
     appContext: Context,
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParameters) {
-    override suspend fun doWork(): Result = StorageOperationLock.withLock { doWorkLocked() }
+    override suspend fun doWork(): Result {
+        if (AutoBackupPolicy.shouldYield(BatchCenter.isRunning)) return Result.success()
+        return backUpChangedGames()
+    }
 
-    private suspend fun doWorkLocked(): Result {
+    /**
+     * Each game takes the storage lock on its own (plan §5.5), so a user
+     * batch or a single backup waits for one game at most; a batch that
+     * starts meanwhile ends this round.
+     */
+    private suspend fun backUpChangedGames(): Result {
         val config = GameSaveConfigStore(applicationContext).load()
         if (!config.enabled || config.serviceUrl.isBlank() || config.syncKey.isBlank()) return Result.success()
 
@@ -113,6 +158,7 @@ class AutoBackupWorker(
         var retryableFailure = false
 
         val androidGames = installedGameCatalog.allApps()
+        val excluded = AutoBackupExclusions(applicationContext).excluded()
         for (source in backupSources(storage, rootStorage, installedGameCatalog)) {
             val scan = scanSource(source, storage, rootStorage, androidGames)
             if (scan.isFailure) {
@@ -120,20 +166,24 @@ class AutoBackupWorker(
                 continue
             }
             val sourceId = SnapshotNaming.sourceId(source.idSeed)
-            for (game in AutoBackupPolicy.eligibleGames(scan.getOrThrow())) {
+            val games = AutoBackupPolicy.includedGames(sourceId, AutoBackupPolicy.eligibleGames(scan.getOrThrow()), excluded)
+            for (game in games) {
+                if (AutoBackupPolicy.shouldYield(BatchCenter.isRunning)) return Result.success()
                 when (val outcome = runCatching {
-                    backupGame(
-                        source = source,
-                        sourceId = sourceId,
-                        game = game,
-                        repository = repository,
-                        storage = storage,
-                        rootStorage = rootStorage,
-                        config = config,
-                        client = client,
-                        remoteSnapshots = remoteSnapshots,
-                        headReader = headReader,
-                    )
+                    StorageOperationLock.withLock(StorageOperationLock.AUTO_BACKUP) {
+                        backupGame(
+                            source = source,
+                            sourceId = sourceId,
+                            game = game,
+                            repository = repository,
+                            storage = storage,
+                            rootStorage = rootStorage,
+                            config = config,
+                            client = client,
+                            remoteSnapshots = remoteSnapshots,
+                            headReader = headReader,
+                        )
+                    }
                 }.getOrElse { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) }) {
                     GameBackupOutcome.Skipped, GameBackupOutcome.Uploaded, GameBackupOutcome.Restored -> Unit
                     is GameBackupOutcome.UploadFailed -> retryableFailure = retryableFailure || outcome.error.retryable
@@ -149,37 +199,8 @@ class AutoBackupWorker(
         storage: SafStorage,
         rootStorage: RootStorage,
         installedGameCatalog: InstalledGameCatalog,
-    ): List<SourceSelection> {
-        val sources = linkedMapOf<String, SourceSelection>()
-        val selectionStore = SourceSelectionStore(applicationContext)
-        storage.persistedTreeUris().filter(storage::hasReadPermission).forEach { uri ->
-            val source = SourceSelection.Saf(uri)
-            if (source.idSeed !in selectionStore.disabledSourceIds()) {
-                sources[source.idSeed] = source
-            }
-        }
-
-        if (rootStorage.checkRootAccess().isFailure) return sources.values.toList()
-        val rootOptions = SaveSourceOptions.build(
-            authorizedTrees = emptyList(),
-            rootPath = rootStorage.persistedRootPath(),
-            disabledSourceIds = selectionStore.disabledSourceIds(),
-            explicitlyEnabledSourceIds = selectionStore.explicitlyEnabledSourceIds(),
-            rootPresets = RootSourcePresets.all +
-                installedGameCatalog.rootPresets() +
-                installedGameCatalog.candidateRootPresets(),
-        )
-        for (option in rootOptions.filter(SaveSourceOption::selected)) {
-            val source = option.source as? SourceSelection.Root ?: continue
-            val path = source.path
-            if (rootStorage.pathExists(path).getOrDefault(false)) {
-                if (source.idSeed !in selectionStore.disabledSourceIds()) {
-                    sources[source.idSeed] = source
-                }
-            }
-        }
-        return sources.values.toList()
-    }
+    ): List<SourceSelection> =
+        ScheduledSources.readableSources(applicationContext, storage, rootStorage, installedGameCatalog).map { it.source }
 
     private suspend fun scanSource(
         source: SourceSelection,

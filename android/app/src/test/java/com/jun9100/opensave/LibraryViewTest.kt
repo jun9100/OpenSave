@@ -168,6 +168,14 @@ class LibraryViewTest {
     }
 
     @Test
+    fun progressLineSaysWhenAnOperationWaitsForAutoBackup() {
+        val waiting = SourceUiState(busy = true, progress = "正在备份 Hades", lockOwner = StorageOperationLock.AUTO_BACKUP)
+        assertEquals("等待自动备份完成…", LibraryView.progressLine(waiting))
+        assertEquals("正在备份 Hades", LibraryView.progressLine(waiting.copy(lockOwner = StorageOperationLock.APP)))
+        assertEquals(null, LibraryView.progressLine(SourceUiState(lockOwner = StorageOperationLock.AUTO_BACKUP)))
+    }
+
+    @Test
     fun backClosesPortraitDetailThenReturnsToLibraryThenLeaves() {
         assertEquals(BackTarget.CLOSE_DETAIL, LibraryView.backTarget(OpenSavePage.LIBRARY, gameDetailOpen = true, landscape = false))
         assertEquals(BackTarget.SYSTEM, LibraryView.backTarget(OpenSavePage.LIBRARY, gameDetailOpen = true, landscape = true))

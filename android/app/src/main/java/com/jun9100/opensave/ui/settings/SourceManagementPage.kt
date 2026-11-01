@@ -121,6 +121,7 @@ internal fun SourceManagementPage(
                 onCheckCloudUpdates = viewModel::checkCloudUpdates,
                 onPickFolder = onPickFolder,
                 onOpenLibrary = { viewModel.showPage(OpenSavePage.LIBRARY) },
+                onOpenBatchReport = viewModel::openBatchReport.takeIf { state.lastBatchReport != null },
             ),
             busy = state.busy,
             onDismiss = { commandsOpen = false },

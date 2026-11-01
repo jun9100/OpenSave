@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -52,7 +53,8 @@ import com.jun9100.opensave.ui.preview.PreviewSurface
  *
  * Browsing shows the game count, "选择" and the main button ("备份有变更 (N)",
  * or "备份所选 (N)" with a selection); selection mode replaces them with the
- * contextual bar ✕ · 已选 N · 全选当前筛选 · 清除 · 备份所选 (plan §5.1).
+ * contextual bar ✕ · 已选 N · 全选当前筛选 · 清除 · 备份所选 (plan §5.1). Both end
+ * with ⋮, the menu of the other batch operations (plan §5.4).
  *
  * It is one focus group: coming back from the list returns to the control
  * used last. While [enabled] is false (an operation runs) the controls stay
@@ -75,6 +77,8 @@ internal fun LibraryToolbar(
     selection: LibrarySelectionActions,
     onPrimaryBackup: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Opens the "批量操作" menu (上传待传, 检查云端更新, 安全恢复云端较新, 报告). */
+    onOpenBatchMenu: () -> Unit = {},
 ) {
     val chips: @Composable (Modifier) -> Unit = { chipModifier ->
         LibraryFilterBar(
@@ -94,6 +98,7 @@ internal fun LibraryToolbar(
         } else {
             BrowseActions(visibleCount, primary, enabled, selection.onEnter, onPrimaryBackup, fill)
         }
+        BatchMenuButton(onOpenBatchMenu)
     }
     Surface(
         modifier = modifier.fillMaxWidth().testTag(LIBRARY_TOOLBAR_TAG).focusRestorer().focusGroup(),
@@ -188,6 +193,17 @@ private fun RowScope.SelectionActions(
     PrimaryBackupButton(primary, enabled, onPrimaryBackup)
 }
 
+/** Opens the batch menu; a menu, not an operation, so it stays available while busy. */
+@Composable
+private fun BatchMenuButton(onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(40.dp).testTag(BATCH_MENU_BUTTON_TAG).handheldFocusRing(CircleShape),
+    ) {
+        Icon(Icons.Outlined.MoreVert, contentDescription = "批量操作")
+    }
+}
+
 @Composable
 private fun PrimaryBackupButton(primary: PrimaryBackup, enabled: Boolean, onClick: () -> Unit) {
     Button(
@@ -250,6 +266,7 @@ private fun LibraryFilterBar(
 }
 
 internal const val PRIMARY_BACKUP_TAG = "primary-backup"
+internal const val BATCH_MENU_BUTTON_TAG = "batch-menu-button"
 
 private val PreviewTypeOptions = listOf(
     "all" to "全部",

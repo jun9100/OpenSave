@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -93,6 +94,11 @@ internal fun GameDetailPane(
     primaryFocusRequester: FocusRequester? = null,
     /** The game's sync status (plan §5.2); null while unknown. */
     status: GameSyncStatus? = null,
+    /** Whether automatic backup covers this game (plan §5.4); null hides the switch. */
+    autoBackupIncluded: Boolean? = null,
+    /** False while automatic backup is off for the whole app. */
+    autoBackupScheduled: Boolean = true,
+    onAutoBackupChange: (Boolean) -> Unit = {},
 ) {
     val game = entry.game
     var localTab by rememberSaveable(entry.libraryKey) { mutableStateOf(DetailTab.VERSIONS) }
@@ -185,6 +191,30 @@ internal fun GameDetailPane(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+        }
+        autoBackupIncluded?.let { included ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .handheldFocusRing(RoundedCornerShape(8.dp))
+                    .toggleable(value = included, role = Role.Switch, onValueChange = onAutoBackupChange)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .testTag(AUTO_BACKUP_SWITCH_TAG),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("自动备份这款游戏", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (autoBackupScheduled) "Wi-Fi 下定期备份并上传；只影响本设备" else "自动备份总开关未开启（备份与设置）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Switch(checked = included, onCheckedChange = null)
             }
         }
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
@@ -317,6 +347,8 @@ private fun SnapshotHistoryRow(
     }
 }
 
+internal const val AUTO_BACKUP_SWITCH_TAG = "auto-backup-switch"
+
 private const val MAX_VISIBLE_LOCATIONS_PER_GAME = 24
 private const val MAX_GAME_HISTORY_ROWS = 8
 
@@ -339,6 +371,7 @@ private fun GameDetailPanePreview() {
             onRestoreLocal = {},
             onRestoreRemote = {},
             status = GameSyncStatus.NOT_UPLOADED,
+            autoBackupIncluded = true,
         )
     }
 }

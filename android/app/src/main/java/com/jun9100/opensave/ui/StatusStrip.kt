@@ -22,13 +22,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import com.jun9100.opensave.ui.batch.BatchProgressBar
+import com.jun9100.opensave.ui.batch.BatchReportStrip
+import com.jun9100.opensave.ui.batch.LocalBatchStrip
 import com.jun9100.opensave.ui.input.BusyNotice
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.PreviewSurface
 
 /**
  * The one progress line of the app, at the bottom of every page. It only takes
- * space while an operation runs, so the list keeps its height otherwise.
+ * space while an operation runs or a finished batch report waits to be seen,
+ * so the list keeps its height otherwise.
  */
 @Composable
 internal fun StatusStrip(
@@ -36,7 +40,19 @@ internal fun StatusStrip(
     progress: String?,
     modifier: Modifier = Modifier,
 ) {
-    if (!busy) return
+    // A batch replaces the plain line with its progress and "取消"; once it
+    // finished, its report is offered here until looked at (plan §5.6).
+    val batches = LocalBatchStrip.current
+    batches.batch?.let { running ->
+        BatchProgressBar(running, onCancel = batches.onCancel, modifier = modifier)
+        return
+    }
+    if (!busy) {
+        batches.report?.let { report ->
+            BatchReportStrip(report, onOpen = batches.onOpenReport, onDismiss = batches.onDismissReport, modifier = modifier)
+        }
+        return
+    }
     // A press refused while busy (whenIdle) swaps the progress for a short notice.
     val blocked by BusyNotice.blockedCount.collectAsState()
     val blockedOnShow = remember { blocked }

@@ -77,7 +77,13 @@ import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.SteamMetadataRepository
+import com.jun9100.opensave.batch.BatchEligibility
+import com.jun9100.opensave.batch.BatchOperation
 import com.jun9100.opensave.ui.CommandDialog
+import com.jun9100.opensave.ui.batch.BatchMenuActions
+import com.jun9100.opensave.ui.batch.BatchScope
+import com.jun9100.opensave.ui.batch.batchCommands
+import com.jun9100.opensave.ui.dialogs.HandheldMenuDialog
 import com.jun9100.opensave.ui.GameActionMenu
 import com.jun9100.opensave.ui.LibrarySelectionActions
 import com.jun9100.opensave.ui.LocalAdaptiveLayout
@@ -129,7 +135,11 @@ internal class LibraryActions(
     /** Opens the system folder picker to grant a save directory. */
     val onPickFolder: () -> Unit = {},
     val onScan: () -> Unit = {},
-    val onCheckCloudUpdates: () -> Unit = {},
+    /** A batch operation (plan §5.4) over libraryKeys; the ViewModel narrows them to the eligible ones. */
+    val onBatch: (BatchOperation, List<String>) -> Unit = { _, _ -> },
+    val onCancelBatch: () -> Unit = {},
+    val onOpenBatchReport: () -> Unit = {},
+    val onSetAutoBackup: (String, Boolean) -> Unit = { _, _ -> },
 )
 
 /**
@@ -182,11 +192,10 @@ internal fun GameLibraryPage(
             onOpenManagement = onOpenManagement,
             onPickFolder = onPickFolder,
             onScan = viewModel::scanSource,
-            onCheckCloudUpdates = {
-                // Its progress and result are reported on the settings page.
-                viewModel.checkCloudUpdates()
-                onOpenManagement()
-            },
+            onBatch = { operation, keys -> viewModel.requestBatch(operation, keys) },
+            onCancelBatch = viewModel::cancelBatch,
+            onOpenBatchReport = viewModel::openBatchReport,
+            onSetAutoBackup = viewModel::setGameAutoBackup,
         )
     }
     GameLibraryContent(
@@ -244,10 +253,9 @@ internal fun GameLibraryContent(
         GameLibrary.batchBackupEligibleEntries(visibleGames).map { it.libraryKey }
     }
     val eligibleKeys = remember(games) { GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey } }
+    val typeEligibleKeys = remember(typeGames) { GameLibrary.batchBackupEligibleEntries(typeGames).map { it.libraryKey } }
     // "备份有变更" follows the type filter only: it is a status set of its own.
-    val changedKeys = remember(typeGames, statuses) {
-        LibraryView.changedKeys(GameLibrary.batchBackupEligibleEntries(typeGames).map { it.libraryKey }, statuses)
-    }
+    val changedKeys = remember(typeEligibleKeys, statuses) { LibraryView.changedKeys(typeEligibleKeys, statuses) }
     // Selection lives in the ViewModel: nothing is selected by default, a rescan
     // or rotation keeps what the user chose, and a filter only hides choices.
     val selectedKeys = LibrarySelection.effective(state.librarySelection, eligibleKeys)
@@ -264,6 +272,39 @@ internal fun GameLibraryContent(
     val runPrimary: () -> Unit = {
         if (primary.enabled) actions.onBackupSelected(primary.keys) else actions.onNothingToBackup(selecting)
     }
+    // The other batch operations take the selection in selection mode, else the type filter's games.
+    val batchScope = remember(selecting, selectedKeys, eligibleKeys, typeEligibleKeys, typeId, statuses) {
+        val keys = if (selecting) eligibleKeys.filter { it in selectedKeys } else typeEligibleKeys
+        val restorePlan = BatchEligibility.safeRestore(keys, statuses)
+        BatchScope(
+            label = when {
+                selecting -> "已选 ${keys.size} 款"
+                typeId == LibraryView.ALL_TYPES -> "全部游戏"
+                else -> "当前类型"
+            },
+            keys = keys,
+            pendingUpload = BatchEligibility.pendingUpload(keys, statuses).size,
+            restorable = restorePlan.restore.size,
+            conflicts = restorePlan.conflicts.size,
+        )
+    }
+    val cloudReady = state.gameSaveEnabled && state.gameSaveUrl.isNotBlank() && state.gameSaveSyncKey.isNotBlank()
+    val batchEntries = batchCommands(
+        busy = state.busy,
+        batchRunning = state.batch != null,
+        scope = batchScope,
+        primary = primary,
+        cloudReady = cloudReady,
+        hasReport = state.lastBatchReport != null,
+        actions = BatchMenuActions(
+            onBackup = runPrimary,
+            onUploadPending = { actions.onBatch(BatchOperation.UPLOAD_PENDING, batchScope.keys) },
+            onCheckCloud = { actions.onBatch(BatchOperation.CHECK_CLOUD, batchScope.keys) },
+            onRestoreCloudNewer = { actions.onBatch(BatchOperation.RESTORE_CLOUD_NEWER, batchScope.keys) },
+            onCancelBatch = actions.onCancelBatch,
+            onOpenReport = actions.onOpenBatchReport,
+        ),
+    )
     val history = remember(state.snapshots) { LibraryView.historyIndex(state.snapshots) }
     // Steam names resolved for rows are shared with the detail pane and its backup.
     val presentations = remember { mutableStateMapOf<String, GamePresentation>() }
@@ -282,6 +323,7 @@ internal fun GameLibraryContent(
     val detailScroll = rememberScrollState()
     var menuKey by rememberSaveable { mutableStateOf<String?>(null) }
     var commandsOpen by rememberSaveable { mutableStateOf(false) }
+    var batchMenuOpen by rememberSaveable { mutableStateOf(false) }
     // The summary line is item 0 of the list once anything was scanned.
     val rowOffset = if (state.sourceScans.isNotEmpty()) 1 else 0
 
@@ -312,8 +354,8 @@ internal fun GameLibraryContent(
 
     // Initial focus, and focus back after it dropped (rescan replaced the
     // rows, the portrait detail closed, the page was switched with L1/R1).
-    LaunchedEffect(handheld, shellFocus.hasFocus, visibleKeys, showingPortraitDetail, menuKey, commandsOpen) {
-        if (!handheld || shellFocus.hasFocus || menuKey != null || commandsOpen) return@LaunchedEffect
+    LaunchedEffect(handheld, shellFocus.hasFocus, visibleKeys, showingPortraitDetail, menuKey, commandsOpen, batchMenuOpen) {
+        if (!handheld || shellFocus.hasFocus || menuKey != null || commandsOpen || batchMenuOpen) return@LaunchedEffect
         withFrameNanos { }
         if (showingPortraitDetail) {
             focus.detailPrimary.tryRequestFocus()
@@ -326,7 +368,7 @@ internal fun GameLibraryContent(
     // Waking pad mode starts on the preferred row even when the system already
     // gave focus to the first focusable (the filter chip) in non-touch mode.
     LaunchedEffect(handheld) {
-        if (!handheld || focus.listHasFocus || focus.detailHasFocus || menuKey != null || commandsOpen) return@LaunchedEffect
+        if (!handheld || focus.listHasFocus || focus.detailHasFocus || menuKey != null || commandsOpen || batchMenuOpen) return@LaunchedEffect
         withFrameNanos { }
         if (showingPortraitDetail) {
             focus.detailPrimary.tryRequestFocus()
@@ -428,13 +470,23 @@ internal fun GameLibraryContent(
                 selectedCount = selectedKeys.size,
                 onScan = actions.onScan,
                 selection = selectionActions,
-                onCheckCloudUpdates = actions.onCheckCloudUpdates,
+                batch = batchEntries,
                 onTypeSelected = actions.onTypeSelected,
                 onStatusSelected = actions.onStatusSelected,
                 onOpenManagement = actions.onOpenManagement,
             ),
             busy = state.busy,
             onDismiss = { commandsOpen = false },
+        )
+    }
+
+    if (batchMenuOpen) {
+        HandheldMenuDialog(
+            title = "批量操作",
+            subtitle = batchScope.label,
+            entries = batchEntries,
+            onDismiss = { batchMenuOpen = false },
+            modifier = Modifier.testTag(BATCH_MENU_TAG),
         )
     }
 
@@ -475,6 +527,7 @@ internal fun GameLibraryContent(
                 onStatusSelected = actions.onStatusSelected,
                 selection = selectionActions,
                 onPrimaryBackup = runPrimary,
+                onOpenBatchMenu = { batchMenuOpen = true },
             )
         }
         // Landscape keeps the whole list height (plan S1/S2): messages and the
@@ -549,7 +602,7 @@ internal fun GameLibraryContent(
                             )
                         }
                     }
-                    StatusStrip(busy = state.busy, progress = state.progress)
+                    StatusStrip(busy = state.busy, progress = LibraryView.progressLine(state))
                 }
             }
         } else {
@@ -705,6 +758,7 @@ private fun LibraryMessageLines(messages: PageMessage, busy: Boolean) {
 private const val FOCUS_SELECT_DEBOUNCE_MILLIS = 150L
 
 internal const val GAME_LIST_TAG = "game-list"
+internal const val BATCH_MENU_TAG = "batch-menu"
 
 /** Local and cloud versions of one game, as the detail pane and the X menu list them. */
 private fun localHistoryOf(entry: SourceGameEntry, snapshots: List<SnapshotRecord>): List<SnapshotRecord> =
@@ -753,6 +807,9 @@ private fun GameDetailFor(
         primaryFocusRequester = primaryFocusRequester,
         modifier = modifier,
         status = status,
+        autoBackupIncluded = (entry.libraryKey !in state.autoBackupExcluded).takeIf { GameLibrary.canBatchBackup(game) },
+        autoBackupScheduled = state.autoBackupEnabled,
+        onAutoBackupChange = { enabled -> actions.onSetAutoBackup(entry.libraryKey, enabled) },
     )
 }
 
@@ -782,6 +839,9 @@ private fun GameMenuFor(
             onRestoreLatest = { record -> actions.onRestoreLocal(entry, record) },
             onShowVersions = { onShowDetail(DetailTab.VERSIONS) },
             onShowLocations = { onShowDetail(DetailTab.LOCATIONS) },
+            autoBackupIncluded = (entry.libraryKey !in state.autoBackupExcluded).takeIf { GameLibrary.canBatchBackup(entry.game) },
+            autoBackupScheduled = state.autoBackupEnabled,
+            onToggleAutoBackup = { actions.onSetAutoBackup(entry.libraryKey, entry.libraryKey in state.autoBackupExcluded) },
         ),
         onDismiss = onDismiss,
     )

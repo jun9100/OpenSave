@@ -37,7 +37,8 @@ internal fun libraryCommands(
     selectedCount: Int,
     onScan: () -> Unit,
     selection: LibrarySelectionActions,
-    onCheckCloudUpdates: () -> Unit,
+    /** The batch operations ([com.jun9100.opensave.ui.batch.batchCommands]) over the selection or the type filter. */
+    batch: List<MenuEntry>,
     onTypeSelected: (String) -> Unit,
     onStatusSelected: (LibraryStatusFilter) -> Unit,
     onOpenManagement: () -> Unit,
@@ -50,7 +51,7 @@ internal fun libraryCommands(
     } else {
         add(MenuEntry("进入选择模式", detail = "Select 键或长按游戏也可进入", enabled = !busy, onClick = selection.onEnter))
     }
-    add(MenuEntry("检查跨设备更新", detail = "结果显示在“备份与设置”", enabled = !busy, onClick = onCheckCloudUpdates))
+    addAll(batch)
     // A single "全部" option means there is nothing to filter.
     if (typeOptions.size > 1) {
         typeOptions.forEach { (id, label) ->
@@ -79,11 +80,14 @@ internal fun managementCommands(
     onCheckCloudUpdates: () -> Unit,
     onPickFolder: () -> Unit,
     onOpenLibrary: () -> Unit,
-): List<MenuEntry> = listOf(
+    /** Opens the last batch report; null while there is none. */
+    onOpenBatchReport: (() -> Unit)? = null,
+): List<MenuEntry> = listOfNotNull(
     MenuEntry("刷新来源", detail = "重新读取已保存的来源与配置", enabled = !busy, onClick = onRefresh),
     MenuEntry("列举云端快照", enabled = !busy, onClick = onListCloud),
     MenuEntry("检查跨设备更新", enabled = !busy, onClick = onCheckCloudUpdates),
     MenuEntry("添加并授权目录", enabled = !busy, onClick = onPickFolder),
+    onOpenBatchReport?.let { MenuEntry("最近的批量报告", onClick = it) },
     MenuEntry("前往 游戏库", onClick = onOpenLibrary),
 )
 

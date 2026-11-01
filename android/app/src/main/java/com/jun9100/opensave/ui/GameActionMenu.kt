@@ -43,6 +43,11 @@ internal fun gameMenuEntries(
     onRestoreLatest: (SnapshotRecord) -> Unit,
     onShowVersions: () -> Unit,
     onShowLocations: () -> Unit,
+    /** Whether automatic backup covers this game; null hides the entry (not an eligible game). */
+    autoBackupIncluded: Boolean? = null,
+    /** False while automatic backup is off for the whole app; the entry says so. */
+    autoBackupScheduled: Boolean = true,
+    onToggleAutoBackup: () -> Unit = {},
 ): List<MenuEntry> = buildList {
     add(MenuEntry("备份这款游戏", enabled = !busy, onClick = onBackup))
     add(
@@ -60,6 +65,15 @@ internal fun gameMenuEntries(
                 detail = formatTime(record.createdAtMillis),
                 enabled = !busy,
             ) { onRestoreLatest(record) },
+        )
+    }
+    autoBackupIncluded?.let { included ->
+        add(
+            MenuEntry(
+                if (included) "关闭这款游戏的自动备份" else "开启这款游戏的自动备份",
+                detail = if (autoBackupScheduled) "只影响本设备" else "自动备份总开关未开启（备份与设置）",
+                onClick = onToggleAutoBackup,
+            ),
         )
     }
     add(MenuEntry("查看版本 ($versionCount)", onClick = onShowVersions))

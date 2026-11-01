@@ -2,6 +2,7 @@ package com.jun9100.opensave.ui
 
 import com.jun9100.opensave.LibraryStatusFilter
 import com.jun9100.opensave.SnapshotRecord
+import com.jun9100.opensave.ui.dialogs.MenuEntry
 import com.jun9100.opensave.ui.settings.TextSettingSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,13 +21,13 @@ class HandheldMenusTest {
             selectedCount = 0,
             onScan = {},
             selection = LibrarySelectionActions(),
-            onCheckCloudUpdates = {},
+            batch = listOf(MenuEntry("上传待传 (2)") {}),
             onTypeSelected = {},
             onStatusSelected = {},
             onOpenManagement = {},
         )
         assertEquals(
-            listOf("扫描游戏", "进入选择模式", "检查跨设备更新", "筛选：全部", "筛选：Switch 游戏") +
+            listOf("扫描游戏", "进入选择模式", "上传待传 (2)", "筛选：全部", "筛选：Switch 游戏") +
                 LibraryStatusFilter.entries.map { "状态：${it.label}" } +
                 "前往 备份与设置",
             entries.map { it.label },
@@ -49,13 +50,13 @@ class HandheldMenusTest {
             selectedCount = 3,
             onScan = {},
             selection = LibrarySelectionActions(onSelectAll = { selectedAll = true }, onExit = { exited = true }),
-            onCheckCloudUpdates = {},
+            batch = emptyList(),
             onTypeSelected = {},
             onStatusSelected = {},
             onOpenManagement = {},
         )
         val labels = entries.map { it.label }
-        assertEquals(listOf("扫描游戏", "全选当前筛选", "清除选择", "退出选择模式", "检查跨设备更新"), labels.take(5))
+        assertEquals(listOf("扫描游戏", "全选当前筛选", "清除选择", "退出选择模式"), labels.take(4))
         assertEquals("已选 3", entries[1].detail)
         // Leaving selection mode and switching pages are not operations.
         assertEquals(setOf("退出选择模式", "前往 备份与设置"), entries.filter { it.enabled }.map { it.label }.toSet())
@@ -93,6 +94,48 @@ class HandheldMenusTest {
         assertEquals("仅待确认位置，不参与批量备份", entries[1].detail)
         val busy = menu(latest = record(), busy = true)
         assertEquals(listOf(false, false, false, true, true), busy.map { it.enabled })
+    }
+
+    @Test
+    fun gameMenuTogglesAutomaticBackupOfOneGame() {
+        var toggled = false
+        val on = gameMenuEntries(
+            busy = true,
+            batchEligible = true,
+            batchChecked = false,
+            latestLocal = null,
+            versionCount = 0,
+            locationCount = 1,
+            onBackup = {},
+            onToggleBatch = {},
+            onRestoreLatest = {},
+            onShowVersions = {},
+            onShowLocations = {},
+            autoBackupIncluded = true,
+            autoBackupScheduled = false,
+            onToggleAutoBackup = { toggled = true },
+        )
+        val entry = on.single { it.label == "关闭这款游戏的自动备份" }
+        // A local preference, not an operation: available while busy.
+        assertTrue(entry.enabled)
+        assertEquals("自动备份总开关未开启（备份与设置）", entry.detail)
+        entry.onClick()
+        assertTrue(toggled)
+        assertTrue(menu(latest = null).none { it.label.contains("自动备份") })
+    }
+
+    @Test
+    fun managementPanelOffersTheLastBatchReport() {
+        val entries = managementCommands(
+            busy = true,
+            onRefresh = {},
+            onListCloud = {},
+            onCheckCloudUpdates = {},
+            onPickFolder = {},
+            onOpenLibrary = {},
+            onOpenBatchReport = {},
+        )
+        assertTrue(entries.single { it.label == "最近的批量报告" }.enabled)
     }
 
     @Test

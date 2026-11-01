@@ -57,6 +57,10 @@ import com.jun9100.opensave.BackTarget
 import com.jun9100.opensave.LibraryView
 import com.jun9100.opensave.OpenSavePage
 import com.jun9100.opensave.SourceViewModel
+import com.jun9100.opensave.ui.batch.BatchPlanDialog
+import com.jun9100.opensave.ui.batch.BatchReportSheet
+import com.jun9100.opensave.ui.batch.BatchStripState
+import com.jun9100.opensave.ui.batch.LocalBatchStrip
 import com.jun9100.opensave.ui.dialogs.GameBackupConfirmDialog
 import com.jun9100.opensave.ui.dialogs.RestoreConfirmDialog
 import com.jun9100.opensave.ui.dialogs.WorkspaceWriteBackDialog
@@ -110,6 +114,33 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
         )
     }
 
+    state.pendingBatchPlan?.let { plan ->
+        BatchPlanDialog(
+            plan = plan,
+            onDismiss = sourceViewModel::cancelBatchPlan,
+            onConfirm = sourceViewModel::confirmBatchPlan,
+        )
+    }
+
+    state.lastBatchReport?.takeIf { state.batchReportOpen }?.let { report ->
+        BatchReportSheet(
+            report = report,
+            busy = state.busy,
+            onRetryFailed = sourceViewModel::retryFailedBatch,
+            onDismiss = sourceViewModel::closeBatchReport,
+        )
+    }
+
+    val batchStrip = remember(state.batch, state.lastBatchReport, state.batchReportUnseen) {
+        BatchStripState(
+            batch = state.batch,
+            report = state.lastBatchReport?.takeIf { state.batchReportUnseen },
+            onCancel = sourceViewModel::cancelBatch,
+            onOpenReport = sourceViewModel::openBatchReport,
+            onDismissReport = sourceViewModel::dismissBatchReport,
+        )
+    }
+
     // L1/R1 switch the top-level page from anywhere, even with nothing focused.
     HandheldCommandEffect { command ->
         HandheldDispatch.pageAfter(state.page, command)?.let(sourceViewModel::showPage)
@@ -117,7 +148,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
 
     val shellFocus = remember { FocusWatch() }
     ProvideAdaptiveLayout(modifier = Modifier.fillMaxSize().watchFocus(shellFocus)) {
-        CompositionLocalProvider(LocalShellFocus provides shellFocus) {
+        CompositionLocalProvider(LocalShellFocus provides shellFocus, LocalBatchStrip provides batchStrip) {
             val landscape = LocalAdaptiveLayout.current.isLandscape
             // Back stack: portrait game detail -> list; secondary page -> library; otherwise the system.
             BackHandler(enabled = LibraryView.backTarget(state.page, state.gameDetailOpen, landscape) != BackTarget.SYSTEM) {
@@ -126,7 +157,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
             AdaptiveShellFrame(
                 page = state.page,
                 busy = state.busy,
-                progress = state.progress,
+                progress = LibraryView.progressLine(state),
                 gameDetailOpen = state.gameDetailOpen && state.selectedGameKey != null,
                 onShowPage = sourceViewModel::showPage,
                 onRefresh = if (state.page == OpenSavePage.LIBRARY) {

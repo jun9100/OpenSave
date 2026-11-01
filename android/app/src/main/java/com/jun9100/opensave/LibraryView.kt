@@ -159,6 +159,17 @@ object LibraryView {
     }
 
     /** No root and no granted folder: nothing beyond built-in shared paths can be scanned. */
+    /**
+     * The status strip line: a single operation waiting for the auto-backup
+     * worker says so instead of looking stuck (plan §5.5).
+     */
+    fun progressLine(state: SourceUiState): String? =
+        if (state.busy && state.batch == null && state.lockOwner == StorageOperationLock.AUTO_BACKUP) {
+            "等待自动备份完成…"
+        } else {
+            state.progress
+        }
+
     fun needsFolderGrant(state: SourceUiState): Boolean =
         state.rootChecked && !state.rootAvailable && !state.hasPersistedPermission
 
