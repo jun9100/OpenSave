@@ -26,6 +26,10 @@
   import LibraryViewOptions from './LibraryViewOptions.svelte';
   import { bulkJob, startBulk, BULK_OPS, bulkUnavailable } from '../../lib/bulk.js';
   import { folderHints } from '../../lib/folderhint.js';
+  import { duplicateGroups } from '../../lib/duplicates.js';
+  import { gameList } from '../../lib/stores.js';
+  import DuplicatesDialog from '../../components/DuplicatesDialog.svelte';
+  import CopyCheck from 'lucide-svelte/icons/copy-check';
   import CloudUpload from 'lucide-svelte/icons/cloud-upload';
   import History from 'lucide-svelte/icons/history';
   import RefreshCcwDot from 'lucide-svelte/icons/refresh-ccw-dot';
@@ -141,6 +145,10 @@
   // so one batch can follow another; stopping tracking ends it.
   // Games tracked more than once under one name say which folder each is.
   $: hints = folderHints(rows.map((r) => r.game));
+  // Games tracked twice, or inside another tracked folder, across the whole
+  // library (not only the type shown): the duplicate check reviews them.
+  $: dupGroups = duplicateGroups($gameList);
+  let showDuplicates = false;
   const picked = () => rows.filter((r) => libSelected.has(r.game.id)).map((r) => r.game);
   $: bulkBusy = !!$bulkJob && !$bulkJob.finished;
   $: bulkCtx = { cloudReady: !!$settings?.cloudSync?.ready, paused: !!$syncPause.paused };
@@ -247,6 +255,11 @@
         </div>
       {/if}
     </div>
+    {#if dupGroups.length}
+      <button class="btn small" on:click={() => (showDuplicates = true)} title={$t('home.library.duplicatesTitle')}
+        ><CopyCheck size={14} />{$t('home.library.duplicates', { n: dupGroups.length })}</button
+      >
+    {/if}
     <button class="btn small" on:click={toggleSelectMode}><SquareCheckBig size={14} />{$t('home.library.select')}</button>
   {/if}
 </div>
@@ -319,6 +332,10 @@
       <button class="linklike" on:click={clearFilters}>{$t('home.library.showAll')}</button>
     </p>
   {/if}
+{/if}
+
+{#if showDuplicates}
+  <DuplicatesDialog games={$gameList} on:close={() => (showDuplicates = false)} />
 {/if}
 
 <style>

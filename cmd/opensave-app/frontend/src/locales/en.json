@@ -1821,5 +1821,38 @@
   "home.library.bulkLead": "With the selected games:",
   "home.library.bulkHelp": "Click games to pick them (Shift-click picks a range, Ctrl-click or a long press starts picking). Batches run one game at a time and end with a list of what was done, what failed and why, and what was skipped. Restoring and stopping tracking ask first.",
   "shortcuts.page.help": "Help",
-  "home.tile.folderHintTitle": "Tracked at {path} — another tracked game has the same name"
+  "home.tile.folderHintTitle": "Tracked at {path} — another tracked game has the same name",
+  "home.library.duplicates": "Duplicates ({n})",
+  "home.library.duplicatesTitle": "Games tracked more than once, or inside another tracked folder — see which copy to keep",
+  "duplicates.title": "Duplicate tracking check",
+  "duplicates.checking": "Reading each copy's files…",
+  "duplicates.summary": "{groups} groups · {redundant} can stop being tracked · {review} need a look",
+  "duplicates.none": "No game is tracked twice.",
+  "duplicates.intro": "The same game is often tracked more than once — a launcher's save folder and a repack's, or a whole repack folder and one game inside it — so the same files are snapshotted and uploaded twice. Only copies whose every file is kept by another entry are ticked. Two different folders with different files are both kept: either may hold progress.",
+  "duplicates.verdict.redundant": "Can stop tracking",
+  "duplicates.verdict.keep": "Keep",
+  "duplicates.verdict.review": "Have a look",
+  "duplicates.stats": {
+    "one": "{n} file · last written {when}",
+    "other": "{n} files · last written {when}"
+  },
+  "duplicates.never": "never",
+  "duplicates.reason.covers": "Its folder holds the folder of {names}, which is tracked on its own",
+  "duplicates.reason.insideOf": "Inside the folder of {name} — the more specific copy",
+  "duplicates.reason.mixed": "Also holds other games' save folders (App ID {ids})",
+  "duplicates.reason.uncovered": {
+    "one": "{n} file in it is kept by no other entry — stopping it would stop backing that up",
+    "other": "{n} files in it are kept by no other entry — stopping it would stop backing them up"
+  },
+  "duplicates.reason.uncoveredApps": {
+    "one": "{n} file in it (App ID {ids}) is kept by no other entry — track that game on its own first",
+    "other": "{n} files in it (App ID {ids}) are kept by no other entry — track those games on their own first"
+  },
+  "duplicates.reason.sameFiles": "Exactly the same files as {name} at {path}",
+  "duplicates.reason.newest": "The most recently written of these",
+  "duplicates.reason.different": "Files of its own, not in any other copy",
+  "duplicates.footNote": "Stopping tracking deletes no save files, snapshots or cloud copies, and asks first.",
+  "duplicates.close": "Close",
+  "duplicates.stopTracking": "Stop tracking selected ({n})",
+  "bulk.skip.coveredBy": "Already uploaded through {name} ({path}), which holds every file in it"
 }

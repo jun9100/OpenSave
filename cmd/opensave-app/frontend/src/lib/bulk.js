@@ -9,7 +9,8 @@
 import { writable, get } from 'svelte/store';
 import { api } from './api.js';
 import { tt, trError } from './i18n.js';
-import { askConfirm } from './stores.js';
+import { askConfirm, games as gamesStore } from './stores.js';
+import { coveredCopy, isInside, judgeGroup } from './duplicates.js';
 import { latestSnapshot } from './gameactions.js';
 import { whenLabel } from './snapshots.js';
 
@@ -17,7 +18,8 @@ import { whenLabel } from './snapshots.js';
  * What can be done to a selection. Each says
  *   label, verb      — the button, and what the progress line says it is doing
  *   danger           — asks before starting, naming what will change
- *   skip(game, ctx)  — why this game is left out, or '' to go ahead
+ *   skip(game, ctx)  — why this game is left out, or '' to go ahead (may be
+ *                      async; ctx.allGames is every tracked game)
  *   run(game)        — does it; resolves to a short note, throws on failure
  */
 export const BULK_OPS = {
@@ -48,7 +50,7 @@ export const BULK_OPS = {
       return tt('bulk.cloud.hint');
     },
     unavailable: (ctx) => (ctx.cloudReady ? '' : tt('bulk.cloud.unavailable')),
-    skip: (g) => (snapshotCount(g) === 0 ? tt('bulk.skip.noSnapshots') : ''),
+    skip: async (g, ctx) => (snapshotCount(g) === 0 ? tt('bulk.skip.noSnapshots') : await coveredElsewhere(g, ctx?.allGames)),
     run: async (g) => {
       const res = await api.post(`/api/cloud/sync-local/${g.id}`);
       if (res.failed > 0) {
@@ -169,6 +171,24 @@ export const BULK_OPS = {
   }
 };
 
+// An outer folder whose every file is kept by a more specific copy of the
+// same game tracked inside it (lib/duplicates.js): uploading it sends those
+// files a second time. Only then is it skipped — one that also holds files
+// nothing else keeps is uploaded as before.
+async function coveredElsewhere(game, allGames) {
+  const inner = coveredCopy(game, allGames);
+  if (!inner) return '';
+  const members = [game, ...allGames.filter((x) => x.id !== game.id && isInside(x.savePath, game.savePath))];
+  try {
+    const listings = await Promise.all(members.map((m) => api.get(`/api/games/${m.id}/save-files`)));
+    const files = Object.fromEntries(members.map((m, i) => [m.id, listings[i]?.files ?? []]));
+    const verdict = judgeGroup(members, files, allGames).find((r) => r.game.id === game.id)?.verdict;
+    return verdict === 'redundant' ? tt('bulk.skip.coveredBy', { name: inner.name, path: inner.savePath }) : '';
+  } catch {
+    return ''; // Not sure: upload it, as before.
+  }
+}
+
 const snapshotCount = (g) => Object.values(g?.branches ?? {}).reduce((n, b) => n + (b?.snapshots?.length ?? 0), 0);
 
 /** Why an operation can't be started at all right now, or ''. */
@@ -182,7 +202,7 @@ export function bulkUnavailable(op, ctx) {
  * one per game: {game, status: 'ok'|'failed'|'skipped', note}. Never throws.
  * Pure of the stores, so tested on its own.
  */
-export async function runBulk(op, games, { onStep = () => {}, shouldStop = () => false } = {}) {
+export async function runBulk(op, games, { onStep = () => {}, shouldStop = () => false, ctx = {} } = {}) {
   const def = BULK_OPS[op];
   const results = [];
   for (let i = 0; i < games.length; i++) {
@@ -192,7 +212,7 @@ export async function runBulk(op, games, { onStep = () => {}, shouldStop = () =>
       break;
     }
     onStep({ done: i, total: games.length, current: g.name });
-    const why = def.skip?.(g) ?? '';
+    const why = (await def.skip?.(g, ctx)) ?? '';
     if (why) {
       results.push({ game: g, status: 'skipped', note: why });
       continue;
@@ -244,6 +264,7 @@ export async function startBulk(op, games) {
   stopRequested = false;
   bulkJob.set({ op, label: def.verb, total: games.length, done: 0, current: '', results: [], finished: false, stopping: false });
   const results = await runBulk(op, games, {
+    ctx: { allGames: Object.values(get(gamesStore) ?? {}) },
     onStep: (s) => bulkJob.update((j) => (j ? { ...j, ...s } : j)),
     shouldStop: () => stopRequested
   });
