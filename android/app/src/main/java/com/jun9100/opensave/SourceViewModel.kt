@@ -197,6 +197,8 @@ data class SourceUiState(
     val lockOwner: String? = null,
     /** The top-level page "同步与任务" was opened from; B goes back there. */
     val syncReturnPage: OpenSavePage = OpenSavePage.LIBRARY,
+    /** The page shown before [page]; 设置 puts focus back on "同步与任务 ›" when it is SYNC. */
+    val previousPage: OpenSavePage? = null,
     /** Games put off with "稍后" in "同步与任务"; this session only. */
     val syncDismissed: Set<String> = emptySet(),
     /** The kept batch reports, newest first ([BatchReportStore]); "同步与任务" lists them. */
@@ -616,7 +618,11 @@ class SourceViewModel(
 
     /** Opening "同步与任务" remembers the top-level page it came from. */
     fun showPage(page: OpenSavePage) = updateState {
-        if (page.topLevel) copy(page = page) else copy(page = page, syncReturnPage = navigationPage)
+        if (page.topLevel) {
+            copy(page = page, previousPage = this.page)
+        } else {
+            copy(page = page, previousPage = this.page, syncReturnPage = navigationPage)
+        }
     }
 
     fun openSyncTasks() = showPage(OpenSavePage.SYNC)

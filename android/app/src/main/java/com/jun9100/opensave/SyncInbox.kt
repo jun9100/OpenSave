@@ -26,6 +26,14 @@ data class SyncInboxItem(
  */
 object SyncInbox {
     /**
+     * Where focus goes when the item at [removedIndex] leaves a list that now
+     * holds [remaining] items: the one that took its place, else the new last
+     * one; null when the list is empty.
+     */
+    fun nextFocusIndex(removedIndex: Int, remaining: Int): Int? =
+        if (remaining <= 0) null else removedIndex.coerceIn(0, remaining - 1)
+
+    /**
      * Games whose status is a conflict or a newer cloud save, conflicts first,
      * then by name. [cloudActions] are the effective verdicts
      * ([GameStatusResolver.effectiveCloudActions]); [dismissed] are the keys

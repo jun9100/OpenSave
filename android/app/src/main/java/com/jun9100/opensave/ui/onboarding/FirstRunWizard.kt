@@ -300,17 +300,25 @@ private fun NotificationCard(allowed: Boolean, actions: WizardActions) {
             }
             Text(stringResource(R.string.wizard_notifications_body), style = MaterialTheme.typography.bodySmall)
             val request = actions.onRequestNotifications
-            when {
-                allowed -> Text(stringResource(R.string.notifications_allowed), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                request != null -> OutlinedButton(onClick = request, modifier = Modifier.fillMaxWidth().settingButtonFocus()) {
-                    Text(stringResource(R.string.wizard_notifications_allow))
-                }
-                else -> {
-                    Text(stringResource(R.string.notifications_denied), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                    TextButton(onClick = actions.onOpenNotificationSettings, modifier = Modifier.settingButtonFocus()) {
-                        Text(stringResource(R.string.notifications_open_settings))
-                    }
-                }
+            if (allowed) {
+                Text(stringResource(R.string.notifications_allowed), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            } else if (request == null) {
+                Text(stringResource(R.string.notifications_denied), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+            }
+            // One button throughout, only its label and action change: removing the focused
+            // button after the permission prompt would leave the gamepad with nothing focused.
+            OutlinedButton(
+                onClick = request ?: actions.onOpenNotificationSettings,
+                modifier = Modifier.fillMaxWidth().settingButtonFocus(),
+            ) {
+                Text(
+                    stringResource(
+                        when {
+                            request != null && !allowed -> R.string.wizard_notifications_allow
+                            else -> R.string.notifications_open_settings
+                        },
+                    ),
+                )
             }
         }
     }

@@ -32,8 +32,9 @@ internal fun CommandDialog(
 /**
  * Commands of the game library, short and grouped (plan §4.1): what the
  * moment calls for first (cancel the running batch, the main backup,
- * "同步与任务", the last report), then the selection and the other batch
- * operations; the filters sit in their own "筛选…" panel.
+ * "同步与任务", the last report), then the other batch operations; the
+ * selection controls and the filters sit in their own "选择…" and "筛选…"
+ * panels, so the panel stays at ten entries at most.
  */
 internal fun libraryCommands(
     busy: Boolean,
@@ -49,6 +50,8 @@ internal fun libraryCommands(
     batch: List<MenuEntry>,
     onOpenFilters: () -> Unit,
     onOpenSyncTasks: () -> Unit,
+    /** Opens the "选择…" panel ([librarySelectionCommands]); shown in selection mode only. */
+    onOpenSelection: () -> Unit = {},
 ): List<MenuEntry> = buildList {
     val cancel = batch.filter { it.label == CANCEL_BATCH_LABEL }
     val report = batch.filter { it.label == BATCH_REPORT_LABEL && it.enabled }
@@ -58,18 +61,29 @@ internal fun libraryCommands(
     addAll(operations.take(1))
     add(syncTasksEntry(syncAttention, onOpenSyncTasks))
     addAll(report)
-    if (selectionMode) {
-        add(MenuEntry("全选当前筛选", detail = "已选 $selectedCount", enabled = !busy, onClick = selection.onSelectAll))
-        add(MenuEntry("清除选择", enabled = !busy, onClick = selection.onClear))
-        add(MenuEntry("退出选择模式", detail = "B 键也可退出", onClick = selection.onExit))
-    }
     addAll(operations.drop(1))
-    if (!selectionMode) {
+    if (selectionMode) {
+        // Never disabled: it holds "退出选择模式", which is not an operation.
+        add(MenuEntry(SELECTION_MENU_LABEL, detail = "已选 $selectedCount · 全选、清除或退出", onClick = onOpenSelection))
+    } else {
         add(MenuEntry("进入选择模式", detail = "Select 键或长按游戏也可进入", enabled = !busy, onClick = selection.onEnter))
     }
     add(MenuEntry("筛选…", detail = filterSummary, enabled = !busy, onClick = onOpenFilters))
     add(MenuEntry("扫描游戏", detail = "重新扫描已选的存档来源", enabled = !busy, onClick = onScan))
 }
+
+/** The "选择…" panel of the library in selection mode. */
+internal fun librarySelectionCommands(
+    busy: Boolean,
+    selectedCount: Int,
+    selection: LibrarySelectionActions,
+): List<MenuEntry> = listOf(
+    MenuEntry("全选当前筛选", detail = "已选 $selectedCount", enabled = !busy, onClick = selection.onSelectAll),
+    MenuEntry("清除选择", enabled = !busy, onClick = selection.onClear),
+    MenuEntry("退出选择模式", detail = "B 键或 Select 键也可退出", onClick = selection.onExit),
+)
+
+internal const val SELECTION_MENU_LABEL = "选择…"
 
 /** The "筛选…" panel of the library: type, then status; the current choices are marked. */
 internal fun libraryFilterCommands(

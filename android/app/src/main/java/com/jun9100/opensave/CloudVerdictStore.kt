@@ -22,12 +22,14 @@ class CloudVerdictStore(context: Context) {
     fun load(): Map<String, CloudVerdict> = decode(preferences.getString(VERDICTS_KEY, null))
 
     /** Adds or replaces verdicts; [removedKeys] (games a check found up to date) are dropped first. */
-    fun update(removedKeys: Set<String> = emptySet(), verdicts: Map<String, CloudVerdict> = emptyMap()) = synchronized(this) {
+    fun update(removedKeys: Set<String> = emptySet(), verdicts: Map<String, CloudVerdict> = emptyMap()) = synchronized(LOCK) {
         val next = load() - removedKeys + verdicts
-        preferences.edit().putString(VERDICTS_KEY, encode(next)).apply()
+        preferences.edit().putString(VERDICTS_KEY, encode(next)).commit()
     }
 
     companion object {
+        /** Process-wide: the worker and the UI each build their own store over the same preferences. */
+        private val LOCK = Any()
         private const val PREFERENCES = "opensave_cloud_verdicts"
         private const val VERDICTS_KEY = "verdicts"
 

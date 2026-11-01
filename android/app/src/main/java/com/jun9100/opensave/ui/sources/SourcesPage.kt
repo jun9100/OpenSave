@@ -36,8 +36,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -63,12 +65,14 @@ import com.jun9100.opensave.ui.LocalAdaptiveLayout
 import com.jun9100.opensave.ui.dialogs.DiscardSourceChangesDialog
 import com.jun9100.opensave.ui.input.busyDimmed
 import com.jun9100.opensave.ui.input.handheldFocusRing
+import com.jun9100.opensave.ui.input.tryRequestFocus
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.settings.HandheldPageColumns
 import com.jun9100.opensave.ui.settings.TextEditDialog
 import com.jun9100.opensave.ui.settings.settingButtonFocus
 import com.jun9100.opensave.ui.sourceAccessLabel
 import com.jun9100.opensave.ui.sourcesCommands
+import kotlinx.coroutines.launch
 
 /**
  * 来源 (plan §3.1): where saves are read from, grouped as 已授权目录 /
@@ -98,6 +102,10 @@ internal fun SourcesPage(
     val selectedGroup = groups.firstOrNull { it.first.name == selectedGroupName } ?: groups.first()
     val stage: (SourceDraft) -> Unit = viewModel::updateSourceDraft
     val canAddRoot = state.rootAvailable
+    // Landscape: A on a group moves into its rows on the right.
+    val scope = rememberCoroutineScope()
+    val firstRowFocus = remember { FocusRequester() }
+    val rightFirst = remember { mutableStateOf<FocusRequester?>(null) }
 
     HandheldPageColumns(
         commandsTitle = "来源命令",
@@ -137,6 +145,14 @@ internal fun SourcesPage(
                                 rows = members,
                                 selected = group == selectedGroup.first,
                                 onSelect = { selectedGroupName = group.name },
+                                onEnter = {
+                                    selectedGroupName = group.name
+                                    scope.launch {
+                                        withFrameNanos { }
+                                        val target = if (members.any(SourceRow::checkable)) firstRowFocus else rightFirst.value
+                                        target?.tryRequestFocus()
+                                    }
+                                },
                             )
                         }
                     }
@@ -158,6 +174,7 @@ internal fun SourcesPage(
             }
         },
         right = { firstControl ->
+            rightFirst.value = firstControl
             if (landscape) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -171,7 +188,14 @@ internal fun SourcesPage(
                         }
                         Spacer(Modifier.height(6.dp))
                         GroupHeader(selectedGroup.first, selectedGroup.second)
-                        GroupRows(selectedGroup.first, selectedGroup.second, state, stage, viewModel::forgetAuthorizedTree)
+                        GroupRows(
+                            selectedGroup.first,
+                            selectedGroup.second,
+                            state,
+                            stage,
+                            viewModel::forgetAuthorizedTree,
+                            firstRowFocus = firstRowFocus,
+                        )
                     }
                 }
             }
@@ -269,6 +293,7 @@ private fun GroupNavigationItem(
     rows: List<SourceRow>,
     selected: Boolean,
     onSelect: () -> Unit,
+    onEnter: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
     Row(
@@ -278,7 +303,7 @@ private fun GroupNavigationItem(
             .let { if (selected) it.background(MaterialTheme.colorScheme.secondaryContainer, shape) else it }
             .onFocusChanged { if (it.isFocused) onSelect() }
             .handheldFocusRing(shape)
-            .clickable(role = Role.Tab, onClick = onSelect)
+            .clickable(role = Role.Tab, onClick = onEnter)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -350,6 +375,8 @@ private fun GroupRows(
     state: SourceUiState,
     onStage: (SourceDraft) -> Unit,
     onForgetTree: (Uri) -> Unit,
+    /** Put on the first checkable row, which A on a landscape group focuses. */
+    firstRowFocus: FocusRequester? = null,
 ) {
     groupNote(group, state)?.let { note ->
         Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -375,6 +402,7 @@ private fun GroupRows(
         }
     }
     val trees = state.authorizedTrees.associateBy(AuthorizedSafTree::uri)
+    val firstCheckable = checkable.firstOrNull()
     rows.forEach { row ->
         val tree = (row.option.source as? SourceSelection.Saf)?.let { trees[it.uri] }
         SourceRowItem(
@@ -384,6 +412,7 @@ private fun GroupRows(
             busy = state.busy,
             onToggle = { enabled -> onStage(state.sourceDraft.toggle(row, enabled)) },
             onForget = tree?.let { { onForgetTree(it.uri) } },
+            focusRequester = firstRowFocus.takeIf { row === firstCheckable },
         )
     }
 }
@@ -400,6 +429,7 @@ private fun SourceRowItem(
     busy: Boolean,
     onToggle: (Boolean) -> Unit,
     onForget: (() -> Unit)?,
+    focusRequester: FocusRequester? = null,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(
@@ -407,6 +437,7 @@ private fun SourceRowItem(
                 .weight(1f)
                 .padding(vertical = 2.dp)
                 .heightIn(min = 48.dp)
+                .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
                 .handheldFocusRing(RoundedCornerShape(12.dp))
                 .toggleable(
                     value = row.checked,

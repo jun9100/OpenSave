@@ -86,9 +86,8 @@ class HandheldMenusTest {
     }
 
     @Test
-    fun libraryPanelInSelectionModeOffersSelectAllClearAndExitEvenWhileBusy() {
-        var selectedAll = false
-        var exited = false
+    fun libraryPanelInSelectionModeOpensASelectionPanelThatWorksWhileBusy() {
+        var selectionOpened = false
         val entries = libraryCommands(
             busy = true,
             selectionMode = true,
@@ -96,20 +95,59 @@ class HandheldMenusTest {
             filterSummary = "全部",
             syncAttention = 0,
             onScan = {},
-            selection = LibrarySelectionActions(onSelectAll = { selectedAll = true }, onExit = { exited = true }),
+            selection = LibrarySelectionActions(),
             batch = emptyList(),
             onOpenFilters = {},
             onOpenSyncTasks = {},
+            onOpenSelection = { selectionOpened = true },
         )
-        val labels = entries.map { it.label }
-        assertEquals(listOf("同步与任务", "全选当前筛选", "清除选择", "退出选择模式"), labels.take(4))
-        assertEquals("已选 3", entries[1].detail)
-        // Leaving selection mode and opening "同步与任务" are not operations.
-        assertEquals(setOf("退出选择模式", "同步与任务"), entries.filter { it.enabled }.map { it.label }.toSet())
+        assertEquals(listOf("同步与任务", "选择…", "筛选…", "扫描游戏"), entries.map { it.label })
+        // Opening "同步与任务" and the selection panel are not operations.
+        assertEquals(setOf("选择…", "同步与任务"), entries.filter { it.enabled }.map { it.label }.toSet())
         entries[1].onClick()
-        entries[3].onClick()
+        assertTrue(selectionOpened)
+
+        var selectedAll = false
+        var exited = false
+        val selection = librarySelectionCommands(
+            busy = true,
+            selectedCount = 3,
+            selection = LibrarySelectionActions(onSelectAll = { selectedAll = true }, onExit = { exited = true }),
+        )
+        assertEquals(listOf("全选当前筛选", "清除选择", "退出选择模式"), selection.map { it.label })
+        assertEquals("已选 3", selection[0].detail)
+        assertEquals(listOf("退出选择模式"), selection.filter { it.enabled }.map { it.label })
+        selection[0].onClick()
+        selection[2].onClick()
         assertTrue(selectedAll)
         assertTrue(exited)
+    }
+
+    @Test
+    fun libraryPanelStaysAtTenEntriesInSelectionModeWhileABatchRuns() {
+        val entries = libraryCommands(
+            busy = true,
+            selectionMode = true,
+            selectedCount = 5,
+            filterSummary = "全部",
+            syncAttention = 1,
+            onScan = {},
+            selection = LibrarySelectionActions(),
+            batch = batchCommands(
+                busy = true,
+                batchRunning = true,
+                scope = BatchScope(label = "所选", keys = listOf("a", "b"), pendingUpload = 1, restorable = 1, conflicts = 0),
+                primary = PrimaryBackup(label = "备份所选 (2)", keys = setOf("a", "b"), fromSelection = true),
+                cloudReady = true,
+                hasReport = true,
+                actions = BatchMenuActions(),
+            ),
+            onOpenFilters = {},
+            onOpenSyncTasks = {},
+        )
+        assertTrue(entries.size <= 10)
+        // The batch operations come before the selection panel.
+        assertTrue(entries.indexOfFirst { it.label.startsWith("检查云端更新") } < entries.indexOfFirst { it.label == "选择…" })
     }
 
     @Test

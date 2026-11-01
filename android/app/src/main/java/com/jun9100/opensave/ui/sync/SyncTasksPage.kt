@@ -19,14 +19,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -45,6 +49,7 @@ import com.jun9100.opensave.batch.BatchReport
 import com.jun9100.opensave.ui.formatTime
 import com.jun9100.opensave.ui.input.busyDimmed
 import com.jun9100.opensave.ui.input.handheldFocusRing
+import com.jun9100.opensave.ui.input.tryRequestFocus
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.settings.HandheldPageColumns
 import com.jun9100.opensave.ui.settings.settingButtonFocus
@@ -63,6 +68,7 @@ internal fun SyncTasksPage(
     modifier: Modifier = Modifier,
 ) {
     val messages = state.messages[OpenSavePage.SYNC]
+    val firstPageControl = remember { mutableStateOf<FocusRequester?>(null) }
     val items = remember(
         state.sourceScans,
         state.snapshots,
@@ -72,6 +78,22 @@ internal fun SyncTasksPage(
         state.gameSaveEnabled,
         state.syncDismissed,
     ) { SyncInbox.fromState(state) }
+    // Focus follows a handled or put-off item to the next one instead of dropping to the page top.
+    val itemFocus = remember { mutableMapOf<String, FocusRequester>() }
+    var lastFocusedKey by remember { mutableStateOf<String?>(null) }
+    var lastFocusedIndex by remember { mutableIntStateOf(0) }
+    val itemKeys = items.map(SyncInboxItem::key)
+    LaunchedEffect(itemKeys) {
+        itemFocus.keys.retainAll(itemKeys.toSet() + listOfNotNull(lastFocusedKey))
+        val gone = lastFocusedKey ?: return@LaunchedEffect
+        if (gone in itemKeys) return@LaunchedEffect
+        itemFocus.remove(gone)
+        withFrameNanos { }
+        val next = SyncInbox.nextFocusIndex(lastFocusedIndex, itemKeys.size)
+        lastFocusedKey = next?.let(itemKeys::get)
+        val moved = next?.let { itemFocus[itemKeys[it]]?.tryRequestFocus() } ?: false
+        if (!moved) firstPageControl.value?.tryRequestFocus()
+    }
     val cloudReady = state.gameSaveEnabled && state.gameSaveUrl.isNotBlank() && state.gameSaveSyncKey.isNotBlank()
     HandheldPageColumns(
         commandsTitle = "同步与任务命令",
@@ -88,6 +110,7 @@ internal fun SyncTasksPage(
         busy = state.busy,
         modifier = modifier.testTag(SYNC_TASKS_TAG),
         left = { firstControl ->
+            firstPageControl.value = firstControl
             Text("待处理", style = MaterialTheme.typography.titleMedium)
             Text(
                 if (cloudReady) "game-save 已启用 · 处理前都会重新检查云端" else "game-save 未启用；请先在“设置”中保存并启用",
@@ -98,7 +121,12 @@ internal fun SyncTasksPage(
             messages.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             OutlinedButton(
                 onClick = whenIdle(state.busy) { viewModel.checkCloudUpdates(OpenSavePage.SYNC) },
-                modifier = Modifier.fillMaxWidth().focusRequester(firstControl).settingButtonFocus().busyDimmed(state.busy),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(firstControl)
+                    .onFocusChanged { if (it.hasFocus) lastFocusedKey = null }
+                    .settingButtonFocus()
+                    .busyDimmed(state.busy),
             ) {
                 Icon(Icons.Outlined.CloudDownload, contentDescription = null)
                 Text("检查全部游戏的云端更新", modifier = Modifier.padding(start = 6.dp))
@@ -110,10 +138,15 @@ internal fun SyncTasksPage(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            items.forEach { item ->
+            items.forEachIndexed { index, item ->
                 SyncItemCard(
                     item = item,
                     busy = state.busy,
+                    focusRequester = itemFocus.getOrPut(item.key) { FocusRequester() },
+                    onFocused = {
+                        lastFocusedKey = item.key
+                        lastFocusedIndex = index
+                    },
                     onUseCloud = { viewModel.requestSyncCloudRestore(item.key) },
                     onKeepLocal = { viewModel.requestKeepLocal(item.key) },
                     onLater = { viewModel.dismissSyncItem(item.key) },
@@ -135,10 +168,6 @@ internal fun SyncTasksPage(
                     }
                 }
             }
-            ActivitySection(
-                entries = state.activity,
-                firstControl = firstControl.takeIf { running == null },
-            )
             Text(
                 "最近的批量报告",
                 style = MaterialTheme.typography.titleSmall,
@@ -155,9 +184,13 @@ internal fun SyncTasksPage(
                 ReportRow(
                     report = report,
                     onOpen = { viewModel.openStoredBatchReport(report) },
-                    focusRequester = firstControl.takeIf { index == 0 && running == null && state.activity.isEmpty() },
+                    focusRequester = firstControl.takeIf { index == 0 && running == null },
                 )
             }
+            ActivitySection(
+                entries = state.activity,
+                firstControl = firstControl.takeIf { running == null && state.batchReports.isEmpty() },
+            )
         },
     )
 }
@@ -166,11 +199,13 @@ internal fun SyncTasksPage(
 private fun SyncItemCard(
     item: SyncInboxItem,
     busy: Boolean,
+    focusRequester: FocusRequester,
+    onFocused: () -> Unit,
     onUseCloud: () -> Unit,
     onKeepLocal: () -> Unit,
     onLater: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.hasFocus) onFocused() }) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 item.entry.game.presentation.primaryName,
@@ -206,7 +241,7 @@ private fun SyncItemCard(
                 OutlinedButton(
                     onClick = whenIdle(busy, onUseCloud),
                     contentPadding = ITEM_BUTTON_PADDING,
-                    modifier = Modifier.weight(1f).settingButtonFocus().busyDimmed(busy),
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester).settingButtonFocus().busyDimmed(busy),
                 ) { Text("用云端覆盖…", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 OutlinedButton(
                     onClick = whenIdle(busy, onKeepLocal),

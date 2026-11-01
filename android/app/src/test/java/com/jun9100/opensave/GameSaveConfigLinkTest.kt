@@ -17,6 +17,15 @@ class GameSaveConfigLinkTest {
     }
 
     @Test
+    fun keepsAPlusThatIsNotPercentEncoded() {
+        val config = GameSaveConfigLink.parse(
+            "opensave://game-save?url=http%3A%2F%2Fhost%3A8788&token=+ab+cd/ef=+",
+        ).getOrThrow()
+
+        assertEquals("+ab+cd/ef=+", config.syncKey)
+    }
+
+    @Test
     fun readsPlainJson() {
         val config = GameSaveConfigLink.parse("""{"url": "https://nas.example/v1/opensave", "token": "k-1234567890"}""").getOrThrow()
 

@@ -114,6 +114,7 @@ import com.jun9100.opensave.ui.input.tryRequestFocus
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.input.whenIdleWith
 import com.jun9100.opensave.ui.libraryCommands
+import com.jun9100.opensave.ui.librarySelectionCommands
 import com.jun9100.opensave.ui.libraryFilterCommands
 import com.jun9100.opensave.ui.preview.ComponentPreviews
 import com.jun9100.opensave.ui.preview.OdinScreenPreviews
@@ -352,7 +353,8 @@ internal fun GameLibraryContent(
     var commandsOpen by rememberSaveable { mutableStateOf(false) }
     var batchMenuOpen by rememberSaveable { mutableStateOf(false) }
     var filtersOpen by rememberSaveable { mutableStateOf(false) }
-    val dialogOpen = menuKey != null || commandsOpen || batchMenuOpen || filtersOpen
+    var selectionMenuOpen by rememberSaveable { mutableStateOf(false) }
+    val dialogOpen = menuKey != null || commandsOpen || batchMenuOpen || filtersOpen || selectionMenuOpen
     // The summary line is item 0 of the list once anything was scanned.
     val rowOffset = if (state.sourceScans.isNotEmpty()) 1 else 0
 
@@ -533,10 +535,27 @@ internal fun GameLibraryContent(
                 batch = batchEntries,
                 onOpenFilters = { filtersOpen = true },
                 onOpenSyncTasks = actions.onOpenSyncTasks,
+                onOpenSelection = { selectionMenuOpen = true },
             ),
             busy = state.busy,
             onDismiss = { commandsOpen = false },
         )
+    }
+
+    if (selectionMenuOpen && selecting) {
+        HandheldMenuDialog(
+            title = "选择",
+            subtitle = "已选 ${selectedKeys.size}",
+            entries = librarySelectionCommands(
+                busy = state.busy,
+                selectedCount = selectedKeys.size,
+                selection = selectionActions,
+            ),
+            onDismiss = { selectionMenuOpen = false },
+            modifier = Modifier.testTag(SELECTION_MENU_TAG),
+        )
+    } else if (selectionMenuOpen) {
+        LaunchedEffect(Unit) { selectionMenuOpen = false }
     }
 
     if (filtersOpen) {
@@ -865,6 +884,7 @@ private fun SyncStatusBanner(text: String, conflict: Boolean, onClick: () -> Uni
 internal const val GAME_LIST_TAG = "game-list"
 internal const val BATCH_MENU_TAG = "batch-menu"
 internal const val FILTER_MENU_TAG = "filter-menu"
+internal const val SELECTION_MENU_TAG = "selection-menu"
 internal const val SYNC_BANNER_TAG = "sync-banner"
 
 /** Local and cloud versions of one game, as the detail pane and the X menu list them. */

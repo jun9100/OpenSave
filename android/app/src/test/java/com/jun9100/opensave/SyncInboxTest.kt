@@ -82,6 +82,14 @@ class SyncInboxTest {
         assertNull(SyncInbox.bannerText(emptyList()))
     }
 
+    @Test
+    fun focusMovesToTheItemThatTookTheHandledOnesPlace() {
+        assertEquals(0, SyncInbox.nextFocusIndex(removedIndex = 0, remaining = 2))
+        assertEquals(1, SyncInbox.nextFocusIndex(removedIndex = 1, remaining = 3))
+        assertEquals(1, SyncInbox.nextFocusIndex(removedIndex = 2, remaining = 2))
+        assertNull(SyncInbox.nextFocusIndex(removedIndex = 0, remaining = 0))
+    }
+
     private fun update(entry: SourceGameEntry, action: GameSaveRemoteAction, message: String) =
         GameSaveCloudUpdate(entry, nativeDecision = GameSaveNativeDecision(action = action, message = message))
 }

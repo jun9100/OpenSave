@@ -55,7 +55,7 @@ object GameSaveConfigLink {
             val name = part.substring(0, separator)
             require(name in FIELDS) { "配置链接包含未知参数 $name" }
             require(name !in fields) { "配置链接重复了参数 $name" }
-            fields[name] = runCatching { URLDecoder.decode(part.substring(separator + 1), Charsets.UTF_8.name()) }
+            fields[name] = runCatching { URLDecoder.decode(part.substring(separator + 1).replace("+", "%2B"), Charsets.UTF_8.name()) }
                 .getOrElse { throw IllegalArgumentException("配置链接参数 $name 编码无效") }
         }
         return fields["url"].orEmpty() to fields["token"].orEmpty()

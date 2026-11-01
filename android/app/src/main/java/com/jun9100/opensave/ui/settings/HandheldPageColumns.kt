@@ -51,6 +51,8 @@ internal fun HandheldPageColumns(
     modifier: Modifier = Modifier,
     /** Blocks the initial focus while the page shows a dialog of its own. */
     dialogOpen: Boolean = false,
+    /** Landscape: the page opens with focus on the right column's first control (e.g. back from a sub-page). */
+    startOnRight: Boolean = false,
     left: @Composable ColumnScope.(firstControl: FocusRequester) -> Unit,
     right: @Composable ColumnScope.(firstControl: FocusRequester) -> Unit = {},
 ) {
@@ -61,7 +63,7 @@ internal fun HandheldPageColumns(
     val firstControl = remember { FocusRequester() }
     // Landscape: focus that drops in the right column goes back to its top, not across to the left.
     val rightFirstControl = remember { FocusRequester() }
-    var lastFocusRight by remember { mutableStateOf(false) }
+    var lastFocusRight by remember { mutableStateOf(startOnRight && landscape) }
     val leftScroll = rememberScrollState()
     val rightScroll = rememberScrollState()
     var rightHasFocus by remember { mutableStateOf(false) }
@@ -79,7 +81,8 @@ internal fun HandheldPageColumns(
     LaunchedEffect(Unit) {
         if (!handheld) return@LaunchedEffect
         withFrameNanos { }
-        if (!firstControl.tryRequestFocus()) rightFirstControl.tryRequestFocus()
+        val onRight = landscape && startOnRight && rightFirstControl.tryRequestFocus()
+        if (!onRight && !firstControl.tryRequestFocus()) rightFirstControl.tryRequestFocus()
     }
     HandheldCommandEffect { command ->
         when (command) {

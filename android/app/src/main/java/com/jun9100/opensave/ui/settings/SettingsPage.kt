@@ -98,6 +98,7 @@ internal fun SettingsPage(
         modifier = modifier,
         dialogOpen = state.gameSaveEditor != null || state.gameSaveTestFailure != null || state.pendingConfigImport != null ||
             state.wizardStep != null,
+        startOnRight = state.previousPage == OpenSavePage.SYNC,
         left = { firstControl ->
             messages.action?.takeIf { !state.busy }?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
             messages.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
