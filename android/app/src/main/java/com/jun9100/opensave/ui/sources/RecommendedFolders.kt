@@ -1,6 +1,7 @@
 package com.jun9100.opensave.ui.sources
 
 import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -51,12 +52,19 @@ internal fun RecommendedFoldersCard(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
 ) {
-    if (recommendations.isEmpty()) return
     val grantable = recommendations.filterNot(FolderRecommendation::needsRoot)
     val rootOnly = recommendations.filter(FolderRecommendation::needsRoot)
     Card(modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("推荐授权", style = MaterialTheme.typography.titleSmall)
+            if (recommendations.isEmpty()) {
+                Text(
+                    "这台设备上没有找到已知模拟器的目录。请用“添加授权目录”选择模拟器或游戏的存档目录，例如模拟器设置里显示的存档路径。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                return@Column
+            }
             Text(
                 "按这台设备上装了的模拟器列出。选一项打开系统选择器：公共目录会直接定位；模拟器的数据在选择器左侧菜单里。选好后点“使用此文件夹”，再点“允许”。",
                 style = MaterialTheme.typography.bodySmall,
@@ -80,7 +88,11 @@ internal fun RecommendedFoldersCard(
                 )
             }
             Text(
-                "原生安卓游戏的存档在 Android/data 或应用私有目录，系统不允许授权，需要 Root 才能检测。",
+                if (Build.VERSION.SDK_INT <= FolderRecommendations.WHOLE_STORAGE_MAX_SDK) {
+                    "授权整个内部存储后，Android/data 里的安卓游戏存档也能读到；放在应用私有目录里的仍需要 Root。"
+                } else {
+                    "原生安卓游戏的存档在 Android/data 或应用私有目录，Android 11 起系统不允许授权，需要 Root 才能检测。"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

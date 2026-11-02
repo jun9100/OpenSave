@@ -12,6 +12,7 @@ class FolderRecommendationsTest {
             installed = { it in setOf("dev.eden.eden_emulator", "com.xiaoji.egggame") },
             folderExists = { it == "pc-game" },
             grantedKeys = setOf("com.android.externalstorage.documents/primary:pc-game"),
+            sdkInt = 33,
         )
         assertEquals(listOf("Eden 用户数据", "PC 游戏公共目录 pc-game", "GameHub"), recommendations.map { it.title })
         val eden = recommendations[0]
@@ -20,5 +21,30 @@ class FolderRecommendationsTest {
         assertTrue(recommendations[1].granted)
         // GameHub has no way in without Root.
         assertTrue(recommendations[2].needsRoot)
+    }
+
+    @Test
+    fun androidTenAndOlderCanGrantTheWholeStorageOnce() {
+        val before = FolderRecommendations.build(
+            installed = { it == "com.xiaoji.emulator" },
+            folderExists = { it in setOf("epsxe", "XiaoJi") },
+            grantedKeys = emptySet(),
+            sdkInt = 29,
+        )
+        assertEquals(listOf("整个内部存储（推荐）", "ePSXe（小鸡模拟器 PS1）", "小鸡模拟器 XiaoJi"), before.map { it.title })
+        assertEquals("primary:", before[0].documentId)
+
+        // Granting it covers every shared folder below it.
+        val after = FolderRecommendations.build(
+            installed = { false },
+            folderExists = { it == "epsxe" },
+            grantedKeys = setOf("com.android.externalstorage.documents/primary:"),
+            sdkInt = 29,
+        )
+        assertTrue(after.all { it.granted })
+
+        // Android 11 refuses the storage root.
+        val eleven = FolderRecommendations.build({ false }, { it == "epsxe" }, emptySet(), sdkInt = 30)
+        assertEquals(listOf("ePSXe（小鸡模拟器 PS1）"), eleven.map { it.title })
     }
 }

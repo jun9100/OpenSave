@@ -22,6 +22,8 @@ object GameArtworkSources {
         "mupen64plus" to listOf("org.mupen64plusae.v3.fzurita"),
         "drastic" to listOf("com.dsemu.drastic"),
         "lemuroid" to listOf("com.swordfish.lemuroid"),
+        "epsxe" to listOf("com.epsxe.ePSXe", "com.xiaoji.emulator"),
+        "mame" to listOf("com.seleuco.mame4droid", "com.xiaoji.emulator"),
     )
 
     fun emulatorPackages(kind: String): List<String> = emulatorPackagesByKind[kind].orEmpty()
