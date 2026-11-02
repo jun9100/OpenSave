@@ -216,7 +216,7 @@ object ActivityNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_opensave)
+            .setSmallIcon(R.drawable.ic_stat_savevault)
             .setContentTitle(context.getString(R.string.notification_attention_title, entry.kind.label))
             .setContentText(entry.text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(listOf(entry.text, entry.detail).filter(String::isNotBlank).joinToString("\n")))

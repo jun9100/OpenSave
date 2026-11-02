@@ -59,3 +59,6 @@ cmd/opensave-app/build/windows/installer/tmp/
 
 # Android SDK location of each machine
 android/local.properties
+
+# Icon render scratch output
+branding/out/
