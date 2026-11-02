@@ -28,6 +28,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import com.jun9100.opensave.ui.sources.RecommendedFoldersCard
+import com.jun9100.opensave.ui.sources.rememberFolderRecommendations
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -56,6 +58,8 @@ import com.jun9100.opensave.ui.settings.settingButtonFocus
 /** What the wizard's controls do; previews pass no-ops. */
 internal class WizardActions(
     val onPickFolder: () -> Unit = {},
+    /** Opens the folder picker on a recommended folder. */
+    val onPickFolderAt: (android.net.Uri) -> Unit = {},
     val onChooseRoot: () -> Unit = {},
     val onChooseSaf: () -> Unit = {},
     val onEditCloud: () -> Unit = {},
@@ -218,9 +222,16 @@ private fun StepControls(
     when (step) {
         WizardStep.WELCOME -> Unit
         WizardStep.ACCESS -> {
+            val recommendations = rememberFolderRecommendations(state.authorizedTrees)
+            RecommendedFoldersCard(
+                recommendations = recommendations,
+                busy = busy,
+                onGrant = actions.onPickFolderAt,
+                focusRequester = firstControl.takeIf { recommendations.any { !it.needsRoot } },
+            )
             Button(
                 onClick = whenIdle(busy, actions.onPickFolder),
-                modifier = first.fillMaxWidth().settingButtonFocus().busyDimmed(busy),
+                modifier = (if (recommendations.any { !it.needsRoot }) Modifier else first).fillMaxWidth().settingButtonFocus().busyDimmed(busy),
             ) {
                 Icon(Icons.Outlined.FolderOpen, contentDescription = null)
                 Text(stringResource(R.string.wizard_access_add_folder), modifier = Modifier.padding(start = 8.dp))

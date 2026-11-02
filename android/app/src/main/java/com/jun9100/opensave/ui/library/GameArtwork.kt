@@ -39,8 +39,9 @@ internal fun GameArtwork(
     coverRepository: CoverRepository,
     modifier: Modifier,
 ) {
-    var bitmap by remember(presentation.coverCacheKey) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(presentation.coverCacheKey) {
+    val artworkKey = listOf(presentation.gameKey, presentation.coverCacheKey, CoverRepository.revision)
+    var bitmap by remember(artworkKey) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(artworkKey) {
         bitmap = coverRepository.load(presentation)
     }
     if (bitmap != null) {

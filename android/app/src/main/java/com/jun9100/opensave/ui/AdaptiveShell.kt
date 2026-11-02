@@ -130,6 +130,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
             notificationsAllowed = notifications.allowed,
             actions = WizardActions(
                 onPickFolder = { folderPicker.launch(null) },
+                onPickFolderAt = { uri -> folderPicker.launch(uri) },
                 onChooseRoot = sourceViewModel::chooseRootAccess,
                 onChooseSaf = sourceViewModel::chooseSafAccess,
                 onEditCloud = sourceViewModel::openGameSaveEditor,
@@ -276,6 +277,7 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                         state = state,
                         viewModel = sourceViewModel,
                         onPickFolder = { folderPicker.launch(null) },
+                        onPickFolderAt = { uri -> folderPicker.launch(uri) },
                         modifier = contentModifier,
                     )
                     OpenSavePage.SETTINGS -> SettingsPage(

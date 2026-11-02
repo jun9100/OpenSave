@@ -9,6 +9,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.jun9100.opensave.ui.settings.TextEditDialog
 import com.jun9100.opensave.GameNames
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -166,6 +169,9 @@ internal class LibraryActions(
     /** Names a game by its game key; a blank name restores the detected one. */
     val onRename: (String, String) -> Unit = { _, _ -> },
     val onSetAndroidAppIsGame: (String, Boolean) -> Unit = { _, _ -> },
+    /** Opens the photo picker for a game's cover, by game key. */
+    val onPickCover: (String) -> Unit = {},
+    val onClearCover: (String) -> Unit = {},
     /** "清除筛选" of the empty state: back to every type and status. */
     val onClearFilters: () -> Unit = {},
     val onOpenWizard: () -> Unit = {},
@@ -200,6 +206,12 @@ internal fun GameLibraryPage(
     val context = LocalContext.current
     val coverRepository = remember(context) { CoverRepository(context.applicationContext) }
     val metadataRepository = remember(context) { SteamMetadataRepository(context.applicationContext) }
+    var coverGameKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val gameKey = coverGameKey
+        coverGameKey = null
+        if (uri != null && gameKey != null) viewModel.setCustomCover(gameKey, uri)
+    }
     val actions = remember(viewModel, onOpenSources) {
         LibraryActions(
             onTypeSelected = viewModel::setLibraryTypeFilter,
@@ -228,6 +240,11 @@ internal fun GameLibraryPage(
             onSetAutoBackup = viewModel::setGameAutoBackup,
             onRename = viewModel::renameGame,
             onSetAndroidAppIsGame = viewModel::setAndroidAppIsGame,
+            onPickCover = { gameKey ->
+                coverGameKey = gameKey
+                coverPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+            onClearCover = viewModel::clearCustomCover,
             onClearFilters = viewModel::clearLibraryFilters,
             onOpenWizard = viewModel::openWizard,
         )
@@ -550,6 +567,7 @@ internal fun GameLibraryContent(
                 onShowDetail = { tab -> showDetail(key, tab) },
                 onDismiss = { menuKey = null },
                 onRename = { renameKey = key },
+                hasCustomCover = CoverRepository.revision.let { coverRepository?.hasCustomCover(entry.game.gameKey) == true },
             )
         }
     }
@@ -1062,6 +1080,7 @@ private fun GameMenuFor(
     onShowDetail: (DetailTab) -> Unit,
     onDismiss: () -> Unit,
     onRename: () -> Unit,
+    hasCustomCover: Boolean,
 ) {
     val localHistory = localHistoryOf(entry, state.snapshots)
     val remoteCount = remoteHistoryOf(entry, state.remoteSnapshots).size
@@ -1084,6 +1103,8 @@ private fun GameMenuFor(
             autoBackupScheduled = state.autoBackupEnabled,
             onToggleAutoBackup = { actions.onSetAutoBackup(entry.libraryKey, entry.libraryKey in state.autoBackupExcluded) },
             onRename = onRename,
+            onChangeCover = { actions.onPickCover(entry.game.gameKey) },
+            onResetCover = { actions.onClearCover(entry.game.gameKey) }.takeIf { hasCustomCover },
             onNotAGame = entry.game.presentation.androidPackageName
                 ?.takeIf(AndroidAppConfirmations::isConfirmed)
                 ?.let { packageName -> { actions.onSetAndroidAppIsGame(packageName, false) } },

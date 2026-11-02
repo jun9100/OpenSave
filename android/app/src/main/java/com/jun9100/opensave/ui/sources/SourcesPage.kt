@@ -39,6 +39,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import com.jun9100.opensave.RootSourcePreset
+import com.jun9100.opensave.RootSourcePresets
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -90,12 +93,15 @@ internal fun SourcesPage(
     state: SourceUiState,
     viewModel: SourceViewModel,
     onPickFolder: () -> Unit,
+    onPickFolderAt: (Uri) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val messages = state.messages[OpenSavePage.SOURCES]
+    val recommendations = rememberFolderRecommendations(state.authorizedTrees)
+    val installedApps = rememberInstalledSourceApps()
     val landscape = LocalAdaptiveLayout.current.isLandscape
-    val rows = remember(state.sourceOptions, state.sourceScans, state.rootChecked, state.rootAvailable, state.sourceDraft) {
-        SourceGroups.rows(state.sourceOptions, state.sourceScans, state.rootChecked, state.rootAvailable, state.sourceDraft)
+    val rows = remember(state.sourceOptions, state.sourceScans, state.rootChecked, state.rootAvailable, state.sourceDraft, installedApps) {
+        SourceGroups.rows(state.sourceOptions, state.sourceScans, state.rootChecked, state.rootAvailable, state.sourceDraft, installedApps)
     }
     val groups = remember(rows) { SourceGroups.grouped(rows) }
     val pendingApps = remember(state.sourceScans) { LibraryView.unconfirmedApps(GameLibrary.sourceGames(state.sourceScans)) }
@@ -140,6 +146,8 @@ internal fun SourcesPage(
                 onApply = viewModel::applySourceDraft,
                 focusRequester = firstControl,
             )
+            // Without Root these are the only way in; with Root the built-in sources already cover them.
+            if (!state.rootAvailable) RecommendedFoldersCard(recommendations, state.busy, onPickFolderAt)
             if (landscape) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -409,18 +417,33 @@ private fun GroupRows(
     }
     val trees = state.authorizedTrees.associateBy(AuthorizedSafTree::uri)
     val firstCheckable = checkable.firstOrNull()
-    rows.forEach { row ->
-        val tree = (row.option.source as? SourceSelection.Saf)?.let { trees[it.uri] }
-        SourceRowItem(
-            row = row,
-            tree = tree,
-            access = row.scan?.access ?: plannedAccessStatus(row.option, state.rootChecked, state.rootAvailable),
-            busy = state.busy,
-            onToggle = { enabled -> onStage(state.sourceDraft.toggle(row, enabled)) },
-            onForget = tree?.let { { onForgetTree(it.uri) } },
-            focusRequester = firstRowFocus.takeIf { row === firstCheckable },
-        )
+    // Built-in sources sit under the app they belong to; granted folders are each their own.
+    val sections = if (group == SourceGroup.AUTHORIZED) listOf(null to rows) else SourceGroups.byApp(rows)
+    sections.forEach { (app, members) ->
+        app?.let { AppHeader(it, members) }
+        members.forEach { row -> SourceRowFor(row, trees, state, onStage, onForgetTree, firstRowFocus.takeIf { row === firstCheckable }) }
     }
+}
+
+@Composable
+private fun SourceRowFor(
+    row: SourceRow,
+    trees: Map<Uri, AuthorizedSafTree>,
+    state: SourceUiState,
+    onStage: (SourceDraft) -> Unit,
+    onForgetTree: (Uri) -> Unit,
+    focusRequester: FocusRequester?,
+) {
+    val tree = (row.option.source as? SourceSelection.Saf)?.let { trees[it.uri] }
+    SourceRowItem(
+        row = row,
+        tree = tree,
+        access = row.scan?.access ?: plannedAccessStatus(row.option, state.rootChecked, state.rootAvailable),
+        busy = state.busy,
+        onToggle = { enabled -> onStage(state.sourceDraft.toggle(row, enabled)) },
+        onForget = tree?.let { { onForgetTree(it.uri) } },
+        focusRequester = focusRequester,
+    )
 }
 
 /**
@@ -507,8 +530,42 @@ private fun sourceRowDetail(row: SourceRow, tree: AuthorizedSafTree?, access: So
 /** Shared storage as people know it from file managers. */
 private fun displayPath(path: String): String = path.replaceFirst("/storage/emulated/0", "/sdcard")
 
+/** Installed packages among the built-in sources' apps, read once per page. */
+@Composable
+private fun rememberInstalledSourceApps(): Set<String> {
+    val context = LocalContext.current
+    return remember(context) {
+        val packageManager = context.packageManager
+        RootSourcePresets.all.mapNotNull(RootSourcePreset::packageName).distinct()
+            .filter { runCatching { packageManager.getPackageInfo(it, 0) }.isSuccess }
+            .toSet()
+    }
+}
+
+/** The heading of one app's sources: its name and how many games the last scan found there. */
+@Composable
+private fun AppHeader(app: String, rows: List<SourceRow>) {
+    val games = rows.sumOf { it.scan?.scan?.gameCount ?: 0 }
+    val scanned = rows.any { it.scan?.scan != null }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(app, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+        Text(
+            when {
+                !scanned -> "${rows.size} 个位置"
+                games > 0 -> "${rows.size} 个位置 · 找到 $games 款"
+                else -> "${rows.size} 个位置 · 没有存档"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 private fun groupSummary(group: SourceGroup, rows: List<SourceRow>): String = when (group) {
-    SourceGroup.NEEDS_ROOT, SourceGroup.MISSING -> "${rows.size} 个 · 不能勾选"
+    SourceGroup.NEEDS_ROOT, SourceGroup.NOT_INSTALLED, SourceGroup.MISSING -> "${rows.size} 个 · 不能勾选"
     else -> "${rows.size} 个 · 已选 ${rows.count(SourceRow::checked)}"
 }
 
@@ -523,8 +580,9 @@ private fun groupNote(group: SourceGroup, state: SourceUiState): String? = when 
     } else {
         "这些来源在其他应用的私有目录里，需要 Root 才能读取。当前只用授权目录；要使用 Root，请在 设置 → 关于 → 首次使用向导 中选择。"
     }
+    SourceGroup.NOT_INSTALLED -> "这台设备没有安装这些模拟器或启动器；安装后重新扫描即可。"
     SourceGroup.MISSING -> "上次扫描时这些目录不存在或无法读取；目录出现后重新扫描即可。"
-    SourceGroup.AVAILABLE -> null
+    SourceGroup.AVAILABLE -> "按软件分组。“共享存储 · 全盘补漏”会扫描整个内部存储，找出上面没覆盖到的存档，例如原生安卓游戏。"
 }
 
 private fun plannedAccessStatus(

@@ -13,8 +13,8 @@
     <string name="wizard_welcome_point_sources">• 来源是模拟器、启动器或你授权的目录；只备份已确认的存档位置，待确认位置默认不备份。</string>
     <string name="wizard_welcome_point_conflicts">• 两台设备都改过同一款游戏时不会自动覆盖，而是在“同步与任务”里等你选择。</string>
     <string name="wizard_welcome_point_pad">• 全程可以用手柄：A 确认、B 返回、L1/R1 切换页面、Y 打开命令面板。</string>
-    <string name="wizard_access_body_saf">没有 Root 时，OpenSave 只能读取你通过系统选择器授权的目录。请添加模拟器的存档目录，例如：</string>
-    <string name="wizard_access_examples">• PPSSPP 的 PSP 文件夹\n• RetroArch 的 saves 和 states 文件夹\n• Dolphin 的 GC 和 Wii 文件夹\n• Eden 的公开目录（用户数据放在共享存储时）</string>
+    <string name="wizard_access_body_saf">没有 Root 时，OpenSave 只能读取你通过系统选择器授权的目录。“推荐授权”按这台设备上装了的模拟器列出要授权的目录，逐个授权即可。</string>
+    <string name="wizard_access_examples">• 公共目录（如 PSP、RetroArch、eden）会直接打开到对应文件夹\n• Eden、DroidDeck 等模拟器的数据在选择器左侧菜单里，选中后点“使用此文件夹”\n• 清单里没有的模拟器，用“添加授权目录”自己选择存档目录</string>
     <string name="wizard_access_add_folder">添加授权目录</string>
     <string name="wizard_access_folders_none">还没有授权目录。</string>
     <string name="wizard_access_folders">已授权：%1$s</string>

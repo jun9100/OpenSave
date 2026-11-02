@@ -726,3 +726,20 @@ object SaveSourceDetector {
 
     private const val MAX_SCAN_DIRECTORIES = 50_000
 }
+
+/**
+ * Directories a folder-by-folder (SAF) scan does not descend into: Android
+ * caches, and the system directories of a Linux image such as DroidDeck's
+ * linuxfs, where no save lives but thousands of folders do. Saves under its
+ * root home (Steam, Proton prefixes) are still reached.
+ */
+object ScanPruning {
+    private val anywhere = setOf("cache", "code_cache")
+    private val linuxSystemDirectories = setOf(
+        "bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "libx32", "opt", "proc", "run", "sbin", "srv", "sys", "usr", "var",
+    )
+
+    fun skip(parentName: String, name: String): Boolean =
+        name.lowercase() in anywhere ||
+            (parentName.equals("linuxfs", ignoreCase = true) && name.lowercase() in linuxSystemDirectories)
+}

@@ -27,6 +27,14 @@ data class GamePresentation(
     val switchTitleId: String? = null,
     /** eShop icon hash from the bundled Switch catalog. */
     val switchIconHash: String? = null,
+    /** The library's game key; a cover the user picked is stored under it. */
+    val gameKey: String? = null,
+    /** PSP product code; PPSSPP keeps the game's icon in each save folder. */
+    val pspGameId: String? = null,
+    /** Emulators whose launcher icon stands in for a save folder that is not one game. */
+    val emulatorPackages: List<String> = emptyList(),
+    /** A PC game known only by name: its cover is looked up on Steam by an exact name match. */
+    val steamSearchName: String? = null,
 ) {
     val primaryName: String
         get() = localizedName ?: originalName ?: "未命名游戏"
@@ -50,6 +58,7 @@ data class GamePresentation(
     val coverCacheKey: String?
         get() = steamAppId?.let { "steam-$it" }
             ?: switchTitleId?.let { "switch-${it.lowercase()}" }
+            ?: pspGameId?.let { "ppsspp-${it.lowercase()}" }
             ?: androidPackageName?.let { "android-$it" }
 }
 
@@ -133,6 +142,13 @@ object GameCatalog {
             steamAppId = steamAppId,
             switchTitleId = titleId?.takeIf { switchTitleIdPattern.matches(it) },
             switchIconHash = titleId?.let(OfflineSwitchTitles::icon),
+            gameKey = save.gameKey,
+            pspGameId = save.gameKey?.takeIf { save.kind == "ppsspp" }?.removePrefix("ppsspp:")
+                ?.takeIf { pspGameIdPattern.matches(it) },
+            emulatorPackages = GameArtworkSources.emulatorPackages(save.kind),
+            steamSearchName = originalName.takeIf {
+                steamAppId == null && save.kind == "gamehub-pc" && save.gameKey?.startsWith("pc:") == true
+            },
         )
     }
 
@@ -197,4 +213,5 @@ object GameCatalog {
     )
 
     private val switchTitleIdPattern = Regex("^01[0-9A-F]{14}$")
+    private val pspGameIdPattern = Regex("^[A-Z]{4}[0-9]{5}$")
 }
