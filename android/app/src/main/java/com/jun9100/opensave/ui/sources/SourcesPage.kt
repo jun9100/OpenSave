@@ -576,7 +576,7 @@ private fun groupNote(group: SourceGroup, state: SourceUiState): String? = when 
         null
     }
     SourceGroup.NEEDS_ROOT -> if (state.rootAllowed) {
-        "这些来源在其他应用的私有目录里，需要 Root（在 Magisk 中永久授权 OpenSave）才能读取；没有 Root 时请改用授权目录。"
+        "这些来源在其他应用的私有目录里，需要 Root（在 Magisk 中永久授权 SaveVault）才能读取；没有 Root 时请改用授权目录。"
     } else {
         "这些来源在其他应用的私有目录里，需要 Root 才能读取。当前只用授权目录；要使用 Root，请在 设置 → 关于 → 首次使用向导 中选择。"
     }

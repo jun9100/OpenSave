@@ -1,6 +1,6 @@
-# OpenSave Android
+# SaveVault Android
 
-这是面向 Odin2 / Android 13 的原生 OpenSave 客户端。界面使用 Jetpack Compose；默认通过 Storage Access Framework (SAF) 访问用户授权的目录，在已经 Root 并由 Magisk 授权的设备上也可以读取受限的模拟器或 GameHub 本地路径。
+这是 SaveVault（原名 OpenSave）的原生 Android 客户端，适配 Android 手机和掌机（Android 8 及以上；无 Root 时用系统授权目录，Android 10 及以下可一次授权整个内部存储）。应用 ID 仍是 `com.jun9100.opensave`，旧版可直接覆盖升级。界面使用 Jetpack Compose；默认通过 Storage Access Framework (SAF) 访问用户授权的目录，在已经 Root 并由 Magisk 授权的设备上也可以读取受限的模拟器或 GameHub 本地路径。
 
 ## 已实现
 

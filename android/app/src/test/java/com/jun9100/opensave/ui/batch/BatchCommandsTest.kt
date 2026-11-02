@@ -33,7 +33,7 @@ class BatchCommandsTest {
     fun cloudOperationsNeedGameSaveAndNothingStartsWhileBusy() {
         val offline = batchCommands(false, false, scope, primary, cloudReady = false, hasReport = false, actions = BatchMenuActions())
         assertEquals(listOf("备份所选 (4)"), offline.filter { it.enabled }.map { it.label })
-        assertTrue(offline[1].detail.orEmpty().contains("启用 game-save"))
+        assertTrue(offline[1].detail.orEmpty().contains("启用 SaveVault 云端"))
 
         var cancelled = false
         val running = batchCommands(

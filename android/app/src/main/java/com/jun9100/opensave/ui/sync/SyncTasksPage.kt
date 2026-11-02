@@ -113,7 +113,7 @@ internal fun SyncTasksPage(
             firstPageControl.value = firstControl
             Text("待处理", style = MaterialTheme.typography.titleMedium)
             Text(
-                if (cloudReady) "game-save 已启用 · 处理前都会重新检查云端" else "game-save 未启用；请先在“设置”中保存并启用",
+                if (cloudReady) "SaveVault 云端已启用 · 处理前都会重新检查云端" else "SaveVault 云端未启用；请先在“设置”中保存并启用",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (cloudReady) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
             )

@@ -26,11 +26,11 @@ object GameSaveConfigLink {
     fun parse(text: String?): Result<ImportedGameSaveConfig> = runCatching {
         val raw = text?.trim().orEmpty()
         require(raw.isNotEmpty()) { "剪贴板里没有文字" }
-        require(raw.length <= MAX_LENGTH) { "剪贴板内容过长，不像 OpenSave 配置" }
+        require(raw.length <= MAX_LENGTH) { "剪贴板内容过长，不像 SaveVault 配置" }
         val (url, token) = when {
             raw.startsWith("{") -> fromJson(raw)
             raw.startsWith("$SCHEME://", ignoreCase = true) -> fromLink(raw)
-            else -> throw IllegalArgumentException("剪贴板里不是 OpenSave 配置链接（opensave://game-save?...）")
+            else -> throw IllegalArgumentException("剪贴板里不是 SaveVault 配置链接（opensave://game-save?...）")
         }
         validated(url, token)
     }
@@ -78,7 +78,7 @@ object GameSaveConfigLink {
     }
 
     private fun validated(url: String, token: String): ImportedGameSaveConfig {
-        require(url.isNotBlank()) { "配置缺少 game-save 服务地址（url）" }
+        require(url.isNotBlank()) { "配置缺少 SaveVault 云端地址（url）" }
         val trimmedToken = token.trim()
         require(trimmedToken.isNotEmpty()) { "配置缺少同步密钥（token）" }
         require(trimmedToken.none(Char::isWhitespace) && trimmedToken.none(Char::isISOControl)) { "同步密钥不能包含空格或控制字符" }

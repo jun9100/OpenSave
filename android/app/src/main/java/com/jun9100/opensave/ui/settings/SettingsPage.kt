@@ -165,7 +165,7 @@ private fun AutomationCard(state: SourceUiState, viewModel: SourceViewModel, not
                 if (uploadReady) {
                     "连接 Wi-Fi 时定期备份有变化的游戏并上传；只扫描“来源”页已启用的来源，冲突只记录，不会自动覆盖。"
                 } else {
-                    "依赖下面的“新版本自动上传”：game-save 配置好并开启上传之前，自动备份不会运行。"
+                    "依赖下面的“新版本自动上传”：SaveVault 云端配置好并开启上传之前，自动备份不会运行。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (uploadReady || !state.autoBackupEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
@@ -179,9 +179,9 @@ private fun AutomationCard(state: SourceUiState, viewModel: SourceViewModel, not
             )
             Text(
                 if (cloudConfigured) {
-                    "备份产生的新版本会上传到 game-save；Wi-Fi 自动备份也需要开启它。"
+                    "备份产生的新版本会上传到 SaveVault 云端；Wi-Fi 自动备份也需要开启它。"
                 } else {
-                    "需要先在“云端”配置并保存 game-save。"
+                    "需要先在“云端”配置并保存 SaveVault 云端。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (cloudConfigured) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
@@ -261,7 +261,7 @@ private fun AboutCard(onOpenWizard: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("关于", style = MaterialTheme.typography.titleMedium)
-            Text("OpenSave $version", style = MaterialTheme.typography.bodyMedium)
+            Text("SaveVault $version", style = MaterialTheme.typography.bodyMedium)
             Text(
                 "游戏存档备份与跨设备同步。",
                 style = MaterialTheme.typography.bodySmall,
@@ -340,7 +340,7 @@ private fun WholeSourceSnapshotSection(state: SourceUiState, viewModel: SourceVi
     Text("整来源快照", style = MaterialTheme.typography.titleSmall)
     Spacer(Modifier.height(6.dp))
     Text(
-        "把整个目录做成一份 OpenSave ZIP 快照；游戏库里的备份只包含已确认的存档位置。",
+        "把整个目录做成一份 SaveVault ZIP 快照；游戏库里的备份只包含已确认的存档位置。",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

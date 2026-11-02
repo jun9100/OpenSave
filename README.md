@@ -2,9 +2,11 @@
 
 <img src="cmd/opensave-app/build/appicon.png" alt="OpenSave" width="120" />
 
-# OpenSave
+# SaveVault
 
 ### Steam Cloud for every game you own.
+
+> SaveVault（存档库）是 [jun9100/OpenSave](https://github.com/jun9100/OpenSave) 对 [OpenSave](https://github.com/Liquid-co/OpenSave)（作者 Siva Prakash，MIT）的分支：PC 端、Android 端和自建云端 [game-save](https://github.com/jun9100/game-save) 一起使用。与原版 OpenSave 设备协议兼容；程序文件名、配置目录和同步协议仍沿用 OpenSave 的名字，已安装的用户可以直接升级。
 
 **OpenSave** syncs your game saves between devices, peer-to-peer — no Steam required, no accounts, no subscriptions. Point it at a folder, pair your devices, and your saves follow you everywhere.
 

@@ -585,7 +585,7 @@ class GameSaveHeadPublisher(
 
     fun publishSnapshot(identity: GameCloudIdentity, record: SnapshotRecord, archiveFile: File): Result<Unit> = runCatching {
         val archive = GameSaveCloudProtocol.parseArchiveName(record.remoteName)
-            ?: error("本地快照名称不是可同步的 OpenSave 快照")
+            ?: error("本地快照名称不是可同步的 SaveVault 快照")
         require(archive.gameId == identity.gameId && archive.branch == "main") { "快照与游戏身份不匹配" }
         val previous = states.load(identity)
         val contentModifiedAt = GameSaveSnapshotClock.contentModifiedAtMillis(archiveFile)

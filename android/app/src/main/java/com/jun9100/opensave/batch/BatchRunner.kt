@@ -82,6 +82,6 @@ object BatchRunner {
         return available.filter { it in failed }
     }
 
-    const val AUTH_REFUSED = "game-save 拒绝了同步密钥，已停止"
+    const val AUTH_REFUSED = "SaveVault 云端拒绝了同步密钥，已停止"
     private val AUTH_STATUSES = setOf(401, 403)
 }

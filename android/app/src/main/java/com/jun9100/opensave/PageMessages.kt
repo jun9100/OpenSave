@@ -8,7 +8,7 @@ data class PageMessage(
 
 /**
  * Status and errors are kept per page, so a settings result such as
- * "game-save 连接成功" never appears in the game library and vice versa.
+ * "SaveVault 云端连接成功" never appears in the game library and vice versa.
  */
 data class PageMessages(private val byPage: Map<OpenSavePage, PageMessage> = emptyMap()) {
     operator fun get(page: OpenSavePage): PageMessage = byPage[page] ?: PageMessage()

@@ -213,7 +213,7 @@ class AutoBackupWorker(
     private suspend fun backUpChangedGames(): Result {
         val config = GameSaveConfigStore(applicationContext).load()
         if (!config.enabled || config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            record(AutoBackupPolicy.skippedEntry("game-save 未配置或未开启“新版本自动上传”"))
+            record(AutoBackupPolicy.skippedEntry("SaveVault 云端未配置或未开启“新版本自动上传”"))
             return Result.success()
         }
 
@@ -340,7 +340,7 @@ class AutoBackupWorker(
                     ActivityKind.PERMISSION,
                     ActivityLevel.WARNING,
                     "后台没有获得 Root 权限，本次只备份了授权目录",
-                    "请在 Magisk 中把 OpenSave 的超级用户授权设为“永久”：后台任务无法弹出授权提示。（$reason）",
+                    "请在 Magisk 中把 SaveVault 的超级用户授权设为“永久”：后台任务无法弹出授权提示。（$reason）",
                     needsAction = true,
                 ),
             )
@@ -403,7 +403,7 @@ class AutoBackupWorker(
             if (nativeDecision == null) {
                 val nativeError = nativeResult.exceptionOrNull()
                 if (nativeError !is GameSaveScopesUnsupportedException) {
-                    throw nativeError ?: error("读取 game-save 原生同步范围失败")
+                    throw nativeError ?: error("读取 SaveVault 云端原生同步范围失败")
                 }
             } else {
                 when (nativeDecision.action) {
@@ -696,7 +696,7 @@ class AutoBackupWorker(
 
     private fun asGameSaveError(error: Throwable): GameSaveException = when (error) {
         is GameSaveException -> error
-        else -> GameSaveException(error.message ?: "game-save 上传失败", retryable = true)
+        else -> GameSaveException(error.message ?: "SaveVault 云端上传失败", retryable = true)
     }
 
     private sealed interface GameBackupOutcome {

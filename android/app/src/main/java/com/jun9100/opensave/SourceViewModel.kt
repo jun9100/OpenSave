@@ -400,7 +400,7 @@ class SourceViewModel(
                 rootChecked = true,
                 wizardNotice = ROOT_GRANTED_NOTICE.takeIf { result.isSuccess },
                 wizardError = result.exceptionOrNull()?.let { error ->
-                    "没有获得 Root：${error.message ?: "su 未返回 uid 0"}。可以在 Magisk 中允许 OpenSave 后再试，或改用授权目录。"
+                    "没有获得 Root：${error.message ?: "su 未返回 uid 0"}。可以在 Magisk 中允许 SaveVault 后再试，或改用授权目录。"
                 },
             )
             if (result.isFailure) {
@@ -860,8 +860,8 @@ class SourceViewModel(
         val key = syncKey.trim()
         val normalized = runCatching { GameSaveClient.normalizeServiceUrl(url) }
         val problem = when {
-            url.isBlank() || key.isBlank() -> "请填写 game-save 服务地址和同步密钥"
-            normalized.isFailure -> normalized.exceptionOrNull()?.message ?: "game-save 地址无效"
+            url.isBlank() || key.isBlank() -> "请填写 SaveVault 云端地址和同步密钥"
+            normalized.isFailure -> normalized.exceptionOrNull()?.message ?: "SaveVault 云端地址无效"
             else -> null
         }
         if (problem != null) {
@@ -875,12 +875,12 @@ class SourceViewModel(
             syncKey = key,
         )
         viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.SETTINGS, "正在测试 game-save 连接")
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在测试 SaveVault 云端连接")
             val result = withContext(Dispatchers.IO) {
                 runCatching { gameSaveClient(config).testConnection().getOrThrow() }
             }
             result.onSuccess {
-                storeGameSave(config, "game-save 连接成功，配置已保存")
+                storeGameSave(config, "SaveVault 云端连接成功，配置已保存")
             }.onFailure { error ->
                 state.value = state.value.finished(OpenSavePage.SETTINGS).copy(
                     gameSaveEditor = null,
@@ -896,8 +896,8 @@ class SourceViewModel(
         if (state.value.busy) return
         updateState { copy(gameSaveTestFailure = null) }
         viewModelScope.launch {
-            state.value = state.value.started(OpenSavePage.SETTINGS, "正在加密保存 game-save 配置")
-            storeGameSave(failure.config, "game-save 配置已保存（连接测试未通过）")
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在加密保存 SaveVault 云端配置")
+            storeGameSave(failure.config, "SaveVault 云端配置已保存（连接测试未通过）")
         }
     }
 
@@ -931,7 +931,7 @@ class SourceViewModel(
         if (state.value.busy) return
         val saved = savedGameSaveConfig()
         if (enabled && (saved.serviceUrl.isBlank() || saved.syncKey.isBlank())) {
-            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先在“云端”配置并保存 game-save")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先在“云端”配置并保存 SaveVault 云端")) }
             return
         }
         viewModelScope.launch {
@@ -951,7 +951,7 @@ class SourceViewModel(
                 gameSaveEditor = null,
             )
         }.onFailure { error ->
-            state.value = state.value.finished(OpenSavePage.SETTINGS, error = "保存 game-save 配置失败：${error.message}")
+            state.value = state.value.finished(OpenSavePage.SETTINGS, error = "保存 SaveVault 云端配置失败：${error.message}")
         }
     }
 
@@ -1371,7 +1371,7 @@ class SourceViewModel(
         val entries = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(current.sourceScans))
             .filter { it.libraryKey in requested }
         if (operation.usesNetwork && !operations.loadConfig().ready) {
-            updateState { copy(messages = messages.withError(page, "请先在“设置”中启用并保存 game-save 配置")) }
+            updateState { copy(messages = messages.withError(page, "请先在“设置”中启用并保存 SaveVault 云端配置")) }
             return
         }
         val scope = entries.map(SourceGameEntry::libraryKey)
@@ -1576,7 +1576,7 @@ class SourceViewModel(
     fun listCloud() {
         val config = savedGameSaveConfig()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写并保存 game-save 服务地址和同步密钥")) }
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写并保存 SaveVault 云端地址和同步密钥")) }
             return
         }
         viewModelScope.launch {
@@ -1599,7 +1599,7 @@ class SourceViewModel(
         if (state.value.busy) return
         val config = savedGameSaveConfig()
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            updateState { copy(messages = messages.withError(page, "请先填写 game-save 服务地址和同步密钥")) }
+            updateState { copy(messages = messages.withError(page, "请先填写 SaveVault 云端地址和同步密钥")) }
             return
         }
         val keys = GameLibrary.batchBackupEligibleEntries(GameLibrary.sourceGames(state.value.sourceScans))
@@ -1661,7 +1661,7 @@ class SourceViewModel(
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val config = operations.loadConfig()
-                    require(config.ready) { "请先在“设置”中启用并保存 game-save 配置" }
+                    require(config.ready) { "请先在“设置”中启用并保存 SaveVault 云端配置" }
                     StorageOperationLock.withLock { operations.keepLocalLocked(entry, request.expectedHead, config) }
                 }
             }
@@ -1755,7 +1755,7 @@ class SourceViewModel(
     private suspend fun checkOneGame(entry: SourceGameEntry): Result<GameSaveCloudUpdate?> = withContext(Dispatchers.IO) {
         runCatching {
             val config = operations.loadConfig()
-            require(config.ready) { "请先在“设置”中启用并保存 game-save 配置" }
+            require(config.ready) { "请先在“设置”中启用并保存 SaveVault 云端配置" }
             val client = operations.client(config)
             StorageOperationLock.withLock {
                 operations.checkCloudLocked(entry, config, client) { client.list().getOrThrow() }
@@ -2214,7 +2214,7 @@ class SourceViewModel(
         const val MAX_GAME_HISTORY = 100
         const val SIGNATURE_REFRESH_MIN_MILLIS = 5_000L
         const val KEEP_LOCAL_UNSUPPORTED =
-            "当前 game-save 服务只支持旧的同步协议，不能“保留本机并发布”；请升级 game-save 服务，或在 PC 端处理"
+            "当前 SaveVault 云端只支持旧的同步协议，不能“保留本机并发布”；请升级 SaveVault 云端，或在 PC 端处理"
         const val FOLDER_GRANT_LOST = "目录授权已失效"
         const val ROOT_NOT_CHOSEN = "未启用 Root：请在 设置 → 关于 → 首次使用向导 中选择“使用 Root”"
         const val ROOT_GRANTED_NOTICE =

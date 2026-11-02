@@ -53,9 +53,9 @@ internal fun GameSaveCard(
             Text("云端", style = MaterialTheme.typography.titleMedium)
             Text(
                 if (configured) {
-                    "game-save 已配置；PC、Switch 和各模拟器的存档在云端分开存放。"
+                    "SaveVault 云端已配置；PC、Switch 和各模拟器的存档在云端分开存放。"
                 } else {
-                    "配置 game-save 后，备份可以上传，并能收到其他设备的更新。"
+                    "配置 SaveVault 云端后，备份可以上传，并能收到其他设备的更新。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

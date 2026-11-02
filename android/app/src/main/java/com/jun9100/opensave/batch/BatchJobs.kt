@@ -131,7 +131,7 @@ internal class BatchExecution(
     }
 
     private suspend fun uploadPending(entry: SourceGameEntry): BatchStepResult {
-        require(config.ready) { "未启用 game-save 云端同步" }
+        require(config.ready) { "未启用 SaveVault 云端同步" }
         return when (val result = locked { ops.uploadPendingLocked(entry, config) }) {
             PendingUpload.NothingPending -> BatchStepResult(BatchItemStatus.UNCHANGED, "最新版本已在云端")
             PendingUpload.LocalChanged -> BatchStepResult(BatchItemStatus.SKIPPED, "存档在备份后又有变更，请先备份")
@@ -143,7 +143,7 @@ internal class BatchExecution(
     }
 
     private suspend fun checkCloud(entry: SourceGameEntry): BatchStepResult {
-        require(config.ready) { "未启用 game-save 云端同步" }
+        require(config.ready) { "未启用 SaveVault 云端同步" }
         val update = locked { ops.checkCloudLocked(entry, config, client, ::remoteSnapshots) }
         checkedKeys += entry.libraryKey
         update ?: return BatchStepResult(BatchItemStatus.UNCHANGED)
@@ -157,7 +157,7 @@ internal class BatchExecution(
     }
 
     private suspend fun restoreCloudNewer(entry: SourceGameEntry): BatchStepResult {
-        require(config.ready) { "未启用 game-save 云端同步" }
+        require(config.ready) { "未启用 SaveVault 云端同步" }
         val result = locked { ops.safeRestoreLocked(entry, config, client, ::remoteSnapshots) }
         checkedKeys += entry.libraryKey
         return when (result) {

@@ -43,7 +43,7 @@ internal fun batchCommands(
 ): List<MenuEntry> = buildList {
     if (batchRunning) add(MenuEntry(CANCEL_BATCH_LABEL, detail = "当前这款完成后停止", onClick = actions.onCancelBatch))
     add(MenuEntry(primary.label, detail = "不弹确认；可在进度条上取消", enabled = !busy && primary.enabled, onClick = actions.onBackup))
-    val cloudDetail: (String) -> String = { detail -> if (cloudReady) detail else "需先在“设置”中启用 game-save" }
+    val cloudDetail: (String) -> String = { detail -> if (cloudReady) detail else "需先在“设置”中启用 SaveVault 云端" }
     add(
         MenuEntry(
             "上传待传 (${scope.pendingUpload})",
