@@ -561,6 +561,8 @@ class SafStorage(private val context: Context) {
 
     private fun treeLabel(uri: Uri): String {
         if (uri.authority == "dev.eden.eden_emulator.user") return "Eden 用户数据（系统授权）"
+        // The root of the shared storage is named "0" (/storage/emulated/0).
+        if (FolderRecommendations.treeKey(uri) == "com.android.externalstorage.documents/primary:") return "整个内部存储（系统授权）"
         val name = runCatching { DocumentFile.fromTreeUri(context, uri)?.name?.trim() }.getOrNull()
         return name?.takeIf { it.isNotBlank() && !it.equals("root", ignoreCase = true) }
             ?.let { "系统授权：$it" }

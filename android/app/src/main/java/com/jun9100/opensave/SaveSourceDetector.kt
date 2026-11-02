@@ -88,6 +88,10 @@ object SaveSourceDetector {
         "appcache",
         "ugc",
         "unrealengine",
+        // 小鸡模拟器's own emulators live under XiaoJi too (GameHub is com.xiaoji.egggame).
+        "mame4all",
+        "mame4droid",
+        "epsxe",
     )
     private val dedicatedSharedStorageRoots = setOf(
         "eden",
@@ -98,6 +102,8 @@ object SaveSourceDetector {
         "duckstation",
         "aethersx2",
         "nethersx2",
+        "epsxe",
+        "xiaoji",
     )
     private val dedicatedSharedStoragePackages = setOf(
         "dev.eden.eden_emulator",
@@ -394,6 +400,20 @@ object SaveSourceDetector {
 
             lowerPath.contains("dolphin") && last in setOf("wii", "gc", "statesaves", "state saves") ->
                 simpleDetection("dolphin", relative, "Dolphin 存档目录", "Dolphin", found)?.let { found += it }
+
+            // ePSXe (on its own or inside 小鸡模拟器) keeps every game's memory
+            // cards in memcards and its save states in sstates; both are one game
+            // row, "ePSXe", with two locations.
+            fullParts.any { it.equals("epsxe", ignoreCase = true) } && last in setOf("memcards", "sstates") ->
+                simpleDetection("epsxe", relative, "ePSXe ${if (last == "memcards") "记忆卡" else "即时存档"}", "ePSXe（PS1）", found)
+                    ?.copy(gameKey = "emulator:epsxe")
+                    ?.let { found += it }
+
+            // MAME4all / MAME4droid saves, e.g. 小鸡模拟器's XiaoJi/Roms/MAME4all/saves.
+            fullParts.any { it.equals("mame4all", ignoreCase = true) || it.equals("mame4droid", ignoreCase = true) } && last == "saves" ->
+                simpleDetection("mame", relative, "MAME 存档目录", "MAME 街机", found)
+                    ?.copy(gameKey = "emulator:mame")
+                    ?.let { found += it }
 
             lowerPath.contains("duckstation") && last in setOf("memcards", "sstates", "savestates", "states", "memorycards") ->
                 simpleDetection("duckstation", relative, "DuckStation 存档目录", "DuckStation", found)?.let { found += it }

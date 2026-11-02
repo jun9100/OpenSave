@@ -403,4 +403,37 @@ class SaveSourceDetectorTest {
         assertTrue(whole.candidate)
         assertEquals("path:ppsspp::PPSSPP:SAVEDATA", whole.gameKey)
     }
+
+    @Test
+    fun xiaojiEmulatorFoldersAreOneGameEachWithTheirLocations() {
+        // The whole shared storage granted through the picker (Android 10).
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = "Internal",
+            directoryPaths = listOf(
+                "Internal",
+                "Internal/epsxe",
+                "Internal/epsxe/memcards",
+                "Internal/epsxe/sstates",
+                "Internal/epsxe/bios",
+                "Internal/XiaoJi/Roms/MAME4all/saves",
+            ),
+            selectedRootName = "Internal",
+        )
+        val byKey = report.detected.groupBy { it.gameKey }
+        assertEquals(listOf("epsxe/memcards", "epsxe/sstates"), byKey["emulator:epsxe"]?.map { it.relativePath }?.sorted())
+        assertEquals(listOf("XiaoJi/Roms/MAME4all/saves"), byKey["emulator:mame"]?.map { it.relativePath })
+        // Not a GameHub PC save, although GameHub is com.xiaoji.egggame.
+        assertEquals(emptyList<DetectedSave>(), report.detected.filter { it.kind == "gamehub-pc" })
+        assertEquals(GameSaveTypes.EPSXE, GameSaveTypes.forSave(byKey.getValue("emulator:epsxe").first()))
+    }
+
+    @Test
+    fun epsxeGrantedOnItsOwnIsFoundToo() {
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = "epsxe",
+            directoryPaths = listOf("epsxe", "epsxe/memcards", "epsxe/sstates"),
+            selectedRootName = "epsxe",
+        )
+        assertEquals(2, report.detected.count { it.kind == "epsxe" })
+    }
 }

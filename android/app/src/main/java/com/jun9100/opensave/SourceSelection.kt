@@ -62,6 +62,8 @@ object RootSourcePresets {
         RootSourcePreset("DuckStation", "/storage/emulated/0/DuckStation"),
         RootSourcePreset("AetherSX2 / NetherSX2", "/storage/emulated/0/AetherSX2"),
         RootSourcePreset("NetherSX2", "/storage/emulated/0/NetherSX2"),
+        RootSourcePreset("ePSXe", "/storage/emulated/0/epsxe"),
+        RootSourcePreset("小鸡模拟器 · 公共目录 XiaoJi", "/storage/emulated/0/XiaoJi"),
         RootSourcePreset("共享存储 · 全盘补漏（较慢）", "/storage/emulated/0"),
     )
 

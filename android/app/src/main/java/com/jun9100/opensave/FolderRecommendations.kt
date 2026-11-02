@@ -47,6 +47,18 @@ internal data class RecommendationTemplate(
 
 object FolderRecommendations {
     private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
+    private const val WHOLE_STORAGE_DOCUMENT = "primary:"
+
+    /**
+     * Android 10 and older still let the picker grant the whole shared
+     * storage, Android/data included: one grant then reaches every emulator
+     * folder and native Android games' saves, without Root.
+     */
+    private val wholeStorage = RecommendationTemplate(
+        "整个内部存储（推荐）",
+        "所有模拟器、PC 和安卓游戏的存档，包括 Android/data",
+        "选择器打开内部存储后直接点“使用此文件夹”",
+    )
 
     internal val templates = listOf(
         RecommendationTemplate(
@@ -72,6 +84,8 @@ object FolderRecommendations {
         RecommendationTemplate("DuckStation", "PS1 记忆卡和即时存档", "内部存储 → DuckStation", sharedFolder = "DuckStation"),
         RecommendationTemplate("AetherSX2", "PS2 记忆卡和即时存档", "内部存储 → AetherSX2", sharedFolder = "AetherSX2"),
         RecommendationTemplate("NetherSX2", "PS2 记忆卡和即时存档", "内部存储 → NetherSX2", sharedFolder = "NetherSX2"),
+        RecommendationTemplate("ePSXe（小鸡模拟器 PS1）", "PS1 记忆卡和即时存档", "内部存储 → epsxe", sharedFolder = "epsxe"),
+        RecommendationTemplate("小鸡模拟器 XiaoJi", "街机（MAME）存档", "内部存储 → XiaoJi", sharedFolder = "XiaoJi"),
         RecommendationTemplate(
             "GameHub", "PC 游戏存档", "存档在 GameHub 私有目录，没有授权入口，只能用 Root 读取",
             packageName = "com.xiaoji.egggame",
@@ -91,9 +105,27 @@ object FolderRecommendations {
         folderExists: (String) -> Boolean,
         /** [treeKey] of each granted folder. */
         grantedKeys: Set<String>,
+        /** Build.VERSION.SDK_INT; 29 (Android 10) and older can grant the whole storage. */
+        sdkInt: Int,
     ): List<FolderRecommendation> {
         val granted = grantedKeys.map(String::lowercase).toSet()
-        return templates.mapNotNull { template ->
+        val wholeStorageKey = "$EXTERNAL_STORAGE_AUTHORITY/$WHOLE_STORAGE_DOCUMENT".lowercase()
+        val wholeStorageGranted = wholeStorageKey in granted
+        val whole = if (sdkInt <= WHOLE_STORAGE_MAX_SDK) {
+            listOf(
+                FolderRecommendation(
+                    title = wholeStorage.title,
+                    finds = wholeStorage.finds,
+                    where = wholeStorage.where,
+                    authority = EXTERNAL_STORAGE_AUTHORITY,
+                    documentId = WHOLE_STORAGE_DOCUMENT,
+                    granted = wholeStorageGranted,
+                ),
+            )
+        } else {
+            emptyList()
+        }
+        return whole + templates.mapNotNull { template ->
             val present = (template.packageName?.let(installed) ?: false) ||
                 (template.sharedFolder?.let(folderExists) ?: false)
             if (!present) return@mapNotNull null
@@ -108,10 +140,17 @@ object FolderRecommendations {
                 where = template.where,
                 authority = authority,
                 documentId = documentId,
-                granted = authority != null && "$authority/$documentId".lowercase() in granted,
+                // A folder inside a granted whole storage needs no grant of its own.
+                granted = authority != null && (
+                    "$authority/$documentId".lowercase() in granted ||
+                        (wholeStorageGranted && authority == EXTERNAL_STORAGE_AUTHORITY)
+                    ),
             )
         }
     }
+
+    /** Android 10 and older; from Android 11 the picker refuses the storage root and Android/data. */
+    const val WHOLE_STORAGE_MAX_SDK = 29
 
     /** `authority/treeDocumentId`, the identity a recommendation is matched against. */
     fun treeKey(uri: Uri): String? = runCatching {
@@ -129,6 +168,7 @@ object FolderRecommendations {
             // Directory names in shared storage are visible without a storage permission.
             folderExists = { folder -> File(sharedRoot, folder).isDirectory },
             grantedKeys = grantedTrees.mapNotNull(::treeKey).toSet(),
+            sdkInt = android.os.Build.VERSION.SDK_INT,
         )
     }
 }

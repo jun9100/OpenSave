@@ -31,6 +31,8 @@ object GameSaveTypes {
     val MUPEN64PLUS = GameSaveType("emulator-mupen64plus", "Mupen64Plus", GameSaveFamily.EMULATOR)
     val DRASTIC = GameSaveType("emulator-drastic", "DraStic", GameSaveFamily.EMULATOR)
     val LEMUROID = GameSaveType("emulator-lemuroid", "Lemuroid", GameSaveFamily.EMULATOR)
+    val EPSXE = GameSaveType("emulator-epsxe", "ePSXe", GameSaveFamily.EMULATOR)
+    val MAME = GameSaveType("emulator-mame", "MAME", GameSaveFamily.EMULATOR)
     val ANDROID = GameSaveType("emulator-android", "Android 游戏", GameSaveFamily.EMULATOR)
     val GENERIC = GameSaveType("emulator-generic", "其他模拟器", GameSaveFamily.EMULATOR)
 
@@ -48,6 +50,8 @@ object GameSaveTypes {
         MUPEN64PLUS,
         DRASTIC,
         LEMUROID,
+        EPSXE,
+        MAME,
         ANDROID,
         GENERIC,
     )
@@ -78,6 +82,8 @@ object GameSaveTypes {
         "mupen64plus" -> MUPEN64PLUS
         "drastic" -> DRASTIC
         "lemuroid" -> LEMUROID
+        "epsxe" -> EPSXE
+        "mame" -> MAME
         "android-app", "android-game" -> ANDROID
         else -> GENERIC
     }
@@ -104,6 +110,8 @@ object GameSaveTypes {
             "Dolphin" -> DOLPHIN
             "DuckStation" -> DUCKSTATION
             "AetherSX2 / NetherSX2", "NetherSX2" -> AETHERSX2
+            "ePSXe" -> EPSXE
+            "小鸡模拟器 · 公共目录 XiaoJi" -> MAME
             else -> rootPathType(source.path)
         }
     }
