@@ -1,19 +1,19 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "OpenSave",
+  "name": "SaveVault",
   "outputfilename": "OpenSave",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "OpenSave"
+    "name": "SaveVault"
   },
   "info": {
-    "companyName": "OpenSave",
-    "productName": "OpenSave",
+    "companyName": "SaveVault",
+    "productName": "SaveVault",
     "productVersion": "2.4.3",
-    "copyright": "Copyright © 2026 Siva Prakash and OpenSave contributors",
+    "copyright": "Copyright © 2026 Siva Prakash and OpenSave contributors; SaveVault fork by jun9100",
     "comments": "Peer-to-peer game save sync"
   }
 }

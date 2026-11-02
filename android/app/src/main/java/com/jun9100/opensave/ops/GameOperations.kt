@@ -345,7 +345,7 @@ internal class GameOperations(
      * protocol cannot replace a head without racing other devices.
      */
     suspend fun keepLocalLocked(entry: SourceGameEntry, expectedHead: String, config: GameSaveConfig): KeepLocal {
-        require(config.ready) { "未启用 game-save 云端同步" }
+        require(config.ready) { "未启用 SaveVault 云端同步" }
         require(expectedHead.isNotBlank()) { "没有可替换的云端当前版本" }
         val saves = GameLibrary.batchBackupLocations(entry.game)
         require(saves.isNotEmpty()) { "这款游戏没有已确认的存档位置" }
@@ -371,7 +371,7 @@ internal class GameOperations(
      * cloud head; one the saves moved on from is left for the next backup.
      */
     suspend fun uploadPendingLocked(entry: SourceGameEntry, config: GameSaveConfig): PendingUpload {
-        require(config.ready) { "未启用 game-save 云端同步" }
+        require(config.ready) { "未启用 SaveVault 云端同步" }
         val latest = snapshotRepository.list()
             .firstOrNull { it.sourceId == entry.sourceId && it.gameKey == entry.game.gameKey && !it.isSafetyCopy }
             ?: return PendingUpload.NothingPending
@@ -428,7 +428,7 @@ internal class GameOperations(
             }
             val nativeError = nativeResult.exceptionOrNull()
             if (nativeError !is GameSaveScopesUnsupportedException) {
-                throw nativeError ?: error("读取 game-save 原生同步范围失败")
+                throw nativeError ?: error("读取 SaveVault 云端原生同步范围失败")
             }
 
             // Only an older server without the scope route may use the legacy

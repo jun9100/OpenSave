@@ -120,7 +120,7 @@ class CoverRepository(context: Context) {
             .addQueryParameter("cc", "US")
             .build()
         val body = runCatching {
-            client.newCall(Request.Builder().url(url).header("User-Agent", "OpenSave Android").build()).execute().use { response ->
+            client.newCall(Request.Builder().url(url).header("User-Agent", "SaveVault Android").build()).execute().use { response ->
                 if (response.isSuccessful) response.body?.string() else null
             }
         }.getOrNull() ?: return null // offline: try again next time
@@ -149,7 +149,7 @@ class CoverRepository(context: Context) {
     private fun download(url: String, destination: File): Boolean = runCatching {
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "OpenSave Android")
+            .header("User-Agent", "SaveVault Android")
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use false

@@ -219,7 +219,7 @@ func (a *App) shutdown(ctx context.Context) {
 // AppInfo returns static app metadata for the About dialog / status bar.
 func (a *App) AppInfo() map[string]string {
 	return map[string]string{
-		"name":      "OpenSave",
+		"name":      "SaveVault",
 		"version":   AppVersion,
 		"buildTime": strconv.FormatInt(version.BuildTimeMs(), 10),
 		"tagline":   "Peer-to-peer game save sync",
@@ -320,7 +320,7 @@ func (a *App) SelectBackupFile(title string) string {
 	file, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: title,
 		Filters: []runtime.FileFilter{
-			{DisplayName: T("OpenSave backup (*.sscb)"), Pattern: "*.sscb"},
+			{DisplayName: T("SaveVault backup (*.sscb)"), Pattern: "*.sscb"},
 			{DisplayName: T("All files"), Pattern: "*.*"},
 		},
 	})
@@ -336,7 +336,7 @@ func (a *App) SelectSaveFile(title, defaultName string) string {
 		Title:           title,
 		DefaultFilename: defaultName,
 		Filters: []runtime.FileFilter{
-			{DisplayName: T("OpenSave backup (*.sscb)"), Pattern: "*.sscb"},
+			{DisplayName: T("SaveVault backup (*.sscb)"), Pattern: "*.sscb"},
 		},
 	})
 	if err != nil {

@@ -14,9 +14,9 @@ enum class AccessChoice {
 
 /** The steps of the first-run wizard, in order. */
 enum class WizardStep(val title: String) {
-    WELCOME("OpenSave 会备份什么"),
+    WELCOME("SaveVault 会备份什么"),
     ACCESS("选择访问方式"),
-    CLOUD("连接 game-save（可选）"),
+    CLOUD("连接 SaveVault 云端（可选）"),
     ;
 
     val number: Int get() = ordinal + 1

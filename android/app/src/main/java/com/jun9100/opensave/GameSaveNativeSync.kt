@@ -204,7 +204,7 @@ class GameSaveNativeSync(
         }
         require(archiveFile.isFile) { "本地快照不存在" }
         val localSnapshotId = GameSaveNativeProtocol.localSnapshotId(record.remoteName)
-            ?: error("本地快照名称不是可同步的 OpenSave 快照")
+            ?: error("本地快照名称不是可同步的 SaveVault 快照")
         val identityDevice = device.identity()
         val remoteSnapshotId = GameSaveNativeProtocol.remoteSnapshotId(localSnapshotId, identityDevice.id)
         val remoteArchiveName = GameSaveNativeProtocol.archiveName(identity, localSnapshotId, identityDevice.id)
@@ -273,7 +273,7 @@ class GameSaveNativeSync(
         }
         require(archiveFile.isFile) { "本地快照不存在" }
         val localSnapshotId = GameSaveNativeProtocol.localSnapshotId(record.remoteName)
-            ?: error("本地快照名称不是可同步的 OpenSave 快照")
+            ?: error("本地快照名称不是可同步的 SaveVault 快照")
         val identityDevice = device.identity()
         val remoteSnapshotId = GameSaveNativeProtocol.remoteSnapshotId(localSnapshotId, identityDevice.id)
         val remoteArchiveName = GameSaveNativeProtocol.archiveName(identity, localSnapshotId, identityDevice.id)

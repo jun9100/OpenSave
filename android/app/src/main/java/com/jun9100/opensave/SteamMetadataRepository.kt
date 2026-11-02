@@ -42,7 +42,7 @@ class SteamMetadataRepository(context: Context) {
         val url = "https://store.steampowered.com/api/appdetails?appids=$appId&l=schinese&cc=cn"
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "OpenSave Android")
+            .header("User-Agent", "SaveVault Android")
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@runCatching null

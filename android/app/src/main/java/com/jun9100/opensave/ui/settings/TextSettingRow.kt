@@ -209,7 +209,7 @@ internal fun TextEditDialog(
 private fun TextSettingRowPreview() {
     PreviewSurface {
         Column(modifier = Modifier.padding(16.dp)) {
-            TextSettingRow(label = "game-save 服务地址", value = "", placeholder = "http://nas.example:8788", onValueChange = {})
+            TextSettingRow(label = "SaveVault 云端地址", value = "", placeholder = "http://nas.example:8788", onValueChange = {})
             TextSettingRow(label = "同步密钥", value = "abcdefgh", secret = true, onValueChange = {})
         }
     }

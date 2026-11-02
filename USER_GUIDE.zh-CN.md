@@ -1,6 +1,6 @@
-# OpenSave 使用手册（简体中文）
+# SaveVault 使用手册（简体中文）
 
-OpenSave 会自动为游戏存档保存**快照**（版本历史），在你的多台设备之间点对点同步，并可选地备份到云端（包括自建的 game-save 服务）。不需要注册账号，所有数据都在你自己的设备和存储上。
+SaveVault（基于 OpenSave 的分支，原名 OpenSave）会自动为游戏存档保存**快照**（版本历史），在你的多台设备之间点对点同步，并可选地备份到云端（包括自建的 game-save 服务）。不需要注册账号，所有数据都在你自己的设备和存储上。
 
 > 英文版参考：[User Guide](USER_GUIDE.md)、[Getting Started](GETTING_STARTED.md)。应用内也有同样内容的**帮助**页（侧边栏 →「帮助」）。
 

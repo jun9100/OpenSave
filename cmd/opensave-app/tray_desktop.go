@@ -70,8 +70,8 @@ var trayPauseChoices = []struct {
 func (a *App) startTray() {
 	go systray.Run(func() {
 		systray.SetIcon(trayIconBytes())
-		systray.SetTitle("OpenSave")
-		systray.SetTooltip(T("OpenSave — game save sync"))
+		systray.SetTitle("SaveVault")
+		systray.SetTooltip(T("SaveVault — game save sync"))
 
 		// Every fixed label, in English, so a change of language (the window
 		// telling lang.go it is now in Chinese, say) can say them all again.
@@ -100,7 +100,7 @@ func (a *App) startTray() {
 		activityItem := add(recentMenu.AddSubMenuItem(T("Open Activity"), T("See everything that happened")), "Open Activity", "See everything that happened")
 		systray.AddSeparator()
 
-		openItem := menuItem("Open OpenSave", "Show the OpenSave window")
+		openItem := menuItem("Open SaveVault", "Show the SaveVault window")
 		syncItem := menuItem("Sync all games", "Sync every tracked game now")
 		snapshotItem := menuItem("Snapshot every game now", "Take a snapshot of every tracked game")
 		pauseMenu := menuItem("Pause syncing", "Stop syncing for a while; snapshots are still taken")
@@ -139,7 +139,7 @@ func (a *App) startTray() {
 			}
 			facts := a.trayFacts()
 			statusItem.SetTitle(trayStatus(facts))
-			systray.SetTooltip("OpenSave — " + trayStatus(facts))
+			systray.SetTooltip("SaveVault — " + trayStatus(facts))
 			lines := trayRecent(a.daemon.Log.History(), trayRecentLines)
 			for i, item := range recentItems {
 				if i < len(lines) {

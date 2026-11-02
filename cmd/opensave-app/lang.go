@@ -23,15 +23,15 @@ var (
 
 // zhCN is the tray's and dialogs' Chinese. Format verbs are kept in order.
 var zhCN = map[string]string{
-	"OpenSave — game save sync":                           "OpenSave — 游戏存档同步",
+	"SaveVault — game save sync":                          "SaveVault — 游戏存档同步",
 	"Starting…":                                           "正在启动…",
 	"Where your saves stand":                              "存档状态",
 	"Recent activity":                                     "最近动态",
 	"The last few things that happened":                   "最近发生的几件事",
 	"Open Activity":                                       "打开动态",
 	"See everything that happened":                        "查看全部动态",
-	"Open OpenSave":                                       "打开 OpenSave",
-	"Show the OpenSave window":                            "显示 OpenSave 窗口",
+	"Open SaveVault":                                      "打开 SaveVault",
+	"Show the SaveVault window":                           "显示 SaveVault 窗口",
 	"Sync all games":                                      "同步所有游戏",
 	"Sync every tracked game now":                         "立即同步所有已跟踪的游戏",
 	"Snapshot every game now":                             "立即为所有游戏创建快照",
@@ -66,7 +66,7 @@ var zhCN = map[string]string{
 	"Select backup file":                           "选择备份文件",
 	"Programs (*.exe;*.bat)":                       "程序 (*.exe;*.bat)",
 	"All files":                                    "所有文件",
-	"OpenSave backup (*.sscb)":                     "OpenSave 备份 (*.sscb)",
+	"SaveVault backup (*.sscb)":                    "SaveVault 备份 (*.sscb)",
 	"Could not open the file manager: ":            "无法打开文件管理器：",
 	"No save location set for this game.":          "这个游戏没有设置存档位置。",
 	"That folder no longer exists on this device.": "这台设备上已经没有这个文件夹了。",

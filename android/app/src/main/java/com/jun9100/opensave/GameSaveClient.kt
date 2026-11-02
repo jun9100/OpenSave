@@ -80,7 +80,7 @@ open class GameSaveException(
 
 /** Only a route-level GET 404 permits the old ZIP-head compatibility path. */
 class GameSaveScopesUnsupportedException : GameSaveException(
-    "当前 game-save 服务尚不支持原生存档范围同步",
+    "当前 SaveVault 云端尚不支持原生存档范围同步",
 )
 
 /** A CAS write lost its race; the caller must retain a conflict copy. */
@@ -101,7 +101,7 @@ class GameSaveClient(
     private val serviceUrl = normalizeServiceUrl(config.serviceUrl)
 
     init {
-        require(serviceUrl.isNotBlank()) { "请先填写 game-save 服务地址" }
+        require(serviceUrl.isNotBlank()) { "请先填写 SaveVault 云端地址" }
         require(config.syncKey.isNotBlank()) { "请先填写同步密钥" }
     }
 
@@ -109,7 +109,7 @@ class GameSaveClient(
 
     fun list(): Result<List<RemoteSnapshot>> = runCatching {
         execute(request(listEndpoint())).use { response ->
-            requireSuccess(response, "列举 game-save 快照")
+            requireSuccess(response, "列举 SaveVault 云端快照")
             val body = response.body?.string().orEmpty()
             val files = JSONObject(body).optJSONArray("files") ?: return@use emptyList()
             buildList {
@@ -140,7 +140,7 @@ class GameSaveClient(
             request(fileEndpoint(type.id, remoteName))
                 .put(file.asRequestBody(ZIP_MEDIA_TYPE)),
         ).use { response ->
-            requireSuccess(response, "上传 game-save 快照")
+            requireSuccess(response, "上传 SaveVault 云端快照")
         }
         UploadReport(type.id, remoteName, file.length())
     }.mapFailure()
@@ -152,7 +152,7 @@ class GameSaveClient(
         val temporary = File(parent, ".${destination.name}.${UUID.randomUUID()}.part")
         try {
             execute(request(fileEndpoint(remote.type, remote.name))).use { response ->
-                requireSuccess(response, "下载 game-save 快照")
+                requireSuccess(response, "下载 SaveVault 云端快照")
                 BufferedInputStream(response.body?.byteStream() ?: error("下载响应为空")).use { input ->
                     BufferedOutputStream(FileOutputStream(temporary)).use { output ->
                         input.copyTo(output, BUFFER_SIZE)
@@ -174,7 +174,7 @@ class GameSaveClient(
     fun delete(remote: RemoteSnapshot): Result<Unit> = runCatching {
         validateRemote(remote)
         execute(request(fileEndpoint(remote.type, remote.name)).delete()).use { response ->
-            requireSuccess(response, "删除 game-save 快照")
+            requireSuccess(response, "删除 SaveVault 云端快照")
         }
     }.mapFailure()
 
@@ -187,7 +187,7 @@ class GameSaveClient(
         validateScope(type, gameId)
         execute(request(scopeEndpoint(type.id, gameId))).use { response ->
             if (response.code == 404) throw GameSaveScopesUnsupportedException()
-            requireSuccess(response, "读取 game-save 当前存档")
+            requireSuccess(response, "读取 SaveVault 云端当前存档")
             parseScope(response.body?.string().orEmpty(), type.id, gameId)
         }
     }.mapFailure()
@@ -259,7 +259,7 @@ class GameSaveClient(
                     .getOrDefault("")
                 throw GameSaveScopeConflictException(head)
             }
-            requireSuccess(response, if (conflict) "保留 game-save 冲突快照" else "更新 game-save 当前存档")
+            requireSuccess(response, if (conflict) "保留 SaveVault 云端冲突快照" else "更新 SaveVault 云端当前存档")
             parseScopeSnapshot(JSONObject(response.body?.string().orEmpty()))
         }
     }.mapFailure()
@@ -268,12 +268,12 @@ class GameSaveClient(
         val json = JSONObject(body)
         val type = json.optString("type").trim().lowercase()
         val gameId = json.optString("gameId").trim()
-        require(type == expectedType && gameId == expectedGameId) { "game-save 返回了不匹配的存档范围" }
+        require(type == expectedType && gameId == expectedGameId) { "SaveVault 云端返回了不匹配的存档范围" }
         val snapshots = json.optJSONArray("snapshots").toScopeSnapshots()
         val conflicts = json.optJSONArray("conflicts").toScopeSnapshots()
         val head = json.optJSONObject("head")?.let(::parseScopeSnapshot)
         if (head != null) {
-            require(head.id.isNotBlank() && snapshots.any { it.id == head.id }) { "game-save 当前存档状态无效" }
+            require(head.id.isNotBlank() && snapshots.any { it.id == head.id }) { "SaveVault 云端当前存档状态无效" }
         }
         return GameSaveScope(type, gameId, head, snapshots, conflicts)
     }
@@ -292,11 +292,11 @@ class GameSaveClient(
         val digest = json.optString("contentDigest").trim().lowercase()
         val createdAt = json.optString("createdAt").trim()
         val receivedAt = json.optString("receivedAt").trim()
-        require(isSafeScopeSnapshotId(id)) { "game-save 返回了无效快照标识" }
-        require(PathPolicy.isSafeDocumentName(archive) && archive.endsWith(".zip")) { "game-save 返回了无效快照名称" }
-        require(parent.isBlank() || isSafeScopeSnapshotId(parent)) { "game-save 返回了无效父快照标识" }
-        require(digest.matches(SHA256_PATTERN)) { "game-save 返回了无效快照摘要" }
-        require(createdAt.isNotBlank() && receivedAt.isNotBlank()) { "game-save 返回了无效快照时间" }
+        require(isSafeScopeSnapshotId(id)) { "SaveVault 云端返回了无效快照标识" }
+        require(PathPolicy.isSafeDocumentName(archive) && archive.endsWith(".zip")) { "SaveVault 云端返回了无效快照名称" }
+        require(parent.isBlank() || isSafeScopeSnapshotId(parent)) { "SaveVault 云端返回了无效父快照标识" }
+        require(digest.matches(SHA256_PATTERN)) { "SaveVault 云端返回了无效快照摘要" }
+        require(createdAt.isNotBlank() && receivedAt.isNotBlank()) { "SaveVault 云端返回了无效快照时间" }
         return GameSaveScopeSnapshot(
             id = id,
             archive = archive,
@@ -361,7 +361,7 @@ class GameSaveClient(
         onSuccess = { Result.success(it) },
         onFailure = { error ->
             if (error is GameSaveException) Result.failure(error)
-            else Result.failure(GameSaveException(error.message ?: "game-save 请求失败", error is IOException))
+            else Result.failure(GameSaveException(error.message ?: "SaveVault 云端请求失败", error is IOException))
         },
     )
 
@@ -378,24 +378,24 @@ class GameSaveClient(
         fun normalizeServiceUrl(value: String): String {
             val raw = value.trim()
             if (raw.isEmpty()) return ""
-            val uri = runCatching { URI(raw) }.getOrElse { throw IllegalArgumentException("game-save 地址无效") }
+            val uri = runCatching { URI(raw) }.getOrElse { throw IllegalArgumentException("SaveVault 云端地址无效") }
             val scheme = uri.scheme.orEmpty().lowercase()
-            require(scheme == "http" || scheme == "https") { "game-save 只支持 http 或 https" }
-            require(!uri.host.isNullOrBlank()) { "game-save 地址缺少主机名" }
+            require(scheme == "http" || scheme == "https") { "SaveVault 云端只支持 http 或 https" }
+            require(!uri.host.isNullOrBlank()) { "SaveVault 云端地址缺少主机名" }
             require(uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
-                "game-save 地址不能包含账号、查询参数或片段"
+                "SaveVault 云端地址不能包含账号、查询参数或片段"
             }
             val rawPath = uri.rawPath.orEmpty()
             require(!rawPath.contains("%2f", ignoreCase = true) && !rawPath.contains("%5c", ignoreCase = true)) {
-                "game-save 地址不能包含编码路径分隔符"
+                "SaveVault 云端地址不能包含编码路径分隔符"
             }
-            require(!rawPath.contains('\\')) { "game-save 地址不能包含反斜杠" }
+            require(!rawPath.contains('\\')) { "SaveVault 云端地址不能包含反斜杠" }
             var path = rawPath.trimEnd('/')
-            require(path.split('/').none { it == "." || it == ".." }) { "game-save 地址不能包含相对路径" }
+            require(path.split('/').none { it == "." || it == ".." }) { "SaveVault 云端地址不能包含相对路径" }
             if (path.endsWith("/v1/opensave", ignoreCase = true)) {
                 path = path.dropLast("/v1/opensave".length)
             }
-            val authority = uri.rawAuthority ?: throw IllegalArgumentException("game-save 地址缺少主机名")
+            val authority = uri.rawAuthority ?: throw IllegalArgumentException("SaveVault 云端地址缺少主机名")
             return "$scheme://$authority$path"
         }
 

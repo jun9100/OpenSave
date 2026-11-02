@@ -163,8 +163,8 @@ internal fun settingsCommands(
     onOpenBatchReport?.let { MenuEntry(BATCH_REPORT_LABEL, onClick = it) },
     MenuEntry("编辑云端配置…", detail = "服务地址和同步密钥，测试通过后保存", enabled = !busy, onClick = onEditCloud),
     MenuEntry("从剪贴板导入配置", detail = "opensave://game-save 链接", enabled = !busy, onClick = onImportFromClipboard),
-    MenuEntry("刷新配置", detail = "重新读取已保存的 game-save 配置", enabled = !busy, onClick = onRefresh),
-    onOpenWizard?.let { MenuEntry(WIZARD_LABEL, detail = "访问方式、授权目录和 game-save", onClick = it) },
+    MenuEntry("刷新配置", detail = "重新读取已保存的 SaveVault 云端配置", enabled = !busy, onClick = onRefresh),
+    onOpenWizard?.let { MenuEntry(WIZARD_LABEL, detail = "访问方式、授权目录和 SaveVault 云端", onClick = it) },
 )
 
 /** Commands of "同步与任务". */

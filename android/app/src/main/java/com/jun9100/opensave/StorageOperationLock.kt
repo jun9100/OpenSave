@@ -14,7 +14,7 @@ import kotlinx.coroutines.sync.Mutex
  * can say what it is waiting for ("等待自动备份完成…").
  */
 internal object StorageOperationLock {
-    const val APP = "OpenSave"
+    const val APP = "SaveVault"
     const val AUTO_BACKUP = "自动备份"
 
     private val mutex = Mutex()

@@ -60,7 +60,7 @@ internal fun GameSaveEditorDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.consumeHandheldShortcuts(),
-        title = { Text("game-save 云端") },
+        title = { Text("SaveVault 云端") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Opened on purpose, so the address takes focus and the keyboard right away.
@@ -158,7 +158,7 @@ internal fun ConfigImportConfirmDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.consumeHandheldShortcuts(),
-        title = { Text("导入 game-save 配置？") },
+        title = { Text("导入 SaveVault 云端配置？") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("服务地址：${config.serviceUrl}")
@@ -166,7 +166,7 @@ internal fun ConfigImportConfirmDialog(
                 Text(
                     buildString {
                         append("确认后先测试连接，通过后才保存")
-                        if (replacing) append("，并替换当前的 game-save 配置")
+                        if (replacing) append("，并替换当前的 SaveVault 云端配置")
                         append("。")
                     },
                     style = MaterialTheme.typography.bodySmall,

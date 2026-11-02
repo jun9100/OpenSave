@@ -328,7 +328,7 @@ internal fun AdaptiveShellFrame(
                     modifier = Modifier.fillMaxHeight().testTag(NAVIGATION_RAIL_TAG).focusRestorer().focusGroup(),
                     header = {
                         Text(
-                            "OpenSave",
+                            "SaveVault",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
@@ -385,7 +385,7 @@ internal fun AdaptiveShellFrame(
                     },
                     title = {
                         Column {
-                            Text("OpenSave")
+                            Text("SaveVault")
                             Text(
                                 text = if (showingDetail) "游戏详情" else page.title,
                                 style = MaterialTheme.typography.labelSmall,

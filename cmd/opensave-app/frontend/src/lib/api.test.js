@@ -19,7 +19,7 @@ afterEach(() => {
 describe('api', () => {
   it('refuses a web page where OpenSave would answer', async () => {
     vi.stubGlobal('fetch', () => reply('<html>vendor utility</html>'));
-    await expect(api.get('/api/presets/scan')).rejects.toThrow(/Something other than OpenSave/);
+    await expect(api.get('/api/presets/scan')).rejects.toThrow(/Something other than SaveVault/);
   });
 
   it('still takes an empty success as nothing to say', async () => {
@@ -36,12 +36,12 @@ describe('api', () => {
 describe('initApi', () => {
   it('says so at once when a web page answers, not wrapped in advice about firewalls', async () => {
     vi.stubGlobal('fetch', () => reply('<html>vendor utility</html>'));
-    await expect(initApi()).rejects.toThrow(/^Something other than OpenSave/);
+    await expect(initApi()).rejects.toThrow(/^Something other than SaveVault/);
   });
 
   it('will not start against something that is not OpenSave', async () => {
     vi.stubGlobal('fetch', () => Promise.resolve(new Response('{"ok":true}', { status: 200 })));
-    await expect(initApi()).rejects.toThrow(/Something other than OpenSave/);
+    await expect(initApi()).rejects.toThrow(/Something other than SaveVault/);
   });
 
   it('starts against OpenSave', async () => {
