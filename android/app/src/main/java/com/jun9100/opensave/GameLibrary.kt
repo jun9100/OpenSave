@@ -53,7 +53,10 @@ object GameLibrary {
             )
             DetectedGame(
                 gameKey = gameKey,
-                presentation = GameCatalog.present(representative(sortedLocations)),
+                presentation = GameCatalog.present(representative(sortedLocations)).let { presentation ->
+                    // The user's own name wins over every catalog or learned one.
+                    GameNames.override(gameKey)?.let { presentation.copy(localizedName = it) } ?: presentation
+                },
                 saves = sortedLocations,
             )
         }

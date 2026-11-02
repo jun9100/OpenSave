@@ -221,4 +221,75 @@ object LibraryView {
         gameDetailOpen && !landscape -> BackTarget.CLOSE_DETAIL
         else -> BackTarget.SYSTEM
     }
+
+    /**
+     * The identity a library row stands for: the same game found in several
+     * sources (Eden's private, Android/data and public folders; an app's
+     * private and Android/data folders) is one row. Only real identities
+     * merge (Switch TitleID, Android package, PSP code, Steam AppID); a game
+     * known only by its path stays one row per source.
+     */
+    fun mergeKey(entry: SourceGameEntry): String =
+        entry.game.gameKey.takeUnless { it.startsWith("path:") } ?: entry.libraryKey
+
+    /** Entries grouped into rows, in the order of their first member. */
+    fun groupRows(entries: List<SourceGameEntry>): List<LibraryRowGroup> = entries
+        .groupBy(::mergeKey)
+        .map { (key, members) -> LibraryRowGroup(key, members) }
+
+    /** The member a row shows: the one being looked at, else the first that batch backup takes, else the first. */
+    fun rowEntry(group: LibraryRowGroup, selectedKey: String?): SourceGameEntry =
+        group.members.firstOrNull { it.libraryKey == selectedKey }
+            ?: group.members.firstOrNull { GameLibrary.canBatchBackup(it.game) }
+            ?: group.members.first()
+
+    /** The most pressing status among a row's save locations. */
+    fun groupStatus(group: LibraryRowGroup, statuses: Map<String, GameSyncStatus>): GameSyncStatus? =
+        group.members.mapNotNull { statuses[it.libraryKey] }.minByOrNull(::statusPriority)
+
+    private fun statusPriority(status: GameSyncStatus): Int = when (status) {
+        GameSyncStatus.CONFLICT -> 0
+        GameSyncStatus.CLOUD_NEWER -> 1
+        GameSyncStatus.LOCAL_CHANGED -> 2
+        GameSyncStatus.NEVER_BACKED_UP -> 3
+        GameSyncStatus.NOT_UPLOADED -> 4
+        GameSyncStatus.LOCAL_ONLY -> 5
+        GameSyncStatus.SYNCED -> 6
+    }
+
+    /** Short name of a save location for the detail's location switcher: the folder kind of its source. */
+    fun locationLabel(entry: SourceGameEntry): String =
+        entry.sourceLabel.substringAfterLast(" · ").takeIf { it != entry.sourceLabel } ?: entry.sourceLabel
+
+    /**
+     * An Android app that Android does not mark as a game and the user has not
+     * confirmed: its data was found, but it stays off the library and is
+     * listed on the 来源 page instead.
+     */
+    fun isUnconfirmedApp(entry: SourceGameEntry): Boolean =
+        entry.game.saves.isNotEmpty() && entry.game.saves.all { it.kind == "android-app" }
+
+    /** The library's rows: every game but [isUnconfirmedApp] ones. */
+    fun libraryEntries(entries: List<SourceGameEntry>): List<SourceGameEntry> = entries.filterNot(::isUnconfirmedApp)
+
+    /** Unconfirmed apps once each, by package, for the 来源 page. */
+    fun unconfirmedApps(entries: List<SourceGameEntry>): List<PendingAndroidApp> = entries
+        .filter(::isUnconfirmedApp)
+        .groupBy { it.game.presentation.androidPackageName ?: it.game.gameKey.removePrefix("android:") }
+        .map { (packageName, forApp) ->
+            PendingAndroidApp(packageName, forApp.first().game.presentation.primaryName, forApp.sumOf { it.game.locationCount })
+        }
+        .sortedBy { it.name.lowercase() }
 }
+
+data class PendingAndroidApp(
+    val packageName: String,
+    val name: String,
+    val locationCount: Int,
+)
+
+/** One library row: a game and every save location of it the scan found. */
+data class LibraryRowGroup(
+    val key: String,
+    val members: List<SourceGameEntry>,
+)

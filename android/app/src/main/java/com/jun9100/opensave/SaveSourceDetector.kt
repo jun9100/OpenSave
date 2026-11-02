@@ -264,7 +264,7 @@ object SaveSourceDetector {
         }
 
         if (directChild in androidPersistentDirectoryNames && packageName !in dedicatedAndroidSavePackages) {
-            val identifiedGame = metadata?.backsUpByDefault == true
+            val identifiedGame = metadata?.backsUpByDefault == true || AndroidAppConfirmations.isConfirmed(packageName)
             found += DetectedSave(
                 kind = if (identifiedGame) "android-game" else "android-app",
                 relativePath = relative,
@@ -286,7 +286,7 @@ object SaveSourceDetector {
             packageName !in dedicatedAndroidSavePackages
         ) {
             found += DetectedSave(
-                kind = if (metadata.backsUpByDefault) "android-game" else "android-app",
+                kind = if (metadata.backsUpByDefault || AndroidAppConfirmations.isConfirmed(packageName)) "android-game" else "android-app",
                 relativePath = relative,
                 note = "未识别的 Android 应用数据目录，确认后可作为存档备份",
                 displayName = metadata.displayName,

@@ -1,5 +1,8 @@
 package com.jun9100.opensave.ui.sources
 
+import com.jun9100.opensave.PendingAndroidApp
+import com.jun9100.opensave.GameLibrary
+import com.jun9100.opensave.LibraryView
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -95,6 +98,7 @@ internal fun SourcesPage(
         SourceGroups.rows(state.sourceOptions, state.sourceScans, state.rootChecked, state.rootAvailable, state.sourceDraft)
     }
     val groups = remember(rows) { SourceGroups.grouped(rows) }
+    val pendingApps = remember(state.sourceScans) { LibraryView.unconfirmedApps(GameLibrary.sourceGames(state.sourceScans)) }
     val pending = state.sourceDraft.pendingCount(state.sourceOptions)
     var addingRootPath by rememberSaveable { mutableStateOf(false) }
     var selectedGroupName by rememberSaveable { mutableStateOf(SourceGroup.AUTHORIZED.name) }
@@ -171,6 +175,7 @@ internal fun SourcesPage(
                         onForgetTree = viewModel::forgetAuthorizedTree,
                     )
                 }
+                PendingAppsCard(pendingApps, state.busy, viewModel::setAndroidAppIsGame)
             }
         },
         right = { firstControl ->
@@ -198,6 +203,7 @@ internal fun SourcesPage(
                         )
                     }
                 }
+                PendingAppsCard(pendingApps, state.busy, viewModel::setAndroidAppIsGame)
             }
         },
     )
@@ -467,7 +473,7 @@ private fun SourceRowItem(
                     sourceRowDetail(row, tree, access),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (access.readable || !row.option.selected) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -495,7 +501,11 @@ private fun sourceRowDetail(row: SourceRow, tree: AuthorizedSafTree?, access: So
     }
     row.scan?.scan?.let { report -> append(" · ${report.gameCount} 款游戏 · ${report.detected.size} 个存档位置") }
     if (!row.option.enabledByDefault && row.checkable) append(" · 默认关闭，避免扫描非游戏数据")
+    (row.option.source as? SourceSelection.Root)?.let { root -> append("\n").append(displayPath(root.path)) }
 }
+
+/** Shared storage as people know it from file managers. */
+private fun displayPath(path: String): String = path.replaceFirst("/storage/emulated/0", "/sdcard")
 
 private fun groupSummary(group: SourceGroup, rows: List<SourceRow>): String = when (group) {
     SourceGroup.NEEDS_ROOT, SourceGroup.MISSING -> "${rows.size} 个 · 不能勾选"
@@ -530,4 +540,48 @@ private fun plannedAccessStatus(
         SourceAccessStatus.pending(SourceAccessCapability.ROOT)
     }
     SourceAccessCapability.UNAVAILABLE -> SourceAccessStatus.pending(SourceAccessCapability.UNAVAILABLE)
+}
+
+/**
+ * Android apps whose data a scan found but that are not known to be games.
+ * They stay out of the library until the user says otherwise here.
+ */
+@Composable
+private fun PendingAppsCard(
+    apps: List<PendingAndroidApp>,
+    busy: Boolean,
+    onSetIsGame: (String, Boolean) -> Unit,
+) {
+    if (apps.isEmpty()) return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("待确认应用（${apps.size}）", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "扫描到这些应用的数据，但系统没有把它们标为游戏，所以不显示在游戏库里。是游戏的话点“设为游戏”。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            apps.forEach { app ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(app.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "${app.packageName} · ${app.locationCount} 个位置",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    TextButton(
+                        onClick = whenIdle(busy) { onSetIsGame(app.packageName, true) },
+                        modifier = Modifier.settingButtonFocus().busyDimmed(busy),
+                    ) { Text("设为游戏") }
+                }
+            }
+        }
+    }
 }
