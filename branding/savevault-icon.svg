@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="1024" height="1024">
+  <title>SaveVault</title>
+  <rect width="108" height="108" rx="24" fill="#26215C"/>
+  <path d="M54 18l30 11v22c0 20-13 33-30 39-17-6-30-19-30-39V29z" fill="#534AB7"/>
+  <path d="M38 50h32a10 10 0 0 1 9.6 12.8l-2.4 8.2a5 5 0 0 1-8.6 1.8L64 67H44l-4.6 5.8a5 5 0 0 1-8.6-1.8l-2.4-8.2A10 10 0 0 1 38 50z" fill="#EEEDFE"/>
+  <g fill="#534AB7">
+    <path d="M38 56h10v3H38z"/>
+    <path d="M41.5 52.5h3v10h-3z"/>
+    <circle cx="64" cy="55" r="2.2"/>
+    <circle cx="69" cy="59" r="2.2"/>
+  </g>
+</svg>

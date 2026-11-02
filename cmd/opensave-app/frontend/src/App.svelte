@@ -258,7 +258,7 @@
   <div class="body">
     {#if bootError}
       <div class="boot-error">
-        <img class="boot-logo" src={logoUrl} alt="OpenSave" />
+        <img class="boot-logo" src={logoUrl} alt="SaveVault" />
         <h2>{$t('app.boot.failed')}</h2>
         <p>{trError(bootError)}</p>
         <button class="btn primary" disabled={retrying} on:click={boot}>
@@ -296,7 +296,7 @@
       </main>
     {:else}
       <div class="boot-loading">
-        <img class="boot-logo pulse" src={logoUrl} alt="OpenSave" />
+        <img class="boot-logo pulse" src={logoUrl} alt="SaveVault" />
         <span>{$t('app.boot.starting')}</span>
       </div>
     {/if}

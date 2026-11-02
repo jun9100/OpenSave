@@ -148,7 +148,7 @@ internal object BatchNotifications {
             )
         }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_opensave)
+            .setSmallIcon(R.drawable.ic_stat_savevault)
             .setContentTitle("SaveVault")
             .setContentText("正在${operation?.label ?: "执行批量任务"}，可在应用内查看进度或取消")
             .setOngoing(true)
