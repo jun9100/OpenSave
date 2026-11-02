@@ -286,6 +286,12 @@ class SourceViewModel(
         }
         observeBatches()
         observeActivity()
+        // The bundled Switch names load off the main thread; rows rebuild when they arrive.
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { OfflineSwitchTitles.load(app) }
+            GameNames.touch()
+            updateState { copy(nameRevision = GameNames.revision) }
+        }
         startOnboarding()
         refreshPersistedSource()
     }

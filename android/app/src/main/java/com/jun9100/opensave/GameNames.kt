@@ -22,6 +22,12 @@ object GameNames {
     /** The user's own name for a game, keyed by its game key. */
     fun override(gameKey: String): String? = overrides[gameKey]
 
+    /** Another name source changed (the bundled catalog finished loading). */
+    @Synchronized
+    fun touch() {
+        revision++
+    }
+
     @Synchronized
     fun replace(titles: Map<String, String>, overrides: Map<String, String>) {
         if (titles == this.titles && overrides == this.overrides) return
@@ -179,4 +185,36 @@ class AndroidAppConfirmationStore(context: Context) {
         const val PREFERENCES = "opensave_android_games"
         const val CONFIRMED_KEY = "confirmed_packages"
     }
+}
+
+/**
+ * Names of about 21,000 Switch titles bundled with the app
+ * (assets/switch-titles.tsv, built by scripts/build_switch_titles.py from
+ * blawar/titledb), so a save copied from another device is named without the
+ * game being installed here. Loaded once, off the main thread.
+ */
+object OfflineSwitchTitles {
+    @Volatile private var titles: Map<String, String> = emptyMap()
+
+    fun name(titleId: String): String? = titles[titleId.uppercase()]
+
+    fun load(context: Context) {
+        if (titles.isNotEmpty()) return
+        titles = runCatching {
+            // Stored uncompressed: the APK zip compresses it, and the build
+            // would unpack a .gz asset anyway.
+            context.assets.open(ASSET).bufferedReader(Charsets.UTF_8).useLines(::parse)
+        }.getOrDefault(emptyMap())
+    }
+
+    internal fun parse(lines: Sequence<String>): Map<String, String> = lines
+        .mapNotNull { line ->
+            val tab = line.indexOf('\t')
+            if (tab != 16) return@mapNotNull null
+            val name = line.substring(tab + 1).trim().takeIf(String::isNotEmpty) ?: return@mapNotNull null
+            line.substring(0, tab).uppercase() to name
+        }
+        .toMap(HashMap())
+
+    private const val ASSET = "switch-titles.tsv"
 }

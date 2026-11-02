@@ -108,9 +108,12 @@ object GameCatalog {
         val steamAppId = appId ?: entry?.steamAppId
 
         val learnedName = titleId?.let(GameNames::switchTitle)
-        val originalName = entry?.originalName ?: learnedName ?: humanReadableName(save, rawName)
+        // The bundled catalog names a title in Chinese where the eShop does;
+        // the emulator's own name (often Japanese or English) stays as the original.
+        val offlineName = titleId?.let(OfflineSwitchTitles::name)
+        val originalName = entry?.originalName ?: learnedName ?: humanReadableName(save, rawName) ?: offlineName
         return GamePresentation(
-            localizedName = entry?.localizedName,
+            localizedName = entry?.localizedName ?: offlineName?.takeIf { it != originalName },
             originalName = originalName,
             identity = titleId ?: steamAppId?.let { "Steam AppID $it" },
             iconKey = iconKey(save.kind),

@@ -47,4 +47,12 @@ class SwitchTitleNameSourcesTest {
         assertNull(SwitchTitleNameSources.treeUriToPath("content://x/tree/1234-5678%3Aroms/document/1234-5678%3Aroms%2Fa.xci"))
         assertNull(SwitchTitleNameSources.treeUriToPath("content://x/tree/primary%3A..%2F/document/primary%3A..%2Fa.xci"))
     }
+
+    @Test
+    fun bundledCatalogLinesAreTitleIdTabName() {
+        val parsed = OfflineSwitchTitles.parse(
+            sequenceOf("010005501E68C000\t逆转检察官1&2 御剑精选集", "short\tx", "01006A800016E000\t", "no tab here"),
+        )
+        assertEquals(mapOf("010005501E68C000" to "逆转检察官1&2 御剑精选集"), parsed)
+    }
 }
