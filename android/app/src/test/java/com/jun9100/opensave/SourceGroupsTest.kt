@@ -86,4 +86,36 @@ class SourceGroupsTest {
         val none = SourceDraft().setAll(rows, enabled = false)
         assertEquals(setOf(eden.id, yuzu.id), none.changes.keys)
     }
+
+    @Test
+    fun presetsOfAppsThatAreNotInstalledAreFoldedAndGroupedByApp() {
+        fun preset(label: String) = RootSourcePresets.all.first { it.label == label }.let { preset ->
+            SaveSourceOption(
+                source = SourceSelection.Root(preset.path),
+                label = preset.label,
+                saveType = GameSaveTypes.forSource(SourceSelection.Root(preset.path)),
+                requiredAccess = SourceAccessCapability.ROOT,
+                selected = true,
+            )
+        }
+        val edenPrivate = preset("Eden Switch · 私有目录")
+        val edenData = preset("Eden Switch · Android/data")
+        val gameHub = preset("GameHub PC · 私有目录")
+        val sweep = preset("共享存储 · 全盘补漏（较慢）")
+        val rows = SourceGroups.rows(
+            listOf(sweep, edenPrivate, gameHub, edenData),
+            emptyList(),
+            rootChecked = true,
+            rootAvailable = true,
+            installedPackages = setOf("dev.eden.eden_emulator"),
+        )
+        val gameHubRow = rows.first { it.option == gameHub }
+        assertEquals(SourceGroup.NOT_INSTALLED, gameHubRow.group)
+        assertFalse(gameHubRow.checkable)
+
+        val available = rows.filter { it.group == SourceGroup.AVAILABLE }
+        val sections = SourceGroups.byApp(available)
+        assertEquals(listOf("Eden Switch", "共享存储"), sections.map { it.first })
+        assertEquals(listOf(edenPrivate, edenData), sections.first().second.map { it.option })
+    }
 }

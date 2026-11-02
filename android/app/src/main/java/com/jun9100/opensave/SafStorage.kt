@@ -123,7 +123,7 @@ class SafStorage(private val context: Context) {
             val rootName = PathPolicy.requireSafeDocumentName(root.name ?: "authorized-storage")
             val directories = mutableListOf<String>()
             val unreadable = intArrayOf(0)
-            collectScanDirectories(root, rootName, directories, unreadable)
+            collectScanDirectories(uri, DocumentsContract.getTreeDocumentId(uri), rootName, directories, unreadable)
             val truncated = directories.size > MAX_SCAN_DIRECTORIES
             SaveSourceDetector.scanDirectories(
                 rootPath = rootName,
@@ -154,6 +154,27 @@ class SafStorage(private val context: Context) {
                     signatureOf(uri, documentId, depth = 0)
                 }.getOrNull()
             }
+        }
+
+    /**
+     * The bytes of [fileName] inside the directory [relativeDirectory] of the
+     * tree [uri]; null when it is missing, unreadable or larger than [maxBytes].
+     */
+    suspend fun readSmallFile(uri: Uri, relativeDirectory: String, fileName: String, maxBytes: Int): ByteArray? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val rootId = DocumentsContract.getTreeDocumentId(uri)
+                val listed = mutableMapOf<String, List<ChildDocument>>()
+                val directoryId = if (relativeDirectory.isBlank()) rootId else resolveDocumentId(uri, rootId, relativeDirectory, listed)
+                val file = children(uri, directoryId ?: return@runCatching null)
+                    .firstOrNull { !it.isDirectory && it.name.equals(fileName, ignoreCase = true) }
+                    ?.takeIf { it.sizeBytes in 1..maxBytes.toLong() }
+                    ?: return@runCatching null
+                context.contentResolver
+                    .openInputStream(DocumentsContract.buildDocumentUriUsingTree(uri, file.documentId))
+                    ?.use { it.readBytes() }
+                    ?.takeIf { it.size <= maxBytes }
+            }.getOrNull()
         }
 
     private fun resolveDocumentId(
@@ -368,26 +389,35 @@ class SafStorage(private val context: Context) {
         }
     }
 
+    /**
+     * Every directory below [documentId], depth first. One children query per
+     * directory returns names and types together: asking each DocumentFile for
+     * its name and type costs two more provider calls per child, which made a
+     * granted app data folder with a Linux image in it take minutes.
+     */
     private fun collectScanDirectories(
-        source: DocumentFile,
+        treeUri: Uri,
+        documentId: String,
         relativePath: String,
         directories: MutableList<String>,
         unreadable: IntArray,
     ) {
         directories += relativePath
         if (directories.size > MAX_SCAN_DIRECTORIES) return
-        val children = runCatching { source.listFiles().toList() }.getOrElse {
+        val children = runCatching { children(treeUri, documentId) }.getOrElse {
             unreadable[0]++
             return
         }
-        children.filter { it.isDirectory }.sortedBy { it.name.orEmpty() }.forEach { child ->
+        val parentName = relativePath.substringAfterLast('/')
+        children.filter { it.isDirectory }.sortedBy { it.name }.forEach { child ->
             if (directories.size > MAX_SCAN_DIRECTORIES) return@forEach
-            val name = runCatching { PathPolicy.requireSafeDocumentName(child.name ?: error("Document has no name")) }
+            val name = runCatching { PathPolicy.requireSafeDocumentName(child.name) }
                 .getOrElse {
                     unreadable[0]++
                     return@forEach
                 }
-            collectScanDirectories(child, "$relativePath/$name", directories, unreadable)
+            if (ScanPruning.skip(parentName, name)) return@forEach
+            collectScanDirectories(treeUri, child.documentId, "$relativePath/$name", directories, unreadable)
         }
     }
 

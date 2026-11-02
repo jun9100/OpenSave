@@ -50,6 +50,10 @@ internal fun gameMenuEntries(
     onToggleAutoBackup: () -> Unit = {},
     /** Opens the rename dialog; null hides the entry. */
     onRename: (() -> Unit)? = null,
+    /** Opens the photo picker for a cover; null hides the entry. */
+    onChangeCover: (() -> Unit)? = null,
+    /** Drops the picked cover; null (no picked cover) hides the entry. */
+    onResetCover: (() -> Unit)? = null,
     /** Takes an app the user had marked as a game back out of the library; null hides the entry. */
     onNotAGame: (() -> Unit)? = null,
 ): List<MenuEntry> = buildList {
@@ -83,6 +87,8 @@ internal fun gameMenuEntries(
     add(MenuEntry("查看版本 ($versionCount)", onClick = onShowVersions))
     add(MenuEntry("查看存档位置 ($locationCount)", onClick = onShowLocations))
     onRename?.let { add(MenuEntry("改名…", detail = "未识别的游戏可以手动命名", onClick = it)) }
+    onChangeCover?.let { add(MenuEntry("换封面…", detail = "从相册选一张图，只用于本设备", onClick = it)) }
+    onResetCover?.let { add(MenuEntry("恢复默认封面", onClick = it)) }
     onNotAGame?.let { add(MenuEntry("不是游戏", detail = "移出游戏库，回到“来源”页的待确认应用", enabled = !busy, onClick = it)) }
 }
 

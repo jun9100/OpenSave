@@ -256,6 +256,7 @@ class SourceViewModel(
     private val gameSaveStore = GameSaveConfigStore(application)
     private val gameNameStore = GameNameStore(application).also { store -> runCatching { store.load() } }
     private val androidAppStore = AndroidAppConfirmationStore(application).also { store -> runCatching { store.load() } }
+    private val coverRepository = CoverRepository(application)
     private val displayPreferences = DisplayPreferences(application)
     private val gameSaveDevice = GameSaveDeviceStore(application)
     private val autoBackupScheduler = AutoBackupScheduler(application)
@@ -1114,7 +1115,62 @@ class SourceViewModel(
                 saveSignatures = state.value.saveSignatures.filterKeys { it in eligibleKeys },
             )
             readSaveSignatures(games)
+            copyPspIcons(scans)
             if (rootAvailable && rootAllowed) learnSwitchTitles()
+        }
+    }
+
+    /**
+     * PPSSPP keeps each game's icon in its save folder; one copy per game
+     * becomes the cover, read through whichever access found the save.
+     */
+    private fun copyPspIcons(scans: List<SourceScanResult>) {
+        viewModelScope.launch {
+            val copied = withContext(Dispatchers.IO) {
+                scans.sumOf { result ->
+                    val source = result.source
+                    result.scan?.detected.orEmpty()
+                        .filter { it.kind == "ppsspp" && !it.candidate }
+                        .distinctBy { it.gameKey }
+                        .count { save ->
+                            val gameId = save.gameKey?.removePrefix("ppsspp:") ?: return@count false
+                            if (coverRepository.hasPspIcon(gameId)) return@count false
+                            val bytes = when (source) {
+                                is SourceSelection.Saf -> storage.readSmallFile(
+                                    source.uri, save.relativePath, GameArtworkSources.PSP_ICON_FILE, GameArtworkSources.MAX_PSP_ICON_BYTES,
+                                )
+                                is SourceSelection.Root -> rootStorage.readSmallFile(
+                                    source.path.trimEnd('/') + "/" + save.relativePath,
+                                    GameArtworkSources.PSP_ICON_FILE,
+                                    GameArtworkSources.MAX_PSP_ICON_BYTES,
+                                )
+                            } ?: return@count false
+                            coverRepository.savePspIcon(gameId, bytes)
+                        }
+                }
+            }
+            if (copied > 0) CoverRepository.bumpRevision()
+        }
+    }
+
+    /** Uses the picture at [uri] as [gameKey]'s cover on this device. */
+    fun setCustomCover(gameKey: String, uri: android.net.Uri) {
+        viewModelScope.launch {
+            val saved = coverRepository.setCustomCover(gameKey, uri)
+            updateState {
+                if (saved) {
+                    copy(messages = messages.with(OpenSavePage.LIBRARY, action = "已更换封面"))
+                } else {
+                    copy(messages = messages.withError(OpenSavePage.LIBRARY, "无法读取这张图片"))
+                }
+            }
+        }
+    }
+
+    fun clearCustomCover(gameKey: String) {
+        viewModelScope.launch {
+            coverRepository.clearCustomCover(gameKey)
+            updateState { copy(messages = messages.with(OpenSavePage.LIBRARY, action = "已恢复默认封面")) }
         }
     }
 

@@ -122,7 +122,17 @@ class RootStorage(private val context: Context) {
      * call, null for a missing location. Uses `find -printf '%s %T@'`, and
      * `find -exec stat -c '%s %Y'` where toybox find has no -printf (plan §5.2).
      */
-    suspend fun saveSignatures(rawRootPath: String, relativePaths: List<String>): Result<Map<String, SaveSignature?>> =
+    /** The bytes of [fileName] in [directory] (an absolute path), or null when missing or larger than [maxBytes]. */
+    suspend fun readSmallFile(directory: String, fileName: String, maxBytes: Int): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            val path = RootCommand.shellQuote(directory.trimEnd('/') + "/" + fileName)
+            val result = RootCommand.execute("[ -f $path ] && [ \$(stat -c %s $path) -le $maxBytes ] && base64 -w 0 $path")
+            if (result.exitCode != 0 || result.output.isBlank()) return@runCatching null
+            android.util.Base64.decode(result.output, android.util.Base64.DEFAULT)
+        }.getOrNull()
+    }
+
+        suspend fun saveSignatures(rawRootPath: String, relativePaths: List<String>): Result<Map<String, SaveSignature?>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val root = RootPathPolicy.canonicalizeForScan(rawRootPath)

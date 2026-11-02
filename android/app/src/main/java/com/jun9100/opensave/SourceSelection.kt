@@ -29,34 +29,40 @@ data class RootSourcePreset(
     val path: String,
     /** Candidate application data must be explicitly enabled before scanning. */
     val enabledByDefault: Boolean = true,
-)
+    /** The app whose saves these are; the 来源 page folds the presets of an app that is not installed. */
+    val packageName: String? = null,
+) {
+    /** The heading the 来源 page groups the presets of one app under. */
+    val app: String
+        get() = label.substringBefore(" · ")
+}
 
 object RootSourcePresets {
     val all = listOf(
-        RootSourcePreset("GameHub PC · 私有目录", "/data/user/0/com.xiaoji.egggame/files"),
-        RootSourcePreset("GameHub PC · Android/data", "/storage/emulated/0/Android/data/com.xiaoji.egggame/files"),
+        RootSourcePreset("GameHub PC · 私有目录", "/data/user/0/com.xiaoji.egggame/files", packageName = "com.xiaoji.egggame"),
+        RootSourcePreset("GameHub PC · Android/data", "/storage/emulated/0/Android/data/com.xiaoji.egggame/files", packageName = "com.xiaoji.egggame"),
         RootSourcePreset("PC 游戏 · 公共目录 pc-game", "/storage/emulated/0/pc-game"),
-        RootSourcePreset("DroidDeck PC · 私有目录", "/data/user/0/com.droiddeck.launcher/files"),
-        RootSourcePreset("DroidDeck PC · Android/data", "/storage/emulated/0/Android/data/com.droiddeck.launcher/files"),
-        RootSourcePreset("Eden Switch · 私有目录", "/data/user/0/dev.eden.eden_emulator/files"),
-        RootSourcePreset("Eden Switch · Android/data", "/storage/emulated/0/Android/data/dev.eden.eden_emulator/files"),
+        RootSourcePreset("DroidDeck PC · 私有目录", "/data/user/0/com.droiddeck.launcher/files", packageName = "com.droiddeck.launcher"),
+        RootSourcePreset("DroidDeck PC · Android/data", "/storage/emulated/0/Android/data/com.droiddeck.launcher/files", packageName = "com.droiddeck.launcher"),
+        RootSourcePreset("Eden Switch · 私有目录", "/data/user/0/dev.eden.eden_emulator/files", packageName = "dev.eden.eden_emulator"),
+        RootSourcePreset("Eden Switch · Android/data", "/storage/emulated/0/Android/data/dev.eden.eden_emulator/files", packageName = "dev.eden.eden_emulator"),
         RootSourcePreset("Eden Switch · 公共目录 eden", "/storage/emulated/0/eden"),
-        RootSourcePreset("Yuzu", "/data/user/0/org.yuzu.yuzu_emu/files"),
-        RootSourcePreset("Yuzu EA", "/data/user/0/org.yuzu.yuzu_emu.ea/files"),
-        RootSourcePreset("Suyu", "/data/user/0/dev.suyu.suyu_emu/files"),
-        RootSourcePreset("Sudachi", "/data/user/0/org.sudachi.sudachi_emu/files"),
-        RootSourcePreset("Citron", "/data/user/0/org.citron.citron_emu/files"),
-        RootSourcePreset("Winlator PC · 私有目录", "/data/user/0/com.winlator/files"),
-        RootSourcePreset("Winlator PC · Android/data", "/storage/emulated/0/Android/data/com.winlator/files"),
-        RootSourcePreset("Winlator 6.1 · 私有目录", "/data/user/0/com.ludashi.benchmark/files"),
-        RootSourcePreset("Winlator 6.1 · Android/data", "/storage/emulated/0/Android/data/com.ludashi.benchmark/files"),
+        RootSourcePreset("Yuzu", "/data/user/0/org.yuzu.yuzu_emu/files", packageName = "org.yuzu.yuzu_emu"),
+        RootSourcePreset("Yuzu EA", "/data/user/0/org.yuzu.yuzu_emu.ea/files", packageName = "org.yuzu.yuzu_emu.ea"),
+        RootSourcePreset("Suyu", "/data/user/0/dev.suyu.suyu_emu/files", packageName = "dev.suyu.suyu_emu"),
+        RootSourcePreset("Sudachi", "/data/user/0/org.sudachi.sudachi_emu/files", packageName = "org.sudachi.sudachi_emu"),
+        RootSourcePreset("Citron", "/data/user/0/org.citron.citron_emu/files", packageName = "org.citron.citron_emu"),
+        RootSourcePreset("Winlator PC · 私有目录", "/data/user/0/com.winlator/files", packageName = "com.winlator"),
+        RootSourcePreset("Winlator PC · Android/data", "/storage/emulated/0/Android/data/com.winlator/files", packageName = "com.winlator"),
+        RootSourcePreset("Winlator 6.1 · 私有目录", "/data/user/0/com.ludashi.benchmark/files", packageName = "com.ludashi.benchmark"),
+        RootSourcePreset("Winlator 6.1 · Android/data", "/storage/emulated/0/Android/data/com.ludashi.benchmark/files", packageName = "com.ludashi.benchmark"),
         RootSourcePreset("PPSSPP", "/storage/emulated/0/PSP"),
         RootSourcePreset("RetroArch", "/storage/emulated/0/RetroArch"),
         RootSourcePreset("Dolphin", "/storage/emulated/0/dolphin-emu"),
         RootSourcePreset("DuckStation", "/storage/emulated/0/DuckStation"),
         RootSourcePreset("AetherSX2 / NetherSX2", "/storage/emulated/0/AetherSX2"),
         RootSourcePreset("NetherSX2", "/storage/emulated/0/NetherSX2"),
-        RootSourcePreset("共享存储（自动发现）", "/storage/emulated/0"),
+        RootSourcePreset("共享存储 · 全盘补漏（较慢）", "/storage/emulated/0"),
     )
 
     fun find(path: String): RootSourcePreset? = all.firstOrNull {

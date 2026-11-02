@@ -10,6 +10,7 @@ enum class SourceGroup(val title: String, val foldedByDefault: Boolean = false) 
     AUTHORIZED("已授权目录"),
     AVAILABLE("内置来源 · 可用"),
     NEEDS_ROOT("需要 Root", foldedByDefault = true),
+    NOT_INSTALLED("未安装", foldedByDefault = true),
     MISSING("不存在", foldedByDefault = true),
 }
 
@@ -33,13 +34,19 @@ object SourceGroups {
         rootChecked: Boolean,
         rootAvailable: Boolean,
         draft: SourceDraft = SourceDraft(),
+        /** Installed packages among the presets' apps; null when not known, which folds nothing. */
+        installedPackages: Set<String>? = null,
     ): List<SourceRow> {
         val scanBySourceId = scans.associateBy(SourceScanResult::sourceId)
         return options.map { option ->
             val scan = scanBySourceId[option.sourceId]
-            val unreachable = SourceOptionPolicy.unreachable(option, scan?.access, rootChecked, rootAvailable)
+            val notInstalled = installedPackages != null && (option.source as? SourceSelection.Root)
+                ?.let { RootSourcePresets.find(it.path)?.packageName }
+                ?.let { it !in installedPackages } == true
+            val unreachable = notInstalled || SourceOptionPolicy.unreachable(option, scan?.access, rootChecked, rootAvailable)
             val group = when {
                 option.source is SourceSelection.Saf -> SourceGroup.AUTHORIZED
+                notInstalled -> SourceGroup.NOT_INSTALLED
                 option.requiredAccess == SourceAccessCapability.ROOT && rootChecked && !rootAvailable -> SourceGroup.NEEDS_ROOT
                 unreachable -> SourceGroup.MISSING
                 else -> SourceGroup.AVAILABLE
@@ -55,6 +62,19 @@ object SourceGroups {
             )
         }
     }
+
+    /** The app a source belongs to: its preset's, else the part of its label before " · ". */
+    fun appOf(option: SaveSourceOption): String =
+        (option.source as? SourceSelection.Root)?.let { RootSourcePresets.find(it.path)?.app }
+            ?: option.label.substringBefore(" · ")
+
+    /** [rows] by app, apps in the order they first appear, the whole-storage sweep last. */
+    fun byApp(rows: List<SourceRow>): List<Pair<String, List<SourceRow>>> = rows
+        .groupBy { appOf(it.option) }
+        .toList()
+        .sortedBy { (_, members) ->
+            members.any { (it.option.source as? SourceSelection.Root)?.path?.trimEnd('/') == "/storage/emulated/0" }
+        }
 
     /** Every group in page order, empty ones left out except the granted folders (their add action lives there). */
     fun grouped(rows: List<SourceRow>): List<Pair<SourceGroup, List<SourceRow>>> {
