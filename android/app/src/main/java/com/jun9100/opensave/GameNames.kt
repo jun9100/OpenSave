@@ -188,15 +188,19 @@ class AndroidAppConfirmationStore(context: Context) {
 }
 
 /**
- * Names of about 21,000 Switch titles bundled with the app
- * (assets/switch-titles.tsv, built by scripts/build_switch_titles.py from
+ * Names and eShop icon hashes of about 24,000 Switch titles bundled with the
+ * app (assets/switch-titles.tsv, built by scripts/build_switch_titles.py from
  * blawar/titledb), so a save copied from another device is named without the
  * game being installed here. Loaded once, off the main thread.
  */
 object OfflineSwitchTitles {
-    @Volatile private var titles: Map<String, String> = emptyMap()
+    data class Title(val name: String, val iconHash: String?)
 
-    fun name(titleId: String): String? = titles[titleId.uppercase()]
+    @Volatile private var titles: Map<String, Title> = emptyMap()
+
+    fun name(titleId: String): String? = titles[titleId.uppercase()]?.name
+
+    fun icon(titleId: String): String? = titles[titleId.uppercase()]?.iconHash
 
     fun load(context: Context) {
         if (titles.isNotEmpty()) return
@@ -207,14 +211,17 @@ object OfflineSwitchTitles {
         }.getOrDefault(emptyMap())
     }
 
-    internal fun parse(lines: Sequence<String>): Map<String, String> = lines
+    /** Lines are `TitleID<TAB>name[<TAB>icon hash]`. */
+    internal fun parse(lines: Sequence<String>): Map<String, Title> = lines
         .mapNotNull { line ->
-            val tab = line.indexOf('\t')
-            if (tab != 16) return@mapNotNull null
-            val name = line.substring(tab + 1).trim().takeIf(String::isNotEmpty) ?: return@mapNotNull null
-            line.substring(0, tab).uppercase() to name
+            val columns = line.split('\t')
+            if (columns.size < 2 || columns[0].length != 16) return@mapNotNull null
+            val name = columns[1].trim().takeIf(String::isNotEmpty) ?: return@mapNotNull null
+            val icon = columns.getOrNull(2)?.trim()?.takeIf(iconHashPattern::matches)
+            columns[0].uppercase() to Title(name, icon)
         }
         .toMap(HashMap())
 
+    private val iconHashPattern = Regex("^[0-9a-f]{64}$")
     private const val ASSET = "switch-titles.tsv"
 }

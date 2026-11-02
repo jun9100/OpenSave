@@ -51,8 +51,25 @@ class SwitchTitleNameSourcesTest {
     @Test
     fun bundledCatalogLinesAreTitleIdTabName() {
         val parsed = OfflineSwitchTitles.parse(
-            sequenceOf("010005501E68C000\t逆转检察官1&2 御剑精选集", "short\tx", "01006A800016E000\t", "no tab here"),
+            sequenceOf(
+                "010005501E68C000\t逆转检察官1&2 御剑精选集",
+                "0100000000010000\t超级玛利欧 奥德赛\tad4d31f664a1ce704f0219da2805f8459595bc3c01c3f04df2e32ba34a05b8c6",
+                "0100000000020000\tBad icon\tnot-a-hash",
+                "short\tx",
+                "01006A800016E000\t",
+                "no tab here",
+            ),
         )
-        assertEquals(mapOf("010005501E68C000" to "逆转检察官1&2 御剑精选集"), parsed)
+        assertEquals(
+            mapOf(
+                "010005501E68C000" to OfflineSwitchTitles.Title("逆转检察官1&2 御剑精选集", null),
+                "0100000000010000" to OfflineSwitchTitles.Title(
+                    "超级玛利欧 奥德赛",
+                    "ad4d31f664a1ce704f0219da2805f8459595bc3c01c3f04df2e32ba34a05b8c6",
+                ),
+                "0100000000020000" to OfflineSwitchTitles.Title("Bad icon", null),
+            ),
+            parsed,
+        )
     }
 }

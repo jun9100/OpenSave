@@ -25,6 +25,8 @@ data class GamePresentation(
     val androidPackageName: String? = null,
     val steamAppId: String? = null,
     val switchTitleId: String? = null,
+    /** eShop icon hash from the bundled Switch catalog. */
+    val switchIconHash: String? = null,
 ) {
     val primaryName: String
         get() = localizedName ?: originalName ?: "未命名游戏"
@@ -32,13 +34,23 @@ data class GamePresentation(
     val hasLocalizedName: Boolean
         get() = !localizedName.isNullOrBlank()
 
-    val coverUrl: String?
-        get() = steamAppId?.let { "https://cdn.cloudflare.steamstatic.com/steam/apps/$it/header.jpg" }
-            ?: switchTitleId?.let { "https://tinfoil.media/ti/$it/0/0/" }
+    /** Where to download a cover, tried in order. Android apps use their installed icon instead. */
+    val coverUrls: List<String>
+        get() = steamAppId?.let { listOf("https://cdn.cloudflare.steamstatic.com/steam/apps/$it/header.jpg") }
+            ?: switchTitleId?.let { titleId ->
+                // Nintendo's own CDN is reliable; tinfoil.media often times
+                // out, so it is only a fallback for titles the catalog lacks.
+                listOfNotNull(
+                    switchIconHash?.let { "https://img-eshop.cdn.nintendo.net/i/$it.jpg" },
+                    "https://tinfoil.media/ti/$titleId/0/0/",
+                )
+            }
+            .orEmpty()
 
     val coverCacheKey: String?
         get() = steamAppId?.let { "steam-$it" }
             ?: switchTitleId?.let { "switch-${it.lowercase()}" }
+            ?: androidPackageName?.let { "android-$it" }
 }
 
 object GameCatalog {
@@ -120,6 +132,7 @@ object GameCatalog {
             androidPackageName = packageName,
             steamAppId = steamAppId,
             switchTitleId = titleId?.takeIf { switchTitleIdPattern.matches(it) },
+            switchIconHash = titleId?.let(OfflineSwitchTitles::icon),
         )
     }
 

@@ -87,8 +87,8 @@ class GameCatalogTest {
         assertEquals("未命名游戏", presentation.primaryName)
         assertEquals(GameIconKey.SWITCH, presentation.iconKey)
         assertEquals(
-            "https://tinfoil.media/ti/0100ABCDEF123456/0/0/",
-            presentation.coverUrl,
+            listOf("https://tinfoil.media/ti/0100ABCDEF123456/0/0/"),
+            presentation.coverUrls,
         )
         assertEquals("switch-0100abcdef123456", presentation.coverCacheKey)
     }
@@ -108,7 +108,30 @@ class GameCatalogTest {
 
         assertEquals("超级马力欧 奥德赛", presentation.localizedName)
         assertEquals("Super Mario Odyssey", presentation.originalName)
-        assertTrue(presentation.coverUrl?.startsWith("https://tinfoil.media/ti/") == true)
+        assertTrue(presentation.coverUrls.last().startsWith("https://tinfoil.media/ti/"))
+    }
+
+    @Test
+    fun prefersTheEshopIconAndUsesTheInstalledIconForAndroidApps() {
+        val switch = GamePresentation(
+            localizedName = null,
+            originalName = "Super Mario Odyssey",
+            identity = "0100000000010000",
+            iconKey = GameIconKey.SWITCH,
+            switchTitleId = "0100000000010000",
+            switchIconHash = "ad4d31f664a1ce704f0219da2805f8459595bc3c01c3f04df2e32ba34a05b8c6",
+        )
+        assertEquals(
+            listOf(
+                "https://img-eshop.cdn.nintendo.net/i/ad4d31f664a1ce704f0219da2805f8459595bc3c01c3f04df2e32ba34a05b8c6.jpg",
+                "https://tinfoil.media/ti/0100000000010000/0/0/",
+            ),
+            switch.coverUrls,
+        )
+
+        val android = switch.copy(switchTitleId = null, switchIconHash = null, androidPackageName = "com.example.game")
+        assertEquals(emptyList<String>(), android.coverUrls)
+        assertEquals("android-com.example.game", android.coverCacheKey)
     }
 
     @Test
