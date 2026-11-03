@@ -49,6 +49,26 @@ class RootSourcePresetsTest {
     }
 
     @Test
+    fun edenSwitch2ForksAreSwitchSourcesFoldedUnderTheirOwnApp() {
+        val eglantine = RootSourcePresets.find("/data/user/0/dev.eglantine.eglantine/files")
+        assertEquals("Eglantine Switch 2 · 私有目录", eglantine?.label)
+        assertEquals("dev.eglantine.eglantine", eglantine?.packageName)
+        assertEquals("Eglantine Switch 2", eglantine?.app)
+        val sx2a = RootSourcePresets.find("/storage/emulated/0/Android/data/dev.eden.nx2/files")
+        assertEquals("Eden SX2A Switch 2 · Android/data", sx2a?.label)
+        assertEquals("dev.eden.nx2", sx2a?.packageName)
+
+        for (path in listOf(
+            "/data/user/0/dev.eglantine.eglantine/files",
+            "/storage/emulated/0/Android/data/dev.eglantine.eglantine/files",
+            "/data/user/0/dev.eden.nx2/files",
+            "/storage/emulated/0/Android/data/dev.eden.nx2/files",
+        )) {
+            assertEquals(path, GameSaveTypes.SWITCH, GameSaveTypes.forSource(SourceSelection.Root(path)))
+        }
+    }
+
+    @Test
     fun sourceOptionsDefaultToAllSelectedAndKeepCategoryMetadata() {
         val options = SaveSourceOptions.build(emptyList(), null, emptySet())
 

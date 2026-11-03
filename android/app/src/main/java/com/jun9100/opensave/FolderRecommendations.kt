@@ -67,6 +67,17 @@ object FolderRecommendations {
             providerAuthority = "dev.eden.eden_emulator.user", providerDocumentId = "root/",
         ),
         RecommendationTemplate("Eden 公共目录 eden", "Switch 存档", "内部存储 → eden", sharedFolder = "eden"),
+        // Eden's Switch 2 forks keep Eden's documents provider under their own package.
+        RecommendationTemplate(
+            "Eglantine 用户数据", "Switch / Switch 2 存档", "选择器左侧菜单 → Eglantine",
+            packageName = "dev.eglantine.eglantine",
+            providerAuthority = "dev.eglantine.eglantine.user", providerDocumentId = "root/",
+        ),
+        RecommendationTemplate(
+            "Eden SX2A 用户数据", "Switch / Switch 2 存档", "选择器左侧菜单 → Eglantine（Eden SX2A 沿用这个名字）",
+            packageName = "dev.eden.nx2",
+            providerAuthority = "dev.eden.nx2.user", providerDocumentId = "root/",
+        ),
         RecommendationTemplate(
             "DroidDeck", "PC 游戏存档", "选择器左侧菜单 → DroidDeck",
             packageName = "com.droiddeck.launcher",

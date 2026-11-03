@@ -103,6 +103,8 @@ object GameCatalog {
 
     private val androidEntries = mapOf(
         "dev.eden.eden_emulator" to Entry("Eden 模拟器", "Eden"),
+        "dev.eglantine.eglantine" to Entry("Eglantine 模拟器", "Eglantine"),
+        "dev.eden.nx2" to Entry("Eden SX2A 模拟器", "Eden SX2A"),
         "org.yuzu.yuzu_emu" to Entry("Yuzu 模拟器", "Yuzu"),
         "org.yuzu.yuzu_emu.ea" to Entry("Yuzu EA 模拟器", "Yuzu EA"),
         "com.xiaoji.egggame" to Entry("GameHub", "GameHub"),
@@ -210,8 +212,11 @@ object GameCatalog {
         "010015100B514000" to Entry("超级马力欧兄弟 惊奇", "Super Mario Bros. Wonder"),
         "010093801237C000" to Entry("密特罗德 生存恐惧", "Metroid Dread"),
         "0100A6301214E000" to Entry("火焰之纹章 Engage", "Fire Emblem Engage"),
+        // Switch 2
+        "0400C3F00006E000" to Entry("马力欧赛车 世界", "Mario Kart World"),
+        "040074A01BF12000" to Entry("大金刚 蕉力全开", "Donkey Kong Bananza"),
     )
 
-    private val switchTitleIdPattern = Regex("^01[0-9A-F]{14}$")
+    private val switchTitleIdPattern = SwitchTitleIds.pattern
     private val pspGameIdPattern = Regex("^[A-Z]{4}[0-9]{5}$")
 }
