@@ -30,6 +30,8 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <package android:name="dev.eden.eden_emulator" />
+        <package android:name="dev.eglantine.eglantine" />
+        <package android:name="dev.eden.nx2" />
         <package android:name="com.xiaoji.egggame" />
         <package android:name="com.winlator" />
         <package android:name="com.ludashi.benchmark" />

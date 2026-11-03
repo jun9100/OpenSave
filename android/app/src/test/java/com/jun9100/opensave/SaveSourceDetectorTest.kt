@@ -51,6 +51,50 @@ class SaveSourceDetectorTest {
     }
 
     @Test
+    fun detectsSwitch2TitleIdsInEdenForks() {
+        // Eglantine and Eden SX2A file Switch 2 saves (TitleIDs 04…) exactly like Eden.
+        for (root in listOf("/data/user/0/dev.eglantine.eglantine/files", "/data/user/0/dev.eden.nx2/files")) {
+            val profile = "$root/nand/user/save/0000000000000000/1830C6EC7919A4B903473439602D8654"
+            val report = SaveSourceDetector.scanDirectories(
+                rootPath = root,
+                directoryPaths = listOf(root, "$profile/0400C3F00006E000", "$profile/0100000000010000"),
+            )
+
+            assertEquals(setOf("0400C3F00006E000", "0100000000010000"), report.detected.map { it.titleId }.toSet())
+            assertTrue(report.detected.all { it.kind == "yuzu-switch" })
+            assertTrue(report.detected.any { it.gameKey == "switch:0400C3F00006E000" })
+        }
+    }
+
+    @Test
+    fun ignoresSixteenHexFoldersThatAreNotSwitchApplications() {
+        val root = "/data/user/0/dev.eglantine.eglantine/files"
+        val profile = "$root/nand/user/save/0000000000000000/1830C6EC7919A4B903473439602D8654"
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = root,
+            directoryPaths = listOf(root, "$profile/0200C3F00006E000", "$profile/8000000000000010"),
+        )
+
+        assertTrue(report.detected.isEmpty())
+    }
+
+    @Test
+    fun theSharedStorageSweepLeavesEdenForksToTheirOwnSources() {
+        val root = "/storage/emulated/0"
+        val save = "nand/user/save/0000000000000000/1830C6EC7919A4B903473439602D8654/0400C3F00006E000"
+        val report = SaveSourceDetector.scanDirectories(
+            rootPath = root,
+            directoryPaths = listOf(
+                root,
+                "$root/Android/data/dev.eglantine.eglantine/files/$save",
+                "$root/Android/data/dev.eden.nx2/files/$save",
+            ),
+        )
+
+        assertTrue(report.detected.isEmpty())
+    }
+
+    @Test
     fun detectsNativeAndroidGamePersistentDirectoriesWithoutTreatingCachesAsSaves() {
         val root = "/data/user/0/com.poncle.vampiresurvivors"
         val report = SaveSourceDetector.scanDirectories(

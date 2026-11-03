@@ -1,5 +1,6 @@
 package com.jun9100.opensave
 
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -71,5 +72,14 @@ class SwitchTitleNameSourcesTest {
             ),
             parsed,
         )
+    }
+
+    @Test
+    fun bundledCatalogNamesSwitch2Titles() {
+        val parsed = File("src/main/assets/switch-titles.tsv").bufferedReader(Charsets.UTF_8)
+            .useLines(OfflineSwitchTitles::parse)
+
+        assertEquals("玛利欧赛车世界", parsed["0400C3F00006E000"]?.name)
+        assertEquals("咚奇刚 蕉力全开", parsed["040074A01BF12000"]?.name)
     }
 }

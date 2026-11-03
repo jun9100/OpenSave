@@ -2201,6 +2201,8 @@ class SourceViewModel(
         /** Emulators whose game list (with titles) lives in their shared preferences. */
         val SWITCH_EMULATOR_PACKAGES = listOf(
             "dev.eden.eden_emulator",
+            "dev.eglantine.eglantine",
+            "dev.eden.nx2",
             "org.yuzu.yuzu_emu",
             "org.yuzu.yuzu_emu.ea",
             "dev.suyu.suyu_emu",

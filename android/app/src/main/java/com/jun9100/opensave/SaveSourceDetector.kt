@@ -42,10 +42,19 @@ data class SaveScanReport(
     ).joinToString(":")
 }
 
+/**
+ * Switch application TitleIDs: `01…` for Switch games, `04…` for Switch 2
+ * games (Mario Kart World is 0400C3F00006E000). Both are filed the same way,
+ * under nand/user/save/<16 hex>/<32 hex>/<TitleID>.
+ */
+object SwitchTitleIds {
+    val pattern = Regex("^0[14][0-9a-fA-F]{14}$")
+}
+
 /** Identifies useful save boundaries only inside a user-authorized workspace. */
 object SaveSourceDetector {
     private val titleIdPattern = Regex("^[0-9a-fA-F]{16}$")
-    private val switchTitleIdPattern = Regex("^01[0-9a-fA-F]{14}$")
+    private val switchTitleIdPattern = SwitchTitleIds.pattern
     private val appIdPattern = Regex("^\\d{3,}$")
     private val androidPackagePattern = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
     private val pcSaveDirectoryNames = setOf(
@@ -107,6 +116,8 @@ object SaveSourceDetector {
     )
     private val dedicatedSharedStoragePackages = setOf(
         "dev.eden.eden_emulator",
+        "dev.eglantine.eglantine",
+        "dev.eden.nx2",
         "com.xiaoji.egggame",
         "com.droiddeck.launcher",
         "com.winlator",

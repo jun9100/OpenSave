@@ -76,6 +76,20 @@ func looksLikeInstallOf(dirName, appDir string) bool {
 	return false
 }
 
+// looksLikeInstallOfAny is looksLikeInstallOf for the app folder name or any
+// of a preset's PortableNames.
+func looksLikeInstallOfAny(dirName, appDir string, others []string) bool {
+	if looksLikeInstallOf(dirName, appDir) {
+		return true
+	}
+	for _, other := range others {
+		if looksLikeInstallOf(dirName, other) {
+			return true
+		}
+	}
+	return false
+}
+
 // emulatorContainerDirs are the folder names people keep emulators in. Looked
 // inside one level deeper, because "D:\Emulators\RetroArch" is at least as
 // common as "D:\RetroArch".
@@ -130,7 +144,7 @@ func portableEmulatorSaves(dir string) []DiscoveredSave {
 			continue
 		}
 		appDir, tail, ok := appDataTail(p.Path)
-		if !ok || !looksLikeInstallOf(name, appDir) {
+		if !ok || !looksLikeInstallOfAny(name, appDir, p.PortableNames) {
 			continue
 		}
 		for _, userDir := range portableUserDirs {
