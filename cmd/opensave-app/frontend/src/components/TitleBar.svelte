@@ -8,7 +8,7 @@
 <div class="titlebar" role="banner" style="--wails-draggable: drag" on:dblclick={() => native.toggleMaximise()}>
   <div class="brand">
     <img class="logo" src={logoUrl} alt="" draggable="false" />
-    <span class="title">OpenSave</span>
+    <span class="title">SaveVault</span>
   </div>
   <div class="right">
   <NotificationHub />

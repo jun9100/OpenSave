@@ -3,6 +3,36 @@
 All notable changes to OpenSave are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [2.5.0] — 2026-11-03
+
+OpenSave 的这个分支改名为 **SaveVault（存档库）**，并换了新图标。
+已安装的版本可以直接升级：程序文件名、配置目录和同步协议都没有变，
+仍能和原版 OpenSave 设备互相同步。
+
+### 新增
+
+- **完整中文界面。** 界面、托盘菜单和系统对话框都已汉化（约 1600 条），
+  后台返回的英文错误会给出中文说明；应用内新增「帮助」页。
+- **批量操作。** 游戏库的「选择」模式可以一次对多款游戏创建快照、上传到
+  云端、恢复最新快照、同步、开关自动同步、收藏或停止跟踪；逐个执行、显示
+  进度、可中途停止，结束后汇总成功、失败和跳过的原因，可以只重试失败的。
+- **自建云端的原生同步。** 连接 SaveVault 云端（game-save）时，按游戏
+  分别保存不可变的存档版本，只在版本链确认无误时前进；两台设备都改过的
+  存档会保留为冲突，等你选择。游戏页新增「云端」标签，显示云端当前版本、
+  来自哪台设备、可恢复的历史和保留的冲突。
+- **设备身份。** 每台设备有固定的 ID 和名称，云端能分清是哪台设备上传的。
+
+### 变更
+
+- 应用名改为 SaveVault，自建云端在界面中称为「SaveVault 云端」；
+  新图标为盾牌加游戏手柄。
+
+The OpenSave fork is renamed **SaveVault** with a new icon. Installed copies
+upgrade in place and still sync with original OpenSave devices. New: a full
+Chinese UI, batch actions over many games, native sync with a self-hosted
+game-save service (per-game immutable versions, conflicts kept for you to
+choose) and a Cloud tab on each game.
+
 ## [2.4.1] — 2026-10-02
 
 A security update: please install it on every device. A paired device could
