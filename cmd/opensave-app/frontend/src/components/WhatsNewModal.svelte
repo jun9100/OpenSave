@@ -30,7 +30,7 @@
 
     <div class="hero">
       <div class="badge">{$t('whatsNew.updated')}</div>
-      <h2>OpenSave {version}</h2>
+      <h2>SaveVault {version}</h2>
       {#if from}<p class="from">{$t('whatsNew.youWereOn', { version: from })}</p>{/if}
     </div>
 

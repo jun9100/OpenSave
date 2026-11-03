@@ -107,7 +107,7 @@
               address: peer.address === 'relay' ? $t('devices.internetRelay') : `${peer.address}:${peer.port}`,
               time: fmtTime(peer.lastSynced),
             })}
-            {#if peer.appVersion}· OpenSave {peer.appVersion}{/if}
+            {#if peer.appVersion}· v{peer.appVersion}{/if}
           </div>
           <!-- Per device, next to how it is reached, because that is the
                context the answer depends on. -->

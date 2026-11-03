@@ -94,7 +94,7 @@
     <button class="kbd-hint" on:click={() => paletteOpen.set(true)} title={$t('statusBar.paletteTitle')}>
       <kbd>{modKey} K</kbd>
     </button>
-    <button class="ver" on:click={() => showAbout.set(true)} title={$t('statusBar.aboutTitle')}>OpenSave v{version}</button>
+    <button class="ver" on:click={() => showAbout.set(true)} title={$t('statusBar.aboutTitle')}>SaveVault v{version}</button>
   </div>
 </footer>
 

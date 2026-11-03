@@ -18,7 +18,7 @@
     try {
       info = await native.appInfo();
     } catch {
-      info = { name: 'OpenSave', version: 'dev' };
+      info = { name: 'SaveVault', version: 'dev' };
     }
   });
 
@@ -43,7 +43,7 @@
   <div class="modal" role="dialog" aria-modal="true" aria-label={$t('about.title')}>
     <button class="btn ghost icon x" on:click={onClose} title={$t('about.close')} aria-label={$t('about.close')}><X size={18} /></button>
     <img class="logo" src={logoUrl} alt="" />
-    <h2>{info?.name ?? 'OpenSave'}</h2>
+    <h2>{info?.name ?? 'SaveVault'}</h2>
     <div class="ver">
       {$t('about.version', { version: info?.version ?? '—' })}{#if buildLabel}<span class="build"> {$t('about.built', { date: buildLabel })}</span>{/if}
     </div>

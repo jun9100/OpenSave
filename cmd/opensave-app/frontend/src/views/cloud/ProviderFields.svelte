@@ -16,7 +16,7 @@
   <div class="field">
     <label for="cb-folder">{$t('cloud.fields.destinationFolder')}</label>
     <div class="path-row">
-      <input id="cb-folder" bind:value={config.url} placeholder="D:\Backups\OpenSave" />
+      <input id="cb-folder" bind:value={config.url} placeholder="D:\Backups\SaveVault" />
       <button class="btn" on:click={pickFolder}>{$t('cloud.fields.browse')}</button>
     </div>
   </div>
