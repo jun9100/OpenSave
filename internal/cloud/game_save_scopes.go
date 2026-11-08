@@ -79,7 +79,7 @@ func (p gameSave) getScope(saveType, gameID string) (GameSaveScope, error) {
 	if err := p.authorizeReadOnly(req); err != nil {
 		return GameSaveScope{}, err
 	}
-	resp, err := p.s.httpClient().Do(req)
+	resp, err := p.do(req)
 	if err != nil {
 		return GameSaveScope{}, err
 	}
@@ -120,7 +120,7 @@ func (p gameSave) putScopeCandidate(saveType, gameID string, candidate GameSaveS
 	if err := p.authorize(req); err != nil {
 		return GameSaveScopeSnapshot{}, err
 	}
-	resp, err := p.s.httpClient().Do(req)
+	resp, err := p.do(req)
 	if err != nil {
 		return GameSaveScopeSnapshot{}, err
 	}
@@ -215,7 +215,7 @@ func (p gameSave) putScopeIdentity(saveType, gameID string, identity GameSaveSco
 	if err := p.authorize(req); err != nil {
 		return false, err
 	}
-	resp, err := p.s.httpClient().Do(req)
+	resp, err := p.do(req)
 	if err != nil {
 		return false, err
 	}

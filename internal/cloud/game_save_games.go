@@ -51,7 +51,7 @@ func (p gameSave) listGames() ([]GameSaveGame, error) {
 	if err := p.authorizeReadOnly(req); err != nil {
 		return nil, err
 	}
-	resp, err := p.s.httpClient().Do(req)
+	resp, err := p.do(req)
 	if err != nil {
 		return nil, err
 	}
