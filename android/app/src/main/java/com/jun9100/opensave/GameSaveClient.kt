@@ -435,7 +435,7 @@ class GameSaveClient(
             request.header("$family-Platform", platform)
             if (identity != null) {
                 request.header("$family-Device-ID", identity.id)
-                request.header("$family-Device-Name", identity.name)
+                request.header("$family-Device-Name", DeviceHeaders.encodeName(identity.name))
                 if (identity.version.isNotBlank()) request.header("$family-Version", identity.version)
             }
         }
