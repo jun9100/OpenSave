@@ -100,6 +100,8 @@ object GameSaveTypes {
         is SourceSelection.Saf -> GENERIC
         is SourceSelection.Root -> when (RootSourcePresets.find(source.path)?.label) {
             "Eden Switch · 私有目录", "Eden Switch · Android/data", "Eden Switch · 公共目录 eden",
+            "Eglantine Switch 2 · 私有目录", "Eglantine Switch 2 · Android/data",
+            "Eden SX2A Switch 2 · 私有目录", "Eden SX2A Switch 2 · Android/data",
             "Yuzu", "Yuzu EA", "Suyu", "Sudachi", "Citron", "Ryujinx" -> SWITCH
             "GameHub PC · 私有目录", "GameHub PC · Android/data", "PC 游戏 · 公共目录 pc-game",
             "DroidDeck PC · 私有目录", "DroidDeck PC · Android/data",

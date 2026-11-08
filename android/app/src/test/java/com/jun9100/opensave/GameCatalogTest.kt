@@ -112,6 +112,26 @@ class GameCatalogTest {
     }
 
     @Test
+    fun switch2TitlesGetNamesAndCovers() {
+        val presentation = GameCatalog.present(
+            DetectedSave(
+                kind = "yuzu-switch",
+                relativePath = "nand/user/save/0000000000000000/1830C6EC7919A4B903473439602D8654/0400C3F00006E000",
+                titleId = "0400C3F00006E000",
+                note = "test",
+                displayName = "Switch 0400C3F00006E000",
+                gameKey = "switch:0400C3F00006E000",
+            ),
+        )
+
+        assertEquals("马力欧赛车 世界", presentation.localizedName)
+        assertEquals("Mario Kart World", presentation.originalName)
+        assertEquals("0400C3F00006E000", presentation.switchTitleId)
+        assertEquals("https://tinfoil.media/ti/0400C3F00006E000/0/0/", presentation.coverUrls.last())
+        assertEquals("switch-0400c3f00006e000", presentation.coverCacheKey)
+    }
+
+    @Test
     fun prefersTheEshopIconAndUsesTheInstalledIconForAndroidApps() {
         val switch = GamePresentation(
             localizedName = null,

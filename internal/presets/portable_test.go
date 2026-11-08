@@ -338,3 +338,29 @@ func TestPortable_CustomScanPathNarrowsToSaves(t *testing.T) {
 		t.Error("an ordinary folder alongside the emulators stopped being offered")
 	}
 }
+
+// Eglantine and Eden-NS2 are Switch 2 forks of Eden. They keep Eden's data
+// folder and NAND layout, and unzip to folders named after themselves, so a
+// portable copy is Eden's preset under another name. Switch 2 TitleIDs start
+// with 04 instead of 01 and are filed the same way.
+func TestPortable_EdenSwitch2ForksAreEden(t *testing.T) {
+	for _, name := range []string{"eglantine-windows-x86_64", "Eglantine", "Eden-NS2"} {
+		root := t.TempDir()
+		install := filepath.Join(root, name)
+		title := "user/nand/user/save/0000000000000000/1234567890abcdef1234567890abcdef/0400C3F00006E000"
+		mkdirs(t, install, title)
+		if err := os.WriteFile(filepath.Join(install, filepath.FromSlash(title), "save.bin"), []byte("save"), 0o666); err != nil {
+			t.Fatal(err)
+		}
+
+		found := portableEmulatorSaves(install)
+		if len(found) != 1 {
+			t.Fatalf("%q: expected one Switch 2 title, got %v", name, savePathsOf(found))
+		}
+		d := found[0]
+		if d.TitleID != "0400C3F00006E000" || !strings.HasPrefix(d.ID, "eden-portable-") ||
+			d.Name != "Eden Switch Emulator - Title ID: 0400C3F00006E000" {
+			t.Errorf("%q: got %+v", name, d)
+		}
+	}
+}

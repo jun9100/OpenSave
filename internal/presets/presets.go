@@ -60,6 +60,12 @@ type preset struct {
 	// Descending to the title folder syncs one game's save and leaves the
 	// profile id out of it entirely, which is what makes the two ends line up.
 	SwitchNAND bool
+	// PortableNames are other install folder names a portable copy of this
+	// emulator unzips to, beside the %APPDATA% folder name. Eglantine, the
+	// Switch 2 fork of Eden, ships as "eglantine-windows-x86_64" but keeps
+	// Eden's data folder and layout, so its saves are Eden's: same preset,
+	// same name, and they sync with an Eden on the other device.
+	PortableNames []string
 }
 
 var presetDefs = []preset{
@@ -78,7 +84,8 @@ var presetDefs = []preset{
 	{ID: "citron", Name: "Citron Switch Emulator", Type: "emulator", Path: "%APPDATA%/citron/nand/user/save",
 		LinuxPath: []string{"~/.local/share/citron/nand/user/save", "~/.var/app/org.citron_emu.citron/data/citron/nand/user/save"}, SwitchNAND: true},
 	{ID: "eden", Name: "Eden Switch Emulator", Type: "emulator", Path: "%APPDATA%/eden/nand/user/save",
-		LinuxPath: []string{"~/.local/share/eden/nand/user/save", "~/.var/app/dev.eden_emu.eden/data/eden/nand/user/save"}, SwitchNAND: true},
+		LinuxPath: []string{"~/.local/share/eden/nand/user/save", "~/.var/app/dev.eden_emu.eden/data/eden/nand/user/save"}, SwitchNAND: true,
+		PortableNames: []string{"eglantine"}},
 	{ID: "citra", Name: "Citra 3DS Emulator", Type: "emulator", Path: "%APPDATA%/Citra/sdmc/Nintendo 3DS",
 		LinuxPath: []string{"~/.local/share/citra-emu/sdmc/Nintendo 3DS", "~/.var/app/org.citra_emu.citra/data/citra-emu/sdmc/Nintendo 3DS"}},
 	{ID: "dolphin", Name: "Dolphin GameCube/Wii Emulator", Type: "emulator", Path: "%USERPROFILE%/Documents/Dolphin Emulator",

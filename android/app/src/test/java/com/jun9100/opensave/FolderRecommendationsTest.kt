@@ -24,6 +24,22 @@ class FolderRecommendationsTest {
     }
 
     @Test
+    fun edenSwitch2ForksAreGrantedThroughTheirOwnDocumentsProvider() {
+        val recommendations = FolderRecommendations.build(
+            installed = { it in setOf("dev.eglantine.eglantine", "dev.eden.nx2") },
+            folderExists = { false },
+            grantedKeys = emptySet(),
+            sdkInt = 33,
+        )
+        assertEquals(listOf("Eglantine 用户数据", "Eden SX2A 用户数据"), recommendations.map { it.title })
+        assertEquals(
+            listOf("dev.eglantine.eglantine.user" to "root/", "dev.eden.nx2.user" to "root/"),
+            recommendations.map { it.authority to it.documentId },
+        )
+        assertFalse(recommendations.any { it.needsRoot })
+    }
+
+    @Test
     fun androidTenAndOlderCanGrantTheWholeStorageOnce() {
         val before = FolderRecommendations.build(
             installed = { it == "com.xiaoji.emulator" },

@@ -145,6 +145,8 @@ class InstalledGameCatalog(private val context: Context) {
 
         val specializedSaveHosts = setOf(
             "dev.eden.eden_emulator",
+            "dev.eglantine.eglantine",
+            "dev.eden.nx2",
             "com.xiaoji.egggame",
             "com.winlator",
             "com.ludashi.benchmark",

@@ -47,6 +47,11 @@ object RootSourcePresets {
         RootSourcePreset("Eden Switch · 私有目录", "/data/user/0/dev.eden.eden_emulator/files", packageName = "dev.eden.eden_emulator"),
         RootSourcePreset("Eden Switch · Android/data", "/storage/emulated/0/Android/data/dev.eden.eden_emulator/files", packageName = "dev.eden.eden_emulator"),
         RootSourcePreset("Eden Switch · 公共目录 eden", "/storage/emulated/0/eden"),
+        // Switch 2 forks of Eden: same nand/user/save layout, their own package.
+        RootSourcePreset("Eglantine Switch 2 · 私有目录", "/data/user/0/dev.eglantine.eglantine/files", packageName = "dev.eglantine.eglantine"),
+        RootSourcePreset("Eglantine Switch 2 · Android/data", "/storage/emulated/0/Android/data/dev.eglantine.eglantine/files", packageName = "dev.eglantine.eglantine"),
+        RootSourcePreset("Eden SX2A Switch 2 · 私有目录", "/data/user/0/dev.eden.nx2/files", packageName = "dev.eden.nx2"),
+        RootSourcePreset("Eden SX2A Switch 2 · Android/data", "/storage/emulated/0/Android/data/dev.eden.nx2/files", packageName = "dev.eden.nx2"),
         RootSourcePreset("Yuzu", "/data/user/0/org.yuzu.yuzu_emu/files", packageName = "org.yuzu.yuzu_emu"),
         RootSourcePreset("Yuzu EA", "/data/user/0/org.yuzu.yuzu_emu.ea/files", packageName = "org.yuzu.yuzu_emu.ea"),
         RootSourcePreset("Suyu", "/data/user/0/dev.suyu.suyu_emu/files", packageName = "dev.suyu.suyu_emu"),
