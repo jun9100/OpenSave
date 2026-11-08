@@ -4,6 +4,7 @@
   import { fmtSize } from '../../lib/format.js';
   import { t, segments, trError } from '../../lib/i18n.js';
   import Spinner from '../../components/ui/Spinner.svelte';
+  import OtherDevices from './OtherDevices.svelte';
   import CircleAlert from 'lucide-svelte/icons/circle-alert';
   import CircleCheck from 'lucide-svelte/icons/circle-check';
   import Cloud from 'lucide-svelte/icons/cloud';
@@ -299,6 +300,10 @@
         {/each}
       </tbody>
     </table>
+  {/if}
+
+  {#if native}
+    <OtherDevices {game} {runner} onRestored={load} />
   {/if}
 </div>
 
