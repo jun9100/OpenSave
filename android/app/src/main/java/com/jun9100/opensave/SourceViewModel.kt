@@ -326,9 +326,19 @@ class SourceViewModel(
     private fun observeActivity() {
         viewModelScope.launch {
             ActivityLogStore.revision.collect {
+                // Workers change the snapshot repository before they record their 动态 line, so a new
+                // revision is when the in-memory list must be re-read; otherwise a background upload
+                // keeps showing 未上传.
                 val entries = withContext(Dispatchers.IO) { runCatching { activityStore.list() }.getOrDefault(emptyList()) }
                 val verdicts = withContext(Dispatchers.IO) { runCatching { cloudVerdictStore.load() }.getOrNull() }
-                updateState { copy(activity = entries, rememberedCloudVerdicts = verdicts ?: rememberedCloudVerdicts) }
+                val snapshots = withContext(Dispatchers.IO) { runCatching { currentSnapshots() }.getOrNull() }
+                updateState {
+                    copy(
+                        activity = entries,
+                        rememberedCloudVerdicts = verdicts ?: rememberedCloudVerdicts,
+                        snapshots = snapshots ?: this.snapshots,
+                    )
+                }
             }
         }
     }
@@ -1546,6 +1556,18 @@ class SourceViewModel(
                     captured.uploadError != null -> log(ActivityKind.UPLOAD, ActivityLevel.WARNING, "${manifest.gameName}：已备份，上传失败", captured.uploadError)
                     captured.reused -> log(ActivityKind.BACKUP, ActivityLevel.INFO, "${manifest.gameName}：$UNCHANGED_SKIPPED${reusedUploadSuffix(captured)}", captured.syncNotice.orEmpty())
                     else -> log(ActivityKind.BACKUP, ActivityLevel.SUCCESS, "已备份 ${manifest.gameName}", captured.syncNotice.orEmpty())
+                }
+                // The snapshot is saved; a refusal the cloud may accept later is retried once the network is back.
+                if (captured.uploadError != null) {
+                    runCatching {
+                        PendingUploadScheduler.schedule(
+                            app,
+                            PendingUploadPolicy.keysToRetry(
+                                gameSaveStore.load(),
+                                listOf(entry.libraryKey to captured.uploadException),
+                            ),
+                        )
+                    }
                 }
                 state.value = state.value.finished(
                     OpenSavePage.LIBRARY,
