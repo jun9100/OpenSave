@@ -32,6 +32,8 @@ func (s *Server) cloudRoutes(r chi.Router) {
 
 	r.Get("/api/cloud/browse", s.handleCloudBrowse)
 	r.Get("/api/cloud/status/{gameId}", s.handleCloudStatus)
+	r.Get("/api/cloud/game-groups/{gameId}", s.handleCloudGameGroup)
+	r.Get("/api/cloud/game-groups/{gameId}/members/{memberGameId}/versions", s.handleCloudGameGroupVersions)
 	r.Get("/api/cloud/snapshots/{gameId}", s.handleCloudSnapshots)
 	r.Post("/api/cloud/restore/{gameId}", s.handleCloudRestore)
 	r.Post("/api/cloud/cross-restore/{gameId}/plan", s.handleCrossRestorePlan)
@@ -128,6 +130,43 @@ func crossRestoreErrorStatus(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// handleCloudGameGroup returns the same game's scopes on other devices. An
+// unconfigured or older service is reported in-band with HTTP 200, matching
+// handleCloudStatus; only an unknown local game is a 404.
+func (s *Server) handleCloudGameGroup(w http.ResponseWriter, r *http.Request) {
+	group, err := s.Daemon.GameSaveGroup(chi.URLParam(r, "gameId"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, group)
+}
+
+// handleCloudGameGroupVersions lists versions in one other device's scope.
+// Invalid or same-device ids are client errors; a service without native
+// scope routes is a 404 so the UI can distinguish an upgraded client from an
+// old service.
+func (s *Server) handleCloudGameGroupVersions(w http.ResponseWriter, r *http.Request) {
+	versions, err := s.Daemon.GameSaveMemberVersions(
+		chi.URLParam(r, "gameId"), chi.URLParam(r, "memberGameId"))
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, cloud.ErrGameSaveScopesUnsupported):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	case errors.Is(err, daemon.ErrCrossDeviceSameScope), errors.Is(err, daemon.ErrInvalidGameSaveMemberID):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
 }
 
 // handleCloudOffers lists the saves from other devices waiting for an answer.
