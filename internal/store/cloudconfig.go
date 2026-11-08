@@ -23,10 +23,24 @@ type CloudConfig struct {
 	RefreshToken        string            `db:"refresh_token" json:"-"`
 	ExpiryTimeMs        int64             `db:"expiry_time_ms" json:"-"`
 	UserEmail           string            `db:"user_email" json:"-"`
+	// GameSaveAuthBlock records a service refusal (token_revoked or
+	// shared_token_disabled) so automatic sync stops until the user pairs
+	// again. GameSaveAuthWarning is 0 (none), 1 (pending notice), or 2
+	// (dismissed). Neither is a credential, and neither is written by
+	// UpdateCloudConfig: only their dedicated methods may change them.
+	GameSaveAuthBlock   string `db:"game_save_auth_block" json:"-"`
+	GameSaveAuthWarning int    `db:"game_save_auth_warning" json:"-"`
 
 	CustomClientIDsJSON     string `db:"custom_client_ids" json:"-"`
 	CustomClientSecretsJSON string `db:"custom_client_secrets" json:"-"`
 }
+
+// Shared-token deprecation notice states stored in CloudConfig.GameSaveAuthWarning.
+const (
+	GameSaveAuthWarningNone      = 0
+	GameSaveAuthWarningPending   = 1
+	GameSaveAuthWarningDismissed = 2
+)
 
 // GetCloudConfig returns the singleton cloud config row.
 func (s *Store) GetCloudConfig() (CloudConfig, error) {
@@ -86,4 +100,37 @@ func (s *Store) UpdateCloudConfig(c CloudConfig) error {
 		return fmt.Errorf("update cloud config: %w", err)
 	}
 	return nil
+}
+
+// SetGameSaveAuthBlock records why game-save stopped accepting this device.
+// An empty code clears the block, which pairing and credential changes do.
+func (s *Store) SetGameSaveAuthBlock(code string) error {
+	if _, err := s.db.Exec(`UPDATE cloud_config SET game_save_auth_block = ? WHERE id = 1`, code); err != nil {
+		return fmt.Errorf("set game-save auth block: %w", err)
+	}
+	return nil
+}
+
+// SetGameSaveAuthWarning stores the shared-token deprecation notice state.
+func (s *Store) SetGameSaveAuthWarning(state int) error {
+	if _, err := s.db.Exec(`UPDATE cloud_config SET game_save_auth_warning = ? WHERE id = 1`, state); err != nil {
+		return fmt.Errorf("set game-save auth warning: %w", err)
+	}
+	return nil
+}
+
+// MarkGameSaveAuthWarningSeen turns the unseen state into pending. It reports
+// false when the notice was already pending or dismissed, so callers can log
+// only the first sighting rather than once per response.
+func (s *Store) MarkGameSaveAuthWarningSeen() (changed bool, err error) {
+	res, err := s.db.Exec(`UPDATE cloud_config SET game_save_auth_warning = ? WHERE id = 1 AND game_save_auth_warning = ?`,
+		GameSaveAuthWarningPending, GameSaveAuthWarningNone)
+	if err != nil {
+		return false, fmt.Errorf("mark game-save auth warning seen: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark game-save auth warning seen: %w", err)
+	}
+	return n > 0, nil
 }

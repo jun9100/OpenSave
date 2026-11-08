@@ -252,6 +252,7 @@ func (s *Server) applyCloudPatch(patch *cloudSyncPatch) error {
 	if err != nil {
 		return err
 	}
+	previousProvider, previousURL, previousPassword := cfg.Provider, cfg.URL, cfg.Password
 	if patch.Enabled != nil {
 		cfg.Enabled = *patch.Enabled
 	}
@@ -296,7 +297,23 @@ func (s *Server) applyCloudPatch(patch *cloudSyncPatch) error {
 		}
 		cfg.URL = normalized
 	}
-	return s.Daemon.Store.UpdateCloudConfig(cfg)
+	if err := s.Daemon.Store.UpdateCloudConfig(cfg); err != nil {
+		return err
+	}
+	// A new address or key may be a fresh device token, so an old refusal no
+	// longer describes this configuration. The provider switch counts even
+	// when the address and key happen to match a previous game-save setup.
+	switchedToGameSave := cfg.Provider == cloud.GameSaveProvider && previousProvider != cloud.GameSaveProvider
+	credentialsChanged := cfg.URL != previousURL || cfg.Password != previousPassword
+	if cfg.Provider == cloud.GameSaveProvider && (switchedToGameSave || credentialsChanged) {
+		if err := s.Daemon.Store.SetGameSaveAuthBlock(""); err != nil {
+			return err
+		}
+		if err := s.Daemon.Store.SetGameSaveAuthWarning(store.GameSaveAuthWarningNone); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {

@@ -114,6 +114,10 @@ type Service struct {
 
 	driveFolderMu sync.Mutex
 	driveFolderID string // cached id of the auto-managed "OpenSave" Drive folder
+
+	// gameSaveAuthMu serialises reading and replacing the persisted game-save
+	// block so concurrent 401s log once rather than once each.
+	gameSaveAuthMu sync.Mutex
 }
 
 // New creates a production Service.
@@ -156,6 +160,9 @@ func Ready(cfg store.CloudConfig) bool {
 	case "local", "webdav", "webhook":
 		return strings.TrimSpace(cfg.URL) != ""
 	case GameSaveProvider:
+		if cfg.GameSaveAuthBlock != "" {
+			return false
+		}
 		_, err := NormalizeGameSaveURL(cfg.URL)
 		return err == nil && strings.TrimSpace(cfg.URL) != "" && strings.TrimSpace(cfg.Password) != ""
 	case "google_drive", "dropbox", "onedrive":
@@ -170,6 +177,10 @@ func notReady(cfg store.CloudConfig) error {
 	switch cfg.Provider {
 	case "google_drive", "dropbox", "onedrive":
 		return fmt.Errorf("cloud sync not authenticated")
+	case GameSaveProvider:
+		if cfg.GameSaveAuthBlock != "" {
+			return errors.New(gameSaveBlockMessage(cfg.GameSaveAuthBlock))
+		}
 	}
 	return fmt.Errorf("no %s destination configured", ProviderLabel(cfg.Provider))
 }
@@ -379,6 +390,9 @@ func (s *Service) List() ([]CloudFile, error) {
 	if !ok {
 		return []CloudFile{}, nil
 	}
+	if cfg.Provider == GameSaveProvider && cfg.GameSaveAuthBlock != "" {
+		return nil, notReady(cfg)
+	}
 	return p.list()
 }
 
@@ -411,6 +425,9 @@ func (s *Service) DownloadFile(file CloudFile, localPath string) error {
 	if !ok {
 		return fmt.Errorf("downloading is not supported for provider: %s", ProviderLabel(cfg.Provider))
 	}
+	if cfg.Provider == GameSaveProvider && cfg.GameSaveAuthBlock != "" {
+		return notReady(cfg)
+	}
 	if typed, ok := p.(interface {
 		downloadFile(CloudFile, string) error
 	}); ok {
@@ -429,6 +446,9 @@ func (s *Service) Delete(f CloudFile) error {
 	p, ok := s.providerFor(cfg)
 	if !ok {
 		return fmt.Errorf("deletion is not supported for provider: %s", ProviderLabel(cfg.Provider))
+	}
+	if cfg.Provider == GameSaveProvider && cfg.GameSaveAuthBlock != "" {
+		return notReady(cfg)
 	}
 	return p.remove(f)
 }
