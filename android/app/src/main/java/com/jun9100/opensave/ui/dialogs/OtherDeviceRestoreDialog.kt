@@ -34,7 +34,6 @@ import com.jun9100.opensave.GameSaveCloudGameMember
 import com.jun9100.opensave.GameSaveScopeSnapshot
 import com.jun9100.opensave.OtherDeviceRestoreRequest
 import com.jun9100.opensave.ui.input.consumeHandheldShortcuts
-import com.jun9100.opensave.ui.input.dpadScrollable
 import com.jun9100.opensave.ui.input.handheldFocusRing
 import com.jun9100.opensave.ui.input.rememberInitialFocus
 import com.jun9100.opensave.ui.kindLabel
@@ -61,32 +60,37 @@ internal fun OtherDeviceRestoreDialog(
         modifier = Modifier.consumeHandheldShortcuts(),
         title = { Text("用其他设备的存档恢复") },
         text = {
-            val scroll = rememberScrollState()
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 360.dp)
-                    .dpadScrollable(scroll)
-                    .verticalScroll(scroll),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            // The choice rows are focus stops of their own, so the list must not use
+            // dpadScrollable: that makes the column one focus stop that eats Up/Down
+            // and the pad could never reach a row. A focused row scrolls into view.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "将用「${OtherDeviceText.deviceName(request.member)}」（${OtherDeviceText.detail(request.member)}）的存档" +
                         "覆盖本机「${request.entry.game.presentation.primaryName}」中下面选中的位置。" +
                         "恢复前会把这些位置的当前内容保存为安全快照；云端的版本和父链不会改动，下次备份会作为本机的新版本上传。",
+                    style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
                     when (plan.archive.format) {
                         CrossDeviceArchiveFormat.ANDROID -> "存档格式：Android（按存档类型对应）"
                         CrossDeviceArchiveFormat.PC -> "存档格式：PC（一个存档文件夹）"
                     },
+                    style = MaterialTheme.typography.bodySmall,
                 )
-                plan.archive.parts.forEachIndexed { index, part ->
-                    PartChoices(
-                        part = part,
-                        plan = plan,
-                        index = index,
-                        onChoose = onChoose,
-                    )
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 260.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    plan.archive.parts.forEachIndexed { index, part ->
+                        PartChoices(
+                            part = part,
+                            plan = plan,
+                            index = index,
+                            onChoose = onChoose,
+                        )
+                    }
                 }
             }
         },
