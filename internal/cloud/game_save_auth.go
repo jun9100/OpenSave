@@ -189,15 +189,25 @@ func (s *Service) observeGameSaveResponse(resp *http.Response) {
 	}
 	switch payload.Code {
 	case "token_revoked", "shared_token_disabled":
-		s.recordGameSaveAuthBlock(payload.Code)
+		sent := ""
+		if resp.Request != nil {
+			sent = resp.Request.Header.Get("Authorization")
+		}
+		s.recordGameSaveAuthBlock(payload.Code, sent)
 	}
 }
 
-func (s *Service) recordGameSaveAuthBlock(code string) {
+// recordGameSaveAuthBlock stores a terminal refusal, but only for the key the
+// refused request actually carried: a request still in flight with the old
+// key must not block a token the user has just paired.
+func (s *Service) recordGameSaveAuthBlock(code, sentAuthorization string) {
 	s.gameSaveAuthMu.Lock()
 	defer s.gameSaveAuthMu.Unlock()
 	cfg, err := s.Store.GetCloudConfig()
 	if err != nil || cfg.GameSaveAuthBlock == code {
+		return
+	}
+	if sentAuthorization != "Bearer "+strings.TrimSpace(cfg.Password) {
 		return
 	}
 	if err := s.Store.SetGameSaveAuthBlock(code); err != nil {

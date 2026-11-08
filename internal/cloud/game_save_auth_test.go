@@ -76,6 +76,33 @@ func TestGameSaveRevokedResponseBlocksFurtherSync(t *testing.T) {
 	}
 }
 
+// A request sent with the old key can come back revoked after the user has
+// already paired: that refusal is about the old key, not the new token.
+func TestGameSaveRevokedResponseForReplacedKeyDoesNotBlock(t *testing.T) {
+	var s *store.Store
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The user pairs while this request is in flight.
+		setCloudConfig(t, s, func(c *store.CloudConfig) { c.Password = "gsdt_new_token" })
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"revoked","code":"token_revoked"}`))
+	}))
+	defer server.Close()
+
+	var svc *Service
+	svc, s = newTestService(t)
+	configureGameSave(t, s, server.URL)
+	if _, err := svc.List(); err == nil {
+		t.Fatal("401 response was accepted")
+	}
+	cfg, err := s.GetCloudConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GameSaveAuthBlock != "" {
+		t.Fatalf("a refusal of the replaced key blocked the new token: %q", cfg.GameSaveAuthBlock)
+	}
+}
+
 func TestGameSaveUnauthorizedResponseDoesNotBlock(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
