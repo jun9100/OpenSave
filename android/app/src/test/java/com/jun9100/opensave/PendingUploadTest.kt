@@ -72,6 +72,64 @@ class PendingUploadTest {
     }
 
     @Test
+    fun conflictIsKeptForReviewInsteadOfUploaded() {
+        val decision = PendingUploadPolicy.decide(
+            listOf("source::one" to PendingUploadPolicy.Outcome.Conflict("一", CONFLICT_NOTICE)),
+            attempt = 0,
+        )
+
+        assertFalse(decision.retry)
+        assertEquals(emptyList<String>(), decision.keepKeys)
+        assertEquals(0, decision.uploaded)
+        assertEquals(listOf("一" to CONFLICT_NOTICE), decision.conflicts)
+        val entry = PendingUploadPolicy.entry(decision)
+        assertEquals(ActivityLevel.WARNING, entry.level)
+        assertTrue(entry.text.contains("冲突"))
+        assertFalse(entry.text.contains("已补传 1 款"))
+        assertEquals("请在“同步与任务”中选择保留哪一份；一：$CONFLICT_NOTICE", entry.detail)
+    }
+
+    @Test
+    fun conflictMixedWithUploadCountsOnlyTheUpload() {
+        val decision = PendingUploadPolicy.decide(
+            listOf(
+                "source::one" to PendingUploadPolicy.Outcome.Uploaded,
+                "source::two" to PendingUploadPolicy.Outcome.Conflict("二", CONFLICT_NOTICE),
+            ),
+            attempt = 0,
+        )
+
+        assertFalse(decision.retry)
+        assertEquals(emptyList<String>(), decision.keepKeys)
+        assertEquals(1, decision.uploaded)
+        val entry = PendingUploadPolicy.entry(decision)
+        assertEquals("已补传 1 款；补传遇到冲突：1 款已保留为冲突副本", entry.text)
+        assertEquals(ActivityLevel.WARNING, entry.level)
+        assertTrue(entry.detail.contains("二：$CONFLICT_NOTICE"))
+    }
+
+    @Test
+    fun conflictMixedWithRetryableFailureRetriesOnlyTheFailure() {
+        val decision = PendingUploadPolicy.decide(
+            listOf(
+                "source::one" to PendingUploadPolicy.Outcome.Conflict("一", CONFLICT_NOTICE),
+                "source::two" to PendingUploadPolicy.Outcome.Failed("二", "连接超时", retryable = true),
+            ),
+            attempt = 0,
+        )
+
+        assertTrue(decision.retry)
+        assertEquals(listOf("source::two"), decision.keepKeys)
+        assertEquals(0, decision.uploaded)
+        assertEquals(listOf("一" to CONFLICT_NOTICE), decision.conflicts)
+        val entry = PendingUploadPolicy.entry(decision)
+        assertEquals("补传失败，稍后重试", entry.text)
+        assertEquals(ActivityLevel.WARNING, entry.level)
+        assertTrue(entry.detail.contains("二：连接超时"))
+        assertTrue(entry.detail.contains("一：$CONFLICT_NOTICE"))
+    }
+
+    @Test
     fun exhaustedRetriesStopButKeepTheFailureRecord() {
         val failures = listOf(
             "source::one" to PendingUploadPolicy.Outcome.Failed("一", "连接超时", retryable = true),
@@ -117,5 +175,6 @@ class PendingUploadTest {
 
     private companion object {
         const val game = "game-key"
+        const val CONFLICT_NOTICE = "本机版本已保留为冲突副本，云端当前版本没有被覆盖"
     }
 }

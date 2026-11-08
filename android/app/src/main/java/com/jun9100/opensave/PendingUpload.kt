@@ -114,6 +114,13 @@ internal object PendingUploadPolicy {
 
         /** Not published; [retryable] decides whether the next attempt keeps the game. */
         data class Failed(val name: String, val reason: String, val retryable: Boolean) : Outcome
+
+        /**
+         * The cloud head moved first: the local version was kept as a conflict
+         * copy and the cloud head was not overwritten. Not retried; the user
+         * decides in "同步与任务" which copy to keep.
+         */
+        data class Conflict(val name: String, val notice: String) : Outcome
     }
 
     /** What one worker attempt did and what the next one still has to do. */
@@ -124,6 +131,8 @@ internal object PendingUploadPolicy {
         val uploaded: Int = 0,
         /** (game, reason) of every failure of this attempt, kept for the 动态 line. */
         val failures: List<Pair<String, String>> = emptyList(),
+        /** (game, notice) of conflicts kept as copies; the cloud head was not overwritten. */
+        val conflicts: List<Pair<String, String>> = emptyList(),
     )
 
     /**
@@ -140,6 +149,9 @@ internal object PendingUploadPolicy {
         val failures = results.mapNotNull { (_, outcome) ->
             (outcome as? Outcome.Failed)?.let { it.name to it.reason }
         }
+        val conflicts = results.mapNotNull { (_, outcome) ->
+            (outcome as? Outcome.Conflict)?.let { it.name to it.notice }
+        }
         val retryKeys = results.filter { (_, outcome) -> outcome is Outcome.Failed && outcome.retryable }.map { it.first }
         val retry = retryKeys.isNotEmpty() && attempt < maxRetries
         return Decision(
@@ -147,6 +159,7 @@ internal object PendingUploadPolicy {
             keepKeys = if (retry) retryKeys else emptyList(),
             uploaded = results.count { it.second is Outcome.Uploaded },
             failures = failures,
+            conflicts = conflicts,
         )
     }
 
@@ -154,15 +167,26 @@ internal object PendingUploadPolicy {
     fun entry(decision: Decision, atMillis: Long = System.currentTimeMillis()): ActivityEntry {
         val text = when {
             decision.failures.isNotEmpty() -> if (decision.retry) "补传失败，稍后重试" else "补传失败"
+            decision.conflicts.isNotEmpty() -> buildString {
+                if (decision.uploaded > 0) append("已补传 ${decision.uploaded} 款；")
+                append("补传遇到冲突：${decision.conflicts.size} 款已保留为冲突副本")
+            }
             decision.uploaded > 0 -> "已补传 ${decision.uploaded} 款"
             else -> "补传：没有需要上传的版本"
         }
         val level = when {
-            decision.failures.isNotEmpty() -> ActivityLevel.WARNING
+            decision.failures.isNotEmpty() || decision.conflicts.isNotEmpty() -> ActivityLevel.WARNING
             decision.uploaded > 0 -> ActivityLevel.SUCCESS
             else -> ActivityLevel.INFO
         }
-        val detail = decision.failures.take(MAX_DETAIL_LINES).joinToString("；") { (name, reason) -> "$name：$reason" }
+        val detail = when {
+            decision.failures.isNotEmpty() -> (decision.failures + decision.conflicts)
+                .take(MAX_DETAIL_LINES)
+                .joinToString("；") { (name, reason) -> "$name：$reason" }
+            decision.conflicts.isNotEmpty() -> "请在“同步与任务”中选择保留哪一份；" +
+                decision.conflicts.take(MAX_DETAIL_LINES).joinToString("；") { (name, notice) -> "$name：$notice" }
+            else -> ""
+        }
         return ActivityEntry.create(ActivityKind.UPLOAD, level, text, detail, atMillis = atMillis)
     }
 
@@ -257,14 +281,15 @@ class PendingUploadWorker(
                     is PendingUpload.Published -> {
                         pending.outcome.cloudUpdate?.let { update -> verdicts[key] = CloudVerdict(update.action, "") }
                         val error = pending.outcome.uploadError
-                        if (error == null) {
-                            PendingUploadPolicy.Outcome.Uploaded
-                        } else {
-                            PendingUploadPolicy.Outcome.Failed(
+                        val notice = pending.outcome.syncNotice
+                        when {
+                            error != null -> PendingUploadPolicy.Outcome.Failed(
                                 name,
                                 error,
                                 PendingUploadPolicy.retryable(pending.outcome.uploadException),
                             )
+                            notice != null -> PendingUploadPolicy.Outcome.Conflict(name, notice)
+                            else -> PendingUploadPolicy.Outcome.Uploaded
                         }
                     }
                 }
