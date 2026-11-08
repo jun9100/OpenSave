@@ -1006,7 +1006,7 @@ class SourceViewModel(
                                     )
                                 },
                                 onFailure = {
-                                    val reason = it.message ?: "读取失败"
+                                    val reason = SafFailures.reason(it)
                                     SourceScanResult(
                                         source,
                                         label,
