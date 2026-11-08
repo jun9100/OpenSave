@@ -34,6 +34,8 @@ func (s *Server) cloudRoutes(r chi.Router) {
 	r.Get("/api/cloud/status/{gameId}", s.handleCloudStatus)
 	r.Get("/api/cloud/snapshots/{gameId}", s.handleCloudSnapshots)
 	r.Post("/api/cloud/restore/{gameId}", s.handleCloudRestore)
+	r.Post("/api/cloud/cross-restore/{gameId}/plan", s.handleCrossRestorePlan)
+	r.Post("/api/cloud/cross-restore/{gameId}/apply", s.handleCrossRestoreApply)
 	r.Post("/api/cloud/delete/{gameId}", s.handleCloudDelete)
 	r.Post("/api/cloud/delete-game/{gameId}", s.handleCloudDeleteGame)
 	r.Post("/api/cloud/sync-local/{gameId}", s.handleCloudSyncLocal)
@@ -59,6 +61,73 @@ func (s *Server) handleCloudStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+// handleCrossRestorePlan answers what restoring one version from another
+// device would do, without touching the save or the cloud.
+func (s *Server) handleCrossRestorePlan(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MemberGameID string `json:"memberGameId"`
+		SnapshotID   string `json:"snapshotId"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.MemberGameID == "" || body.SnapshotID == "" {
+		writeError(w, http.StatusBadRequest, "memberGameId and snapshotId are required")
+		return
+	}
+	plan, err := s.Daemon.PlanCrossDeviceRestore(chi.URLParam(r, "gameId"), body.MemberGameID, body.SnapshotID)
+	if err != nil {
+		writeError(w, crossRestoreErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+// handleCrossRestoreApply restores the mappings the user confirmed. The
+// daemon takes the safety snapshot before it changes anything.
+func (s *Server) handleCrossRestoreApply(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MemberGameID string                       `json:"memberGameId"`
+		SnapshotID   string                       `json:"snapshotId"`
+		Assignments  []snapshot.ForeignAssignment `json:"assignments"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.MemberGameID == "" || body.SnapshotID == "" {
+		writeError(w, http.StatusBadRequest, "memberGameId and snapshotId are required")
+		return
+	}
+	result, err := s.Daemon.ApplyCrossDeviceRestore(
+		chi.URLParam(r, "gameId"), body.MemberGameID, body.SnapshotID, body.Assignments)
+	if err != nil {
+		writeError(w, crossRestoreErrorStatus(err), err.Error())
+		return
+	}
+	s.BroadcastGamesUpdate()
+	writeJSON(w, http.StatusOK, result)
+}
+
+// crossRestoreErrorStatus is the contract's error mapping: a bad request or
+// mapping is 400, a missing game or cloud version is 404, a save in use is
+// 409, and everything else is 500.
+func crossRestoreErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, daemon.ErrCrossRestoreInUse):
+		return http.StatusConflict
+	case errors.Is(err, store.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, daemon.ErrCrossRestoreInvalid),
+		errors.Is(err, snapshot.ErrForeignAssignment),
+		errors.Is(err, snapshot.ErrForeignArchive):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // handleCloudOffers lists the saves from other devices waiting for an answer.
