@@ -219,6 +219,30 @@ class GameSaveClient(
         conflict = true,
     )
 
+    /**
+     * Tells the service which game a scope holds (C1). It never moves a head.
+     * A service without the route answers 404, which only means it groups
+     * nothing yet; the result is false then.
+     */
+    fun putScopeIdentity(type: GameSaveType, gameId: String, facts: GameCloudFacts): Result<Boolean> = runCatching {
+        validateScope(type, gameId)
+        val body = JSONObject().apply {
+            if (facts.name.isNotBlank()) put("name", facts.name)
+            if (facts.titleId.isNotBlank()) put("titleId", facts.titleId)
+            if (facts.steamAppId.isNotBlank()) put("steamAppId", facts.steamAppId)
+            if (facts.pspGameId.isNotBlank()) put("pspGameId", facts.pspGameId)
+            if (facts.androidPackage.isNotBlank()) put("androidPackage", facts.androidPackage)
+        }.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val request = request(scopeEndpoint(type.id, gameId) + "/identity")
+            .put(body)
+            .header("Content-Type", "application/json")
+        execute(request).use { response ->
+            if (response.code == 404) return@runCatching false
+            requireSuccess(response, "上报 SaveVault 云端游戏信息")
+            true
+        }
+    }.mapFailure()
+
     private fun validateRemote(remote: RemoteSnapshot) {
         require(GameSaveTypes.isValid(remote.type)) { "云端快照类型无效" }
         require(PathPolicy.isSafeDocumentName(remote.name) && remote.name.endsWith(".zip")) { "云端快照名称无效" }

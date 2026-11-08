@@ -187,3 +187,52 @@ func (s *Service) PutGameSaveScopeConflict(saveType, gameID string, candidate Ga
 	}
 	return p.putScopeCandidate(saveType, gameID, candidate, "", true)
 }
+
+// GameSaveScopeIdentity is what this device knows about the game behind a
+// scope. game-save uses it only to show one title's scopes from different
+// devices as one game; it never moves a head.
+type GameSaveScopeIdentity struct {
+	Name           string `json:"name,omitempty"`
+	TitleID        string `json:"titleId,omitempty"`
+	SteamAppID     string `json:"steamAppId,omitempty"`
+	PSPGameID      string `json:"pspGameId,omitempty"`
+	AndroidPackage string `json:"androidPackage,omitempty"`
+}
+
+func (p gameSave) putScopeIdentity(saveType, gameID string, identity GameSaveScopeIdentity) (bool, error) {
+	body, err := json.Marshal(identity)
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequest(http.MethodPut, p.scopeEndpoint(saveType, gameID)+"/identity", bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := p.authorize(req); err != nil {
+		return false, err
+	}
+	resp, err := p.s.httpClient().Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// A service older than game grouping: nothing to record.
+		return false, nil
+	}
+	if err := transferOK(resp); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// PutGameSaveScopeIdentity tells the service which game a scope holds. It
+// reports false, without an error, when the service does not group games.
+func (s *Service) PutGameSaveScopeIdentity(saveType, gameID string, identity GameSaveScopeIdentity) (bool, error) {
+	p, err := s.gameSaveScopeProvider()
+	if err != nil {
+		return false, err
+	}
+	return p.putScopeIdentity(saveType, gameID, identity)
+}

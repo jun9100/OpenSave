@@ -8,9 +8,12 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/opensave/opensave/internal/cloud"
 	"github.com/opensave/opensave/internal/snapshot"
@@ -169,6 +172,7 @@ func (d *Daemon) runGameSaveScopeUpload(zipPath, legacyName string) (handled boo
 	stored, err := d.Cloud.PutGameSaveScopeSnapshot(game.SaveType, game.ID, candidate, candidate.Parent)
 	if err == nil {
 		d.confirmNativeGameSaveHead(game.ID, localSnapshotID, archiveName, stored.ID)
+		d.reportNativeGameSaveIdentity(game)
 		return true, nil
 	}
 	var conflict *cloud.GameSaveScopeConflictError
@@ -176,6 +180,39 @@ func (d *Daemon) runGameSaveScopeUpload(zipPath, legacyName string) (handled boo
 		return true, d.retainNativeGameSaveConflict(game, candidate, conflict.Head)
 	}
 	return true, err
+}
+
+var (
+	steamAppIDPattern   = regexp.MustCompile(`^[0-9]{1,12}$`)
+	switchGameIDPattern = regexp.MustCompile(`^switch-([0-9A-Fa-f]{16})$`)
+)
+
+// nativeGameSaveIdentity is what the service needs to show this game's scope
+// together with other devices' scopes of the same title.
+func nativeGameSaveIdentity(game store.Game) cloud.GameSaveScopeIdentity {
+	identity := cloud.GameSaveScopeIdentity{Name: strings.TrimSpace(game.Name)}
+	if utf8.RuneCountInString(identity.Name) > 120 || strings.IndexFunc(identity.Name, unicode.IsControl) >= 0 {
+		identity.Name = ""
+	}
+	if steamAppIDPattern.MatchString(game.AppID) {
+		identity.SteamAppID = game.AppID
+	}
+	if match := switchGameIDPattern.FindStringSubmatch(game.ID); match != nil && cloud.SaveTypeScope(game.SaveType) == "switch" {
+		identity.TitleID = strings.ToUpper(match[1])
+	}
+	return identity
+}
+
+// reportNativeGameSaveIdentity is best effort: the backup already reached the
+// cloud, and an older service simply does not group games.
+func (d *Daemon) reportNativeGameSaveIdentity(game store.Game) {
+	identity := nativeGameSaveIdentity(game)
+	if identity == (cloud.GameSaveScopeIdentity{}) {
+		return
+	}
+	if _, err := d.Cloud.PutGameSaveScopeIdentity(game.SaveType, game.ID, identity); err != nil {
+		d.Log.Log("info", "game-save: could not record which game "+game.ID+" is: "+err.Error())
+	}
 }
 
 func archiveSHA256(path string) (string, error) {

@@ -5,6 +5,7 @@ import com.jun9100.opensave.AutoBackupFingerprint
 import com.jun9100.opensave.AutoBackupPolicy
 import com.jun9100.opensave.ContentHash
 import com.jun9100.opensave.DetectedGame
+import com.jun9100.opensave.GameCloudFacts
 import com.jun9100.opensave.GameCloudIdentity
 import com.jun9100.opensave.GameCloudNaming
 import com.jun9100.opensave.GameLibrary
@@ -270,7 +271,7 @@ internal class GameOperations(
         var uploadException: Throwable? = null
         var syncNotice: String? = null
         var cloudUpdate: GameSaveCloudUpdate? = null
-        val nativeUpload = native.publishSnapshot(cloudIdentity, record, archive)
+        val nativeUpload = native.publishSnapshot(cloudIdentity, record, archive, GameCloudFacts.of(entry.game))
         nativeUpload.onSuccess { result ->
             // A confirmed head and an immutable conflict are both durable;
             // neither should be retried later as a head-changing write.

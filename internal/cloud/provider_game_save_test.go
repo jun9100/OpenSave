@@ -400,3 +400,37 @@ func TestGameSaveArchiveNamesAreDeviceUnique(t *testing.T) {
 		t.Fatalf("ParseGameSaveArchiveName(%q) = (%q, %q, %q, %v)", first, gameID, branch, remoteID, ok)
 	}
 }
+
+func TestGameSaveScopeIdentityIsReportedAndOlderServicesAreSkipped(t *testing.T) {
+	var got map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/opensave/scopes/pc/half-life/identity" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer sync-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(map[string]string{"game": "pc/steam:70", "link": "auto"})
+	}))
+	defer server.Close()
+	svc, data := newTestService(t)
+	setCloudConfig(t, data, func(c *store.CloudConfig) {
+		c.Enabled, c.Provider, c.URL, c.Password = true, GameSaveProvider, server.URL, "sync-key"
+	})
+	recorded, err := svc.PutGameSaveScopeIdentity("pc", "half-life", GameSaveScopeIdentity{Name: "Half-Life", SteamAppID: "70"})
+	if err != nil || !recorded || got["name"] != "Half-Life" || got["steamAppId"] != "70" || len(got) != 2 {
+		t.Fatalf("recorded = %v, err = %v, body = %v", recorded, err, got)
+	}
+
+	older := httptest.NewServer(http.NotFoundHandler())
+	defer older.Close()
+	setCloudConfig(t, data, func(c *store.CloudConfig) {
+		c.Enabled, c.Provider, c.URL, c.Password = true, GameSaveProvider, older.URL, "sync-key"
+	})
+	if recorded, err := svc.PutGameSaveScopeIdentity("pc", "half-life", GameSaveScopeIdentity{Name: "Half-Life"}); err != nil || recorded {
+		t.Fatalf("older service: recorded = %v, err = %v", recorded, err)
+	}
+}

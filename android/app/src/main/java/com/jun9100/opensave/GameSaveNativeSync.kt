@@ -198,6 +198,23 @@ class GameSaveNativeSync(
         identity: GameCloudIdentity,
         record: SnapshotRecord,
         archiveFile: File,
+        facts: GameCloudFacts? = null,
+    ): Result<GameSaveNativePublishResult> = publishSnapshotOnly(identity, record, archiveFile)
+        .onSuccess { reportFacts(identity, facts) }
+
+    /**
+     * Best effort: a backup that reached the cloud is a success whether or
+     * not the service could also record which game it holds.
+     */
+    private fun reportFacts(identity: GameCloudIdentity, facts: GameCloudFacts?) {
+        if (facts == null || facts.isEmpty) return
+        client.putScopeIdentity(identity.saveType, identity.gameId, facts)
+    }
+
+    private fun publishSnapshotOnly(
+        identity: GameCloudIdentity,
+        record: SnapshotRecord,
+        archiveFile: File,
     ): Result<GameSaveNativePublishResult> = runCatching {
         require(record.cloudGameId == identity.gameId && record.saveType == identity.saveType.id) {
             "本地快照与游戏同步范围不匹配"
