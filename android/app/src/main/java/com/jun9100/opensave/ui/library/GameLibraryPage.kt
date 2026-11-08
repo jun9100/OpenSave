@@ -82,6 +82,7 @@ import com.jun9100.opensave.CoverRepository
 import com.jun9100.opensave.GameCloudNaming
 import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.GamePresentation
+import com.jun9100.opensave.GameSaveCloudGameMember
 import com.jun9100.opensave.GameStatusResolver
 import com.jun9100.opensave.GameSyncStatus
 import com.jun9100.opensave.LibraryEmptyState
@@ -156,6 +157,10 @@ internal class LibraryActions(
     val onBackupGame: (SourceGameEntry) -> Unit = {},
     val onRestoreLocal: (SourceGameEntry, SnapshotRecord) -> Unit = { _, _ -> },
     val onRestoreRemote: (SourceGameEntry, RemoteSnapshot) -> Unit = { _, _ -> },
+    /** Read the other devices' cloud saves for one game. */
+    val onLoadOtherDevices: (SourceGameEntry) -> Unit = {},
+    /** Open the mapping dialog for one other device's save location. */
+    val onRestoreOtherDevice: (SourceGameEntry, GameSaveCloudGameMember) -> Unit = { _, _ -> },
     val onSourceDetailsExpanded: (Boolean) -> Unit = {},
     val onOpenSources: () -> Unit = {},
     val onOpenSyncTasks: () -> Unit = {},
@@ -230,6 +235,8 @@ internal fun GameLibraryPage(
             onBackupGame = viewModel::requestGameBackup,
             onRestoreLocal = viewModel::requestLocalGameRestore,
             onRestoreRemote = viewModel::requestRemoteGameRestore,
+            onLoadOtherDevices = { entry -> viewModel.loadOtherDeviceSaves(entry) },
+            onRestoreOtherDevice = viewModel::requestOtherDeviceRestore,
             onSourceDetailsExpanded = viewModel::setSourceDetailsExpanded,
             onOpenSources = onOpenSources,
             onOpenSyncTasks = viewModel::openSyncTasks,
@@ -1065,6 +1072,9 @@ private fun GameDetailFor(
         onBackup = { actions.onBackupGame(entry) },
         onRestoreLocal = { snapshot -> actions.onRestoreLocal(entry, snapshot) },
         onRestoreRemote = { snapshot -> actions.onRestoreRemote(entry, snapshot) },
+        otherDevices = state.otherDeviceSaves[entry.libraryKey],
+        onLoadOtherDevices = { actions.onLoadOtherDevices(entry) },
+        onRestoreOtherDevice = { member -> actions.onRestoreOtherDevice(entry, member) },
         tab = tab,
         onTabChange = onTabChange,
         scrollState = scrollState,
