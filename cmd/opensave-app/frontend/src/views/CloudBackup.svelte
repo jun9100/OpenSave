@@ -3,9 +3,11 @@
   import { onMount } from 'svelte';
   import { toast, settings } from '../lib/stores.js';
   import { api, native } from '../lib/api.js';
-  import { connectedProviderOf, isOAuth } from '../lib/cloudproviders.js';
+  import { connectedProviderOf, GAME_SAVE_PROVIDER, isOAuth } from '../lib/cloudproviders.js';
   import ProviderPicker from './cloud/ProviderPicker.svelte';
   import ProviderFields from './cloud/ProviderFields.svelte';
+  import AuthStatus from './cloud/AuthStatus.svelte';
+  import PairDialog from './cloud/PairDialog.svelte';
   import OAuthConnect from './cloud/OAuthConnect.svelte';
   import OwnOAuthApp from './cloud/OwnOAuthApp.svelte';
   import CloudBrowser from './cloud/CloudBrowser.svelte';
@@ -13,6 +15,7 @@
   import ImportDialog from './cloud/ImportDialog.svelte';
   import Skeleton from '../components/ui/Skeleton.svelte';
   import Cloud from 'lucide-svelte/icons/cloud';
+  import KeyRound from 'lucide-svelte/icons/key-round';
   import { t, tt, trError, segments } from '../lib/i18n.js';
 
   let config = null;
@@ -25,6 +28,10 @@
   // Shared by everything on the page that talks to the provider, so one
   // change is in flight at a time.
   const busy = writable(false);
+  let pairOpen = false;
+  // Bumped when the saved game-save credentials change, so the status line
+  // asks the daemon again.
+  let refreshKey = 0;
 
   // The provider the stored OAuth tokens belong to (server truth at load
   // time) — independent of which card is currently selected, so the
@@ -62,6 +69,7 @@
     try {
       settings.set(await api.post('/api/settings', { cloudSync: config }));
       savedConfig = structuredClone(config);
+      refreshKey += 1;
       toast(tt('cloud.backup.providerSaved'), 'success');
     } catch (e) {
       toast(trError(e.message), 'error');
@@ -100,6 +108,14 @@
     saveSwitch({ cloudAutoPull: on }, () => (autoPull = !on));
   }
 
+  // The daemon has already written the address and token into the settings;
+  // re-reading them also makes the page show the new connection status.
+  async function handlePaired() {
+    await load();
+    refreshKey += 1;
+    toast(tt('cloud.pair.success'), 'success');
+  }
+
   let browserOpen = false;
   let exportOpen = false;
   let importSource = '';
@@ -120,6 +136,16 @@
   <div class="card">
     <ProviderPicker bind:config {connected} />
     <ProviderFields bind:config />
+    {#if config.provider === GAME_SAVE_PROVIDER}
+      <div class="pair-entry">
+        <button class="btn" type="button" on:click={() => (pairOpen = true)}>
+          <KeyRound size={14} />{$t('cloud.pair.open')}
+        </button>
+      </div>
+    {/if}
+    {#if savedConfig.provider === GAME_SAVE_PROVIDER}
+      <AuthStatus {refreshKey} onPair={() => (pairOpen = true)} />
+    {/if}
     <OAuthConnect {config} {connected} {busy} reload={() => load()} />
     {#if isOAuth(config.provider)}
       <!-- Rebuilt per provider, so one provider's credentials never show
@@ -200,6 +226,14 @@
   <ImportDialog source={importSource} on:close={() => (importSource = '')} />
 {/if}
 
+{#if pairOpen}
+  <PairDialog
+    initialServer={config?.provider === GAME_SAVE_PROVIDER ? config.url : (savedConfig?.url ?? '')}
+    onClose={() => (pairOpen = false)}
+    onPaired={handlePaired}
+  />
+{/if}
+
 {#if browserOpen}
   <CloudBrowser {busy} onAuthLost={() => load()} on:close={() => (browserOpen = false)} />
 {/if}
@@ -221,6 +255,9 @@
   }
   .folder-id {
     margin-top: 16px;
+  }
+  .pair-entry {
+    margin: -4px 0 14px;
   }
   .auto {
     margin-top: 18px;

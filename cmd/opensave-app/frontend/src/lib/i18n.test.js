@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import en from '../locales/en.json';
 import zhCN from '../locales/zh-CN.json';
-import { LOCALES, loadLocale, pluralRulesFor, resolveLocale, sanitizeLocale, segments, translate } from './i18n.js';
+import { LOCALES, loadLocale, locale, pluralRulesFor, resolveLocale, sanitizeLocale, segments, trError, translate } from './i18n.js';
 
 // The catalogs are flat, dot-keyed objects; a plural value is one value that
 // must expose an "other" form. Comparing top-level keys is enough.
@@ -123,5 +123,28 @@ describe('source keys', () => {
     const names = (v) => new Set([...(typeof v === 'string' ? v : Object.values(v).join(' ')).matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
     const bad = Object.entries(zhCN).filter(([key, v]) => [...names(v)].some((p) => !names(en[key]).has(p)));
     expect(bad.map(([k]) => k)).toEqual([]);
+  });
+});
+
+describe('daemon errors in Chinese', () => {
+  beforeAll(() => locale.set('zh-CN'));
+  afterAll(() => locale.set('en'));
+
+  const cases = [
+    ['pairing code must be 8 letters or digits, like ABCD-EFGH', '配对码格式不对，应为 8 位字母或数字，如 ABCD-EFGH'],
+    ['not a SaveVault pairing link', '这不是有效的配对链接'],
+    ["confirm the server's host name before pairing", '请先确认服务器主机名'],
+    ['the service does not support pairing', '服务端不支持配对'],
+    ['the pairing code is invalid, expired, or already used', '配对码无效、已过期或已被使用'],
+    ['too many failed pairing attempts; try again later', '配对失败次数过多，请稍后再试'],
+    ["cloud sync not authenticated: game-save revoked this device's token; pair this device again", '此设备已被移除，请重新配对'],
+    [
+      'cloud sync not authenticated: game-save no longer accepts the shared sync key; pair this device',
+      '服务端已停用共享令牌，请配对本设备'
+    ]
+  ];
+
+  it('recognises pairing and device-token errors before the generic rules', () => {
+    for (const [message, said] of cases) expect(trError(message), message).toBe(`${said}（${message}）`);
   });
 });
