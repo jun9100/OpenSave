@@ -139,6 +139,37 @@ data class GameCloudIdentity(
     val desktopCompatible: Boolean,
 )
 
+/**
+ * What this device knows about the game behind a cloud scope, reported after a
+ * backup so SaveVault 云端 can show one title's scopes from every device as one
+ * game (C1). It never changes which scope a save goes to.
+ */
+data class GameCloudFacts(
+    val name: String = "",
+    val titleId: String = "",
+    val steamAppId: String = "",
+    val pspGameId: String = "",
+    val androidPackage: String = "",
+) {
+    val isEmpty: Boolean
+        get() = name.isBlank() && titleId.isBlank() && steamAppId.isBlank() && pspGameId.isBlank() && androidPackage.isBlank()
+
+    companion object {
+        private const val MAX_NAME_LENGTH = 120
+
+        fun of(game: DetectedGame): GameCloudFacts {
+            val presentation = game.presentation
+            return GameCloudFacts(
+                name = presentation.primaryName.takeUnless { it == "未命名游戏" }.orEmpty().take(MAX_NAME_LENGTH),
+                titleId = presentation.switchTitleId.orEmpty(),
+                steamAppId = presentation.steamAppId.orEmpty(),
+                pspGameId = presentation.pspGameId.orEmpty(),
+                androidPackage = presentation.androidPackageName.orEmpty(),
+            )
+        }
+    }
+}
+
 /** Names snapshots so only a proven single-directory Root Switch save can cross clients directly. */
 object GameCloudNaming {
     /**

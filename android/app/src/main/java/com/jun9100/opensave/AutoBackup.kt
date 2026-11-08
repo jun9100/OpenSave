@@ -502,7 +502,9 @@ class AutoBackupWorker(
             if (pending == null && signature != null) repository.setSaveSignature(record.id, signature)
 
             if (nativeDecision != null) {
-                return publishNativeCurrentHead(native, cloudIdentity, record, repository.fileFor(record), repository)
+                return publishNativeCurrentHead(
+                    native, cloudIdentity, record, repository.fileFor(record), repository, GameCloudFacts.of(selectedGame),
+                )
             }
 
             return client.upload(repository.fileFor(record), cloudIdentity.saveType, record.remoteName).fold(
@@ -679,7 +681,8 @@ class AutoBackupWorker(
         record: SnapshotRecord,
         archiveFile: File,
         repository: SnapshotRepository,
-    ): GameBackupOutcome = native.publishSnapshot(cloudIdentity, record, archiveFile).fold(
+        facts: GameCloudFacts,
+    ): GameBackupOutcome = native.publishSnapshot(cloudIdentity, record, archiveFile, facts).fold(
         onSuccess = { result ->
             repository.markUploaded(record.id, asCloudHead = result is GameSaveNativePublishResult.Confirmed)
             when (result) {

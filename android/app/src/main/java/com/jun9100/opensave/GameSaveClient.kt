@@ -63,6 +63,29 @@ data class GameSaveScope(
     val conflicts: List<GameSaveScopeSnapshot>,
 )
 
+/** One save location of a cloud game (C1): a scope, possibly another device's. */
+data class GameSaveCloudGameMember(
+    val type: String,
+    val gameId: String,
+    val link: String,
+    val name: String,
+    val head: GameSaveScopeSnapshot?,
+    val snapshotCount: Int,
+    val conflictCount: Int,
+)
+
+/** Scopes of one title, from every device, as SaveVault 云端 groups them. */
+data class GameSaveCloudGame(
+    val key: String,
+    val type: String,
+    val name: String,
+    val members: List<GameSaveCloudGameMember>,
+) {
+    /** The other save locations of the game [gameId] (in [type]) belongs to. */
+    fun othersThan(type: String, gameId: String): List<GameSaveCloudGameMember> =
+        members.filterNot { it.type == type && it.gameId == gameId }
+}
+
 /** Stable client identity sent with native game-save requests for audit only. */
 data class GameSaveDeviceIdentity(
     val id: String,
@@ -218,6 +241,87 @@ class GameSaveClient(
         expectedHead = "",
         conflict = true,
     )
+
+    /**
+     * Every cloud game with its save locations (C1), or null when the service
+     * does not group games yet (route-level 404). Read-only: no heartbeat.
+     */
+    fun getGames(): Result<List<GameSaveCloudGame>?> = runCatching {
+        execute(request("$serviceUrl/v1/opensave/games")).use { response ->
+            if (response.code == 404) return@runCatching null
+            requireSuccess(response, "读取 SaveVault 云端游戏列表")
+            parseGames(response.body?.string().orEmpty())
+        }
+    }.mapFailure()
+
+    /** The cloud game holding [gameId] in [type], or null when there is none or no grouping. */
+    fun gameOf(type: GameSaveType, gameId: String): Result<GameSaveCloudGame?> =
+        getGames().map { games -> games?.firstOrNull { game -> game.members.any { it.type == type.id && it.gameId == gameId } } }
+
+    internal fun parseGames(body: String): List<GameSaveCloudGame> {
+        val games = JSONObject(body).optJSONArray("games") ?: return emptyList()
+        return buildList {
+            for (index in 0 until games.length()) {
+                val json = games.optJSONObject(index) ?: continue
+                val type = json.optString("type").trim().lowercase()
+                if (!GameSaveTypes.isValid(type)) continue
+                val members = json.optJSONArray("scopes")
+                val parsed = buildList {
+                    for (m in 0 until (members?.length() ?: 0)) {
+                        val member = members?.optJSONObject(m) ?: continue
+                        val memberType = member.optString("type").trim().lowercase()
+                        val gameId = member.optString("gameId").trim()
+                        // A game never spans types; anything else is not trusted.
+                        if (memberType != type || !SCOPE_GAME_ID_PATTERN.matches(gameId)) continue
+                        add(
+                            GameSaveCloudGameMember(
+                                type = memberType,
+                                gameId = gameId,
+                                link = member.optString("link").trim(),
+                                name = member.optString("name").trim().take(MAX_GAME_NAME_LENGTH),
+                                head = member.optJSONObject("head")?.let { runCatching { parseScopeSnapshot(it) }.getOrNull() },
+                                snapshotCount = member.optInt("snapshotCount"),
+                                conflictCount = member.optInt("conflictCount"),
+                            ),
+                        )
+                    }
+                }
+                if (parsed.isEmpty()) continue
+                add(
+                    GameSaveCloudGame(
+                        key = json.optString("key").trim(),
+                        type = type,
+                        name = json.optString("name").trim().take(MAX_GAME_NAME_LENGTH),
+                        members = parsed,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Tells the service which game a scope holds (C1). It never moves a head.
+     * A service without the route answers 404, which only means it groups
+     * nothing yet; the result is false then.
+     */
+    fun putScopeIdentity(type: GameSaveType, gameId: String, facts: GameCloudFacts): Result<Boolean> = runCatching {
+        validateScope(type, gameId)
+        val body = JSONObject().apply {
+            if (facts.name.isNotBlank()) put("name", facts.name)
+            if (facts.titleId.isNotBlank()) put("titleId", facts.titleId)
+            if (facts.steamAppId.isNotBlank()) put("steamAppId", facts.steamAppId)
+            if (facts.pspGameId.isNotBlank()) put("pspGameId", facts.pspGameId)
+            if (facts.androidPackage.isNotBlank()) put("androidPackage", facts.androidPackage)
+        }.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val request = request(scopeEndpoint(type.id, gameId) + "/identity")
+            .put(body)
+            .header("Content-Type", "application/json")
+        execute(request).use { response ->
+            if (response.code == 404) return@runCatching false
+            requireSuccess(response, "上报 SaveVault 云端游戏信息")
+            true
+        }
+    }.mapFailure()
 
     private fun validateRemote(remote: RemoteSnapshot) {
         require(GameSaveTypes.isValid(remote.type)) { "云端快照类型无效" }
@@ -401,6 +505,8 @@ class GameSaveClient(
 
         private fun encodePathSegment(value: String): String =
             URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+
+        private const val MAX_GAME_NAME_LENGTH = 120
 
         private fun isSafeScopeSnapshotId(value: String): Boolean =
             SCOPE_SNAPSHOT_ID_PATTERN.matches(value)
