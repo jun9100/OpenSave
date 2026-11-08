@@ -4,12 +4,16 @@ import android.content.Context
 import com.jun9100.opensave.AutoBackupFingerprint
 import com.jun9100.opensave.AutoBackupPolicy
 import com.jun9100.opensave.ContentHash
+import com.jun9100.opensave.CrossDeviceArchiveFormat
+import com.jun9100.opensave.CrossDevicePlan
+import com.jun9100.opensave.CrossDeviceRestorePolicy
 import com.jun9100.opensave.DetectedGame
 import com.jun9100.opensave.GameCloudFacts
 import com.jun9100.opensave.GameCloudIdentity
 import com.jun9100.opensave.GameCloudNaming
 import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.GameSaveClient
+import com.jun9100.opensave.GameSaveCloudGameMember
 import com.jun9100.opensave.GameSaveCloudUpdate
 import com.jun9100.opensave.GameSaveConfig
 import com.jun9100.opensave.GameSaveConfigStore
@@ -131,6 +135,27 @@ internal class GameOperations(
     fun loadConfig(): GameSaveConfig = gameSaveStore.load()
 
     fun client(config: GameSaveConfig): GameSaveClient = GameSaveClient(config, gameSaveDevice.identity())
+
+    /** Downloads [member]'s head archive into the cache and checks its digest. Read-only on the cloud. */
+    fun downloadOtherDeviceHead(member: GameSaveCloudGameMember, config: GameSaveConfig): File {
+        val head = requireNotNull(member.head) { "该设备在云端还没有存档版本" }
+        val remote = RemoteSnapshot(
+            type = member.type,
+            name = head.archive,
+            sizeBytes = 0,
+            modified = head.receivedAt,
+        )
+        val cached = remoteCacheFile(remote)
+        val expectedDigest = head.contentDigest
+        if (!cached.hasSha256(expectedDigest)) {
+            client(config).download(remote, cached).getOrThrow()
+            if (!cached.hasSha256(expectedDigest)) {
+                cached.delete()
+                error("其他设备的存档校验失败")
+            }
+        }
+        return cached
+    }
 
     fun canWrite(source: SourceSelection): Boolean = when (source) {
         is SourceSelection.Saf -> storage.hasWritePermission(source.uri)
@@ -481,6 +506,23 @@ internal class GameOperations(
         }
     }
 
+    /** Extracts the archive to a fresh temp dir and returns the automatic plan; the temp dir is deleted. */
+    fun planOtherDeviceRestore(archive: File, currentGame: DetectedGame): CrossDevicePlan {
+        val workingRoot = File(app.filesDir, ".game-restore-plan-${UUID.randomUUID()}")
+        val extractedRoot = File(workingRoot, "archive")
+        require(workingRoot.mkdirs()) { "无法创建游戏恢复暂存目录" }
+        try {
+            snapshotEngine.restoreSnapshot(archive, extractedRoot).getOrThrow()
+            val otherArchive = CrossDeviceRestorePolicy.readArchive(extractedRoot)
+            return CrossDeviceRestorePolicy.plan(
+                archive = otherArchive,
+                targets = CrossDeviceRestorePolicy.targetsOf(currentGame),
+            )
+        } finally {
+            workingRoot.deleteRecursively()
+        }
+    }
+
     /**
      * Restores one game from a local or cloud snapshot. The current content of
      * the manifest's locations is saved as a safety snapshot first; the write
@@ -570,31 +612,13 @@ internal class GameOperations(
             val restoredFingerprint = AutoBackupPolicy.fingerprint(extractedRoot)
             val restoredManifestHash = restoredFingerprint.manifestHash
 
-            copyGameLocations(source, manifest.locations, safetyRoot).getOrThrow()
-            val safetyManifest = File(safetyRoot, GameSnapshotManifest.FILE_NAME)
-            manifest.write(safetyManifest)
-            val safetyFingerprint = AutoBackupPolicy.fingerprint(safetyRoot)
-            val timestamp = nextTimestamp()
-            val safetyIdentity = GameCloudNaming.identity(source, sourceId, requestedGame)
-            val safetyName = GameCloudNaming.remoteName(safetyIdentity, timestamp)
-            val safetyArchive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$safetyName")
-            val safetyBuild = snapshotEngine.createSnapshot(safetyRoot, safetyArchive).getOrThrow()
-            snapshotRepository.add(
-                SnapshotRecord(
-                    id = "game_${UUID.randomUUID()}",
-                    sourceId = sourceId,
-                    remoteName = safetyName,
-                    localPath = safetyName,
-                    createdAtMillis = timestamp,
-                    sizeBytes = safetyArchive.length(),
-                    sha256 = safetyBuild.archiveSha256,
-                    manifestHash = safetyFingerprint.manifestHash,
-                    comment = "恢复前安全快照",
-                    gameKey = manifest.gameKey,
-                    gameName = manifest.gameName,
-                    saveType = safetyIdentity.saveType.id,
-                    cloudGameId = safetyIdentity.gameId,
-                ),
+            saveRestoreSafetySnapshot(
+                source = source,
+                sourceId = sourceId,
+                requestedGame = requestedGame,
+                manifest = manifest,
+                safetyRoot = safetyRoot,
+                comment = "恢复前安全快照",
             )
 
             withContext(NonCancellable) {
@@ -626,6 +650,140 @@ internal class GameOperations(
         } finally {
             workingRoot.deleteRecursively()
         }
+    }
+
+    /**
+     * Restores another device's save into this game's own locations. The mapped
+     * local locations are saved as a safety snapshot first, exactly like
+     * [restoreGameLocked]. The cloud and the sync state are not touched: no
+     * markRemoteRestore, no recordRestoredCloudSnapshot, nothing marked uploaded.
+     */
+    suspend fun restoreOtherDeviceLocked(
+        archive: File,
+        plan: CrossDevicePlan,
+        source: SourceSelection,
+        requestedGame: DetectedGame,
+        currentGame: DetectedGame,
+    ) {
+        require(plan.complete) { "还有未决定的存档位置" }
+        require(plan.restoresAnything) { "没有选择要恢复的存档位置" }
+        require(currentGame.gameKey == requestedGame.gameKey) { "请先扫描当前存档来源" }
+
+        val targets = CrossDeviceRestorePolicy.targetsOf(currentGame)
+        val mappedPaths = plan.mapping.values.filterNotNull()
+        require(mappedPaths.distinct().size == mappedPaths.size) { "同一个存档位置不能恢复两份内容" }
+        require(mappedPaths.all { path -> targets.any { it.relativePath == path } }) {
+            "存档位置已变化，请重新扫描"
+        }
+
+        val sourceId = SnapshotNaming.sourceId(source.idSeed)
+        val workingRoot = File(app.filesDir, ".game-restore-${UUID.randomUUID()}")
+        val extractedRoot = File(workingRoot, "archive")
+        val safetyRoot = File(workingRoot, "safety")
+        require(workingRoot.mkdirs()) { "无法创建游戏恢复暂存目录" }
+        try {
+            snapshotEngine.restoreSnapshot(archive, extractedRoot).getOrThrow()
+            val extractedArchive = CrossDeviceRestorePolicy.readArchive(extractedRoot)
+            require(extractedArchive == plan.archive) { "其他设备的存档已变化，请重新选择" }
+
+            // A PC archive's part is the extraction root itself. Move the root
+            // aside first so staging cannot try to move a directory into itself.
+            val contentRoot = if (extractedArchive.format == CrossDeviceArchiveFormat.PC) {
+                val portable = File(workingRoot, "archive-content")
+                require(extractedRoot.renameTo(portable)) { "无法准备其他设备的存档内容" }
+                portable
+            } else {
+                extractedRoot
+            }
+            val stagedRoot = File(workingRoot, "staged")
+            require(stagedRoot.mkdirs()) { "无法创建游戏恢复暂存目录" }
+            val mappedParts = plan.mapping.entries
+                .mapNotNull { entry -> entry.value?.let { entry.key to it } }
+                .sortedBy { it.first }
+                .mapIndexed { index, (partIndex, relativePath) ->
+                    val target = targets.first { it.relativePath == relativePath }
+                    val part = extractedArchive.parts[partIndex]
+                    val sourceFolder = if (part.archivePath.isEmpty()) {
+                        contentRoot
+                    } else {
+                        File(contentRoot, part.archivePath)
+                    }
+                    require(sourceFolder.isDirectory) { "其他设备的存档不完整" }
+                    val archivePath = "location-${index.toString().padStart(4, '0')}"
+                    require(sourceFolder.renameTo(File(stagedRoot, archivePath))) {
+                        "无法准备其他设备的存档内容"
+                    }
+                    GameSnapshotLocation(
+                        kind = target.kind,
+                        relativePath = target.relativePath,
+                        archivePath = archivePath,
+                        candidate = false,
+                    )
+                }
+            val manifest = GameSnapshotManifest(
+                gameKey = requestedGame.gameKey,
+                gameName = requestedGame.presentation.primaryName,
+                locations = mappedParts,
+            )
+            require(manifest.matches(currentGame)) { "存档位置已变化，请重新扫描" }
+
+            saveRestoreSafetySnapshot(
+                source = source,
+                sourceId = sourceId,
+                requestedGame = requestedGame,
+                manifest = manifest,
+                safetyRoot = safetyRoot,
+                comment = "跨设备恢复前安全快照",
+            )
+
+            withContext(NonCancellable) {
+                when (source) {
+                    is SourceSelection.Saf -> storage.restoreGameLocations(source.uri, manifest.locations, stagedRoot, safetyRoot)
+                    is SourceSelection.Root -> rootStorage.restoreGameLocations(source.path, manifest.locations, stagedRoot)
+                }.getOrThrow()
+                // The restored version is only a content source. The next local
+                // backup publishes it normally as a child of this device's head.
+            }
+        } finally {
+            workingRoot.deleteRecursively()
+        }
+    }
+
+    /** Captures the current saves before a restore and records them as a local safety copy. */
+    private suspend fun saveRestoreSafetySnapshot(
+        source: SourceSelection,
+        sourceId: String,
+        requestedGame: DetectedGame,
+        manifest: GameSnapshotManifest,
+        safetyRoot: File,
+        comment: String,
+    ) {
+        copyGameLocations(source, manifest.locations, safetyRoot).getOrThrow()
+        val safetyManifest = File(safetyRoot, GameSnapshotManifest.FILE_NAME)
+        manifest.write(safetyManifest)
+        val safetyFingerprint = AutoBackupPolicy.fingerprint(safetyRoot)
+        val timestamp = nextTimestamp()
+        val safetyIdentity = GameCloudNaming.identity(source, sourceId, requestedGame)
+        val safetyName = GameCloudNaming.remoteName(safetyIdentity, timestamp)
+        val safetyArchive = File(app.filesDir, "$SNAPSHOT_DIRECTORY/$safetyName")
+        val safetyBuild = snapshotEngine.createSnapshot(safetyRoot, safetyArchive).getOrThrow()
+        snapshotRepository.add(
+            SnapshotRecord(
+                id = "game_${UUID.randomUUID()}",
+                sourceId = sourceId,
+                remoteName = safetyName,
+                localPath = safetyName,
+                createdAtMillis = timestamp,
+                sizeBytes = safetyArchive.length(),
+                sha256 = safetyBuild.archiveSha256,
+                manifestHash = safetyFingerprint.manifestHash,
+                comment = comment,
+                gameKey = manifest.gameKey,
+                gameName = manifest.gameName,
+                saveType = safetyIdentity.saveType.id,
+                cloudGameId = safetyIdentity.gameId,
+            ),
+        )
     }
 
     /**
@@ -694,6 +852,9 @@ internal class GameOperations(
         app.filesDir,
         "$SNAPSHOT_DIRECTORY/remote-${remote.type}-${Hashing.sha256(remote.name).take(16)}.zip",
     )
+
+    private fun File.hasSha256(expected: String): Boolean =
+        isFile && Hashing.sha256(this).equals(expected, ignoreCase = true)
 
     companion object {
         const val SNAPSHOT_DIRECTORY = "snapshots"
