@@ -14,6 +14,10 @@ data class ImportedGameSaveConfig(
     /** For the confirmation: the key is never shown whole. */
     val maskedSyncKey: String
         get() = GameSaveConfigLink.maskToken(syncKey)
+
+    /** The key must never reach a log or crash report through an implicit data-class print. */
+    override fun toString(): String =
+        "ImportedGameSaveConfig(serviceUrl=$serviceUrl, syncKey=***)"
 }
 
 /**

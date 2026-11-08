@@ -94,6 +94,27 @@ data class GameSaveDeviceIdentity(
     val version: String = "",
 )
 
+/** What the cloud says about the credential this install currently uses. */
+data class GameSaveWhoami(
+    val auth: String,
+    val tokenId: String,
+    val deviceId: String,
+    val name: String,
+    val sharedTokenMode: String,
+)
+
+/** A token returned by `POST /v1/pair/claim`; it can never be fetched again. */
+data class GameSavePairingResult(
+    val token: String,
+    val tokenId: String,
+    val name: String,
+    val serverVersion: String,
+) {
+    /** The bearer secret must never reach a log or crash report through an implicit print. */
+    override fun toString(): String =
+        "GameSavePairingResult(token=***, tokenId=$tokenId, name=$name, serverVersion=$serverVersion)"
+}
+
 open class GameSaveException(
     message: String,
     val retryable: Boolean = false,
@@ -101,10 +122,31 @@ open class GameSaveException(
     val httpStatus: Int = 0,
 ) : Exception(message)
 
+/** A 401 from a sync route with the server's reason; never retried. */
+class GameSaveAuthException(val code: String, message: String) : GameSaveException(
+    message,
+    retryable = false,
+    httpStatus = 401,
+)
+
 /** Only a route-level GET 404 permits the old ZIP-head compatibility path. */
 class GameSaveScopesUnsupportedException : GameSaveException(
     "当前 SaveVault 云端尚不支持原生存档范围同步",
 )
+
+/** A service too old to know `/v1/pair/claim`; the shared sync key still works there. */
+class GameSavePairingUnsupportedException : GameSaveException(
+    "SaveVault 云端不支持配对，请升级到 v1.7.0 或继续填写同步密钥",
+)
+
+/** Receives the cloud's credential verdicts, so background work can stop before retrying. */
+interface GameSaveAuthObserver {
+    /** Called only for `token_revoked` and `shared_token_disabled`. */
+    fun onAuthRejected(code: String)
+
+    /** The cloud is in the shared-token warning stage (`warn`). */
+    fun onSharedTokenWarning()
+}
 
 /** A CAS write lost its race; the caller must retain a conflict copy. */
 class GameSaveScopeConflictException(val head: String) : GameSaveException(
@@ -115,6 +157,7 @@ class GameSaveScopeConflictException(val head: String) : GameSaveException(
 class GameSaveClient(
     private val config: GameSaveConfig,
     private val device: GameSaveDeviceIdentity? = null,
+    private val authObserver: GameSaveAuthObserver? = null,
 ) {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -129,6 +172,22 @@ class GameSaveClient(
     }
 
     fun testConnection(): Result<Unit> = list().map { Unit }
+
+    /** The credential's type and compatibility stage; null when the service predates the route. */
+    fun whoami(): Result<GameSaveWhoami?> = runCatching {
+        execute(request("$serviceUrl/v1/auth/whoami")).use { response ->
+            if (response.code == 404) return@runCatching null
+            requireSuccess(response, "查询 SaveVault 云端凭据")
+            val json = JSONObject(response.body?.string().orEmpty())
+            GameSaveWhoami(
+                auth = json.optString("auth").trim(),
+                tokenId = json.optString("token_id").trim(),
+                deviceId = json.optString("device_id").trim(),
+                name = json.optString("name").trim(),
+                sharedTokenMode = json.optString("shared_token_mode").trim(),
+            )
+        }
+    }.mapFailure()
 
     fun list(): Result<List<RemoteSnapshot>> = runCatching {
         execute(request(listEndpoint())).use { response ->
@@ -424,24 +483,30 @@ class GameSaveClient(
     private fun request(url: String): Request.Builder = Request.Builder()
         .url(url)
         .header("Authorization", "Bearer ${config.syncKey}")
-        .also(::applyDeviceHeaders)
+        .also { applyDeviceHeaders(it, device) }
 
-    private fun applyDeviceHeaders(request: Request.Builder) {
-        val identity = device
-        val platform = identity?.platform ?: "opensave-android"
-        // Keep released servers observable during a staggered upgrade while
-        // preferring the OpenSave-specific family in current game-save builds.
-        for (family in listOf("X-OpenSave", "X-Eden")) {
-            request.header("$family-Platform", platform)
-            if (identity != null) {
-                request.header("$family-Device-ID", identity.id)
-                request.header("$family-Device-Name", DeviceHeaders.encodeName(identity.name))
-                if (identity.version.isNotBlank()) request.header("$family-Version", identity.version)
+    private fun execute(builder: Request.Builder): Response {
+        val response = httpClient.newCall(builder.build()).execute()
+        try {
+            if (response.header(AUTH_WARNING_HEADER) == SHARED_TOKEN_DEPRECATED) {
+                runCatching { authObserver?.onSharedTokenWarning() }
             }
+            if (response.code == 401) {
+                val code = runCatching {
+                    JSONObject(response.peekBody(AUTH_ERROR_BODY_LIMIT).string()).optString("code").trim()
+                }.getOrDefault("")
+                val reason = code.takeIf { it == TOKEN_REVOKED || it == SHARED_TOKEN_DISABLED } ?: UNAUTHORIZED
+                // Persist/stop background work before the caller unwinds; that path must not retry.
+                if (reason != UNAUTHORIZED) runCatching { authObserver?.onAuthRejected(reason) }
+                response.close()
+                throw GameSaveAuthException(reason, authMessage(reason))
+            }
+            return response
+        } catch (error: Throwable) {
+            response.close()
+            throw error
         }
     }
-
-    private fun execute(builder: Request.Builder): Response = httpClient.newCall(builder.build()).execute()
 
     private fun requireSuccess(response: Response, operation: String) {
         if (response.isSuccessful) return
@@ -477,6 +542,119 @@ class GameSaveClient(
         private val SCOPE_SNAPSHOT_ID_PATTERN = Regex("^[a-z0-9][a-z0-9_.-]{0,191}$", RegexOption.IGNORE_CASE)
         private const val BUFFER_SIZE = 1024 * 1024
         private const val TIMEOUT_MS = 30L * 1000L
+        private const val AUTH_ERROR_BODY_LIMIT = 4096L
+        private const val AUTH_WARNING_HEADER = "X-Game-Save-Auth-Warning"
+        private const val SHARED_TOKEN_DEPRECATED = "shared-token-deprecated"
+        private const val TOKEN_REVOKED = "token_revoked"
+        private const val SHARED_TOKEN_DISABLED = "shared_token_disabled"
+        private const val UNAUTHORIZED = "unauthorized"
+
+        /** The pairing call has no saved credential, so it builds its own client. */
+        private val pairingHttpClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .writeTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .build()
+        }
+
+        /**
+         * Exchanges a pairing code for a device token. This is intentionally
+         * static: it must work before any config (or key) has been saved, and
+         * the code itself is the only credential the request carries.
+         */
+        fun claimPairing(
+            serviceUrl: String,
+            code: String,
+            device: GameSaveDeviceIdentity,
+        ): Result<GameSavePairingResult> = runCatching {
+            val normalizedServiceUrl = normalizeServiceUrl(serviceUrl)
+            require(normalizedServiceUrl.isNotBlank()) { "请先填写 SaveVault 云端地址" }
+            val claimUrl = "$normalizedServiceUrl/v1/pair/claim"
+            val normalizedCode = PairingCode.normalize(code)
+                ?: throw IllegalArgumentException("配对码无效")
+            val body = JSONObject()
+                .put("code", normalizedCode)
+                .put("device_id", device.id)
+                .put("device_name", device.name.take(MAX_DEVICE_NAME_LENGTH))
+                .put("platform", device.platform)
+                .put("version", device.version)
+                .toString()
+                .toRequestBody(JSON_MEDIA_TYPE)
+            val request = Request.Builder()
+                .url(claimUrl)
+                .post(body)
+                .header("Content-Type", "application/json")
+                .also { applyDeviceHeaders(it, device) }
+                .build()
+            pairingHttpClient.newCall(request).execute().use { response ->
+                when (response.code) {
+                    200 -> parsePairingResult(response.body?.string().orEmpty())
+                    400 -> throw GameSaveException("配对请求无效", httpStatus = 400)
+                    401 -> throw GameSaveException("配对码无效、已过期或已被使用", httpStatus = 401)
+                    404 -> throw GameSavePairingUnsupportedException()
+                    429 -> throw GameSaveException("配对失败次数太多，请稍后再试", retryable = true, httpStatus = 429)
+                    else -> throw GameSaveException(
+                        "配对失败：HTTP ${response.code}",
+                        retryable = response.code >= 500 || response.code == 408,
+                        httpStatus = response.code,
+                    )
+                }
+            }
+        }.mapPairingFailure()
+
+        private fun parsePairingResult(body: String): GameSavePairingResult {
+            val json = runCatching { JSONObject(body) }
+                .getOrElse { throw GameSaveException("SaveVault 云端返回的令牌无效") }
+            val token = json.opt("token") as? String
+            // Opaque to the client, but a bearer header must stay printable ASCII.
+            if (token.isNullOrEmpty() || token.any { it.code !in 0x21..0x7e }) {
+                throw GameSaveException("SaveVault 云端返回的令牌无效")
+            }
+            return GameSavePairingResult(
+                token = token,
+                tokenId = json.optString("token_id").trim(),
+                name = json.optString("name").trim(),
+                serverVersion = json.optString("server_version").trim(),
+            )
+        }
+
+        private fun <T> Result<T>.mapPairingFailure(): Result<T> = fold(
+            onSuccess = { Result.success(it) },
+            onFailure = { error ->
+                if (error is GameSaveException) {
+                    Result.failure(error)
+                } else {
+                    val message = when (error) {
+                        is IllegalArgumentException -> error.message ?: "配对请求无效"
+                        is IOException -> "无法连接 SaveVault 云端：${error.message ?: "网络错误"}"
+                        else -> "SaveVault 云端配对失败"
+                    }
+                    Result.failure(GameSaveException(message, retryable = error is IOException))
+                }
+            },
+        )
+
+        /** Device headers are shared by normal sync requests and the unauthenticated pairing request. */
+        private fun applyDeviceHeaders(request: Request.Builder, identity: GameSaveDeviceIdentity?) {
+            val platform = identity?.platform ?: "opensave-android"
+            // Keep released servers observable during a staggered upgrade while
+            // preferring the OpenSave-specific family in current game-save builds.
+            for (family in listOf("X-OpenSave", "X-Eden")) {
+                request.header("$family-Platform", platform)
+                if (identity != null) {
+                    request.header("$family-Device-ID", identity.id)
+                    request.header("$family-Device-Name", DeviceHeaders.encodeName(identity.name))
+                    if (identity.version.isNotBlank()) request.header("$family-Version", identity.version)
+                }
+            }
+        }
+
+        private fun authMessage(code: String): String = when (code) {
+            TOKEN_REVOKED -> "此设备已被 SaveVault 云端移除，请重新配对"
+            SHARED_TOKEN_DISABLED -> "SaveVault 云端已停用共享同步密钥，请用配对码连接本设备"
+            else -> "同步密钥或设备令牌无效，请检查"
+        }
 
         /** Accept a service root, including an optional reverse-proxy path, but never credentials or a query. */
         fun normalizeServiceUrl(value: String): String {
@@ -507,6 +685,7 @@ class GameSaveClient(
             URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 
         private const val MAX_GAME_NAME_LENGTH = 120
+        private const val MAX_DEVICE_NAME_LENGTH = 80
 
         private fun isSafeScopeSnapshotId(value: String): Boolean =
             SCOPE_SNAPSHOT_ID_PATTERN.matches(value)

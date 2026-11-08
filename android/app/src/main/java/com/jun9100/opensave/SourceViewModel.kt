@@ -2109,7 +2109,7 @@ class SourceViewModel(
         }
         if (previous != null) {
             var uploadError: String? = null
-            if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank() && !previous.uploaded) {
+            if (upload && config.ready && !previous.uploaded) {
                 val recordType = GameSaveTypes.fromId(previous.saveType)
                 val uploadResult = gameSaveClient(config).upload(snapshotRepository.fileFor(previous), recordType, previous.remoteName)
                 if (uploadResult.isSuccess) {
@@ -2144,7 +2144,7 @@ class SourceViewModel(
         snapshotRepository.add(record)
 
         var uploadError: String? = null
-        if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) {
+        if (upload && config.ready) {
             val uploadResult = gameSaveClient(config).upload(build.archive, saveType, remoteName)
             if (uploadResult.isSuccess) {
                 snapshotRepository.markUploaded(record.id)
@@ -2314,7 +2314,7 @@ class SourceViewModel(
         runCatching { gameSaveStore.load() }.getOrDefault(GameSaveConfig())
 
     private fun gameSaveClient(config: GameSaveConfig) =
-        GameSaveClient(config, gameSaveDevice.identity())
+        GameSaveClient(config, gameSaveDevice.identity(), GameSaveAuthGuard(app))
 
     /** Every game keeps its own newest versions, so status and history never drop a game backed up long ago. */
     private fun currentSnapshots(): List<SnapshotRecord> = LibraryView.retainedSnapshots(

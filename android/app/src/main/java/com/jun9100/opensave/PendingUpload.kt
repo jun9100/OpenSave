@@ -67,7 +67,8 @@ class PendingUploadStore(context: Context) {
  * and only while 新版本自动上传 is on and the cloud is configured.
  */
 internal object PendingUploadScheduler {
-    private const val WORK_NAME = "opensave_pending_upload"
+    /** Cancelled when the cloud rejects this install's credential. */
+    internal const val WORK_NAME = "opensave_pending_upload"
     private const val INITIAL_BACKOFF_SECONDS = 30L
 
     fun schedule(context: Context, libraryKeys: Collection<String>) {

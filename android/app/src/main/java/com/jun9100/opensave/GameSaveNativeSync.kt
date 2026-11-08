@@ -175,7 +175,11 @@ internal object GameSaveNativeResolver {
 class GameSaveNativeSync(
     context: Context,
     private val config: GameSaveConfig,
-    private val client: GameSaveClient = GameSaveClient(config, GameSaveDeviceStore(context.applicationContext).identity()),
+    private val client: GameSaveClient = GameSaveClient(
+        config,
+        GameSaveDeviceStore(context.applicationContext).identity(),
+        GameSaveAuthGuard(context.applicationContext),
+    ),
 ) {
     private val appContext = context.applicationContext
     private val states = GameSaveHeadStore(appContext)

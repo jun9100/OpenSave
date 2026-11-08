@@ -12,6 +12,7 @@ import com.jun9100.opensave.GameCloudFacts
 import com.jun9100.opensave.GameCloudIdentity
 import com.jun9100.opensave.GameCloudNaming
 import com.jun9100.opensave.GameLibrary
+import com.jun9100.opensave.GameSaveAuthGuard
 import com.jun9100.opensave.GameSaveClient
 import com.jun9100.opensave.GameSaveCloudGameMember
 import com.jun9100.opensave.GameSaveCloudUpdate
@@ -134,7 +135,8 @@ internal class GameOperations(
 
     fun loadConfig(): GameSaveConfig = gameSaveStore.load()
 
-    fun client(config: GameSaveConfig): GameSaveClient = GameSaveClient(config, gameSaveDevice.identity())
+    fun client(config: GameSaveConfig): GameSaveClient =
+        GameSaveClient(config, gameSaveDevice.identity(), GameSaveAuthGuard(app))
 
     /** Downloads [member]'s head archive into the cache and checks its digest. Read-only on the cloud. */
     fun downloadOtherDeviceHead(member: GameSaveCloudGameMember, config: GameSaveConfig): File {
@@ -862,6 +864,6 @@ internal class GameOperations(
     }
 }
 
-/** game-save is switched on and has both an address and a sync key. */
+/** game-save is switched on, has both an address and a sync key, and the cloud has not blocked the credential. */
 internal val GameSaveConfig.ready: Boolean
-    get() = enabled && serviceUrl.isNotBlank() && syncKey.isNotBlank()
+    get() = enabled && serviceUrl.isNotBlank() && syncKey.isNotBlank() && authBlocked.isBlank()

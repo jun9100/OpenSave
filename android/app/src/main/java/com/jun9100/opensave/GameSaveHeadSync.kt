@@ -543,7 +543,7 @@ class GameSaveHeadReader(
 ) {
     private val appContext = context.applicationContext
     private val device = GameSaveDeviceStore(appContext)
-    private val client = client ?: GameSaveClient(config, device.identity())
+    private val client = client ?: GameSaveClient(config, device.identity(), GameSaveAuthGuard(appContext))
 
     fun check(
         identity: GameCloudIdentity,
@@ -648,7 +648,7 @@ class GameSaveHeadPublisher(
         val headFile = File(directory, GameSaveCloudProtocol.headFileName(identity.gameId, deviceIdentity.id, announcedAt))
         try {
             GameSaveCloudProtocol.writeHead(headFile, head)
-            GameSaveClient(config, deviceIdentity).upload(headFile, identity.saveType, headFile.name).getOrThrow()
+            GameSaveClient(config, deviceIdentity, GameSaveAuthGuard(appContext)).upload(headFile, identity.saveType, headFile.name).getOrThrow()
             states.save(
                 identity,
                 state.copy(

@@ -14,16 +14,24 @@ data class GameSaveConfig(
     val enabled: Boolean = false,
     val serviceUrl: String = "",
     val syncKey: String = "",
-)
+    /** Server verdict for the saved credential; not persisted in the config file. */
+    val authBlocked: String = "",
+) {
+    /** The key must never reach a log or crash report through an implicit data-class print. */
+    override fun toString(): String =
+        "GameSaveConfig(enabled=$enabled, serviceUrl=$serviceUrl, syncKey=***, authBlocked=$authBlocked)"
+}
 
 /** Persists only the service address in plaintext; the sync key stays in Android Keystore encryption. */
 class GameSaveConfigStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private val authStore = GameSaveAuthStore(context.applicationContext)
 
     fun load(): GameSaveConfig = GameSaveConfig(
         enabled = preferences.getBoolean(ENABLED_KEY, false),
         serviceUrl = preferences.getString(URL_KEY, "").orEmpty(),
         syncKey = decrypt(preferences.getString(SYNC_KEY, null)),
+        authBlocked = authStore.blocked(),
     )
 
     fun save(config: GameSaveConfig) {
