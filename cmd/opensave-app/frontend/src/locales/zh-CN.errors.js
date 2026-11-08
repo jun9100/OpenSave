@@ -2,6 +2,17 @@
 // trError): recognised by what they are about, since their wording comes
 // from all over the Go side. The original stays alongside in brackets.
 export default [
+  // Pairing errors first: the generic "not authenticated", "401" and
+  // "invalid" rules below would otherwise claim these messages and lose the
+  // one detail that tells the user what to do next.
+  [/pairing code must be 8 letters or digits/i, '配对码格式不对，应为 8 位字母或数字，如 ABCD-EFGH'],
+  [/not a SaveVault pairing link/i, '这不是有效的配对链接'],
+  [/confirm the server's host name before pairing/i, '请先确认服务器主机名'],
+  [/the service does not support pairing/i, '服务端不支持配对'],
+  [/the pairing code is invalid, expired, or already used/i, '配对码无效、已过期或已被使用'],
+  [/too many failed pairing attempts; try again later/i, '配对失败次数过多，请稍后再试'],
+  [/game-save revoked this device's token; pair this device again/i, '此设备已被移除，请重新配对'],
+  [/game-save no longer accepts the shared sync key; pair this device/i, '服务端已停用共享令牌，请配对本设备'],
   [/no space left|not enough space|disk full|enospc|quota/i, '磁盘或云端空间不足'],
   [/permission denied|access is denied|eacces|eperm|read-only file system/i, '没有权限（文件只读或被其他程序占用）'],
   [/being used by another process|sharing violation/i, '文件被其他程序占用'],
