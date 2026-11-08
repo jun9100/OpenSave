@@ -29,12 +29,19 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/opensave/opensave/internal/watcher"
 )
 
 // cliBin is the binary under test, built once for the whole package.
 var cliBin string
 
 func TestMain(m *testing.M) {
+	// These tests change a save and expect the next version within seconds;
+	// the production gap between automatic snapshots would hold them for
+	// minutes. Set for this process and every daemon it starts.
+	watcher.SetMinAutoSnapshotInterval(0)
+	os.Setenv("OPENSAVE_AUTO_SNAPSHOT_MIN_INTERVAL", "0s")
 	dir, err := os.MkdirTemp("", "opensave-cli-e2e-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cli e2e: temp dir: %v\n", err)

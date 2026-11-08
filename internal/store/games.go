@@ -140,6 +140,39 @@ func (s *Store) FindGameBySavePath(path string) (Game, error) {
 	return Game{}, ErrNotFound
 }
 
+// FindGameOverlappingSavePath returns a tracked game whose save path holds
+// path (inside is true) or lies inside it (inside is false), compared
+// case-insensitively and by whole path components. The same folder is not an
+// overlap; FindGameBySavePath covers that. Two tracked games whose folders
+// overlap both see every write to the inner one, so each save is backed up,
+// and uploaded, twice under two names.
+func (s *Store) FindGameOverlappingSavePath(path string) (game Game, inside bool, err error) {
+	games, err := s.ListGames()
+	if err != nil {
+		return Game{}, false, err
+	}
+	target := overlapKey(path)
+	for _, g := range games {
+		other := overlapKey(g.SavePath)
+		if other == "" || other == target {
+			continue
+		}
+		if strings.HasPrefix(target, other+"/") {
+			return g, true, nil
+		}
+		if strings.HasPrefix(other, target+"/") {
+			return g, false, nil
+		}
+	}
+	return Game{}, false, ErrNotFound
+}
+
+// overlapKey is a save path in the form FindGameOverlappingSavePath compares:
+// forward slashes, lower case, no trailing separator.
+func overlapKey(path string) string {
+	return strings.ToLower(strings.TrimRight(strings.ReplaceAll(path, `\`, "/"), "/"))
+}
+
 // ListGames returns every tracked game, ordered by name.
 func (s *Store) ListGames() ([]Game, error) {
 	var games []Game
