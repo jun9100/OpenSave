@@ -31,12 +31,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (savedInstanceState == null) openRequestedPage(intent)
+        if (savedInstanceState == null) {
+            openRequestedPage(intent)
+            openPairingLink(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         openRequestedPage(intent)
+        openPairingLink(intent)
     }
 
     /** A "需要处理" notification opens "同步与任务". */
@@ -45,6 +49,14 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra(ActivityNotifications.EXTRA_OPEN_PAGE)
             sourceViewModel.openSyncTasks()
         }
+    }
+
+    /** `savevault://pair` (system camera, browser) goes to the host confirmation before any request. */
+    private fun openPairingLink(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW || intent.data?.scheme != "savevault") return
+        intent.dataString?.let(sourceViewModel::openPairingLink)
+        // A rotation or process recreation reuses the activity intent; do not ask again.
+        intent.data = null
     }
 
     /**
