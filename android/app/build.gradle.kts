@@ -1,8 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// The release key never enters the repository. Its properties file
+// (storeFile, storePassword, keyAlias, keyPassword) is read from
+// SAVEVAULT_KEYSTORE_PROPERTIES or ~/.savevault/keystore.properties; without
+// one, release builds stay unsigned.
+val releaseKeystore = (System.getenv("SAVEVAULT_KEYSTORE_PROPERTIES")
+    ?.let(::file)
+    ?: file("${System.getProperty("user.home")}/.savevault/keystore.properties"))
+    .takeIf { it.isFile }
+    ?.let { file -> Properties().apply { file.inputStream().use(::load) } }
 
 android {
     namespace = "com.jun9100.opensave"
@@ -12,12 +24,23 @@ android {
         applicationId = "com.jun9100.opensave"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.4.0"
+        versionCode = 23
+        versionName = "0.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    signingConfigs {
+        releaseKeystore?.let { keystore ->
+            create("release") {
+                storeFile = file(keystore.getProperty("storeFile"))
+                storePassword = keystore.getProperty("storePassword")
+                keyAlias = keystore.getProperty("keyAlias")
+                keyPassword = keystore.getProperty("keyPassword")
+            }
         }
     }
 
@@ -29,6 +52,7 @@ android {
             matchingFallbacks += listOf("debug")
         }
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
