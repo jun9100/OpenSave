@@ -5,6 +5,8 @@ import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.GameSaveCloudUpdate
 import com.jun9100.opensave.GameSaveRemoteAction
 import com.jun9100.opensave.GameSnapshotManifest
+import com.jun9100.opensave.PendingUploadPolicy
+import com.jun9100.opensave.PendingUploadScheduler
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.StorageOperationLock
@@ -65,6 +67,8 @@ internal object BatchJobs {
         } finally {
             execution.findings()?.let(BatchCenter::publishFindings)
             report?.let { ActivityRecorder.record(appContext, BatchActivity.entry(it)) }
+            // The saves are already on disk; retry the uploads the cloud refused for now.
+            runCatching { execution.schedulePendingUploads(appContext) }
             BatchCenter.finish(id, report)
         }
     }
@@ -101,12 +105,21 @@ internal class BatchExecution(
     private val client by lazy { ops.client(config) }
     private var remoteList: List<RemoteSnapshot>? = null
 
+    /** (libraryKey, error) of uploads this batch lost; a retryable one is retried in the background. */
+    private val uploadFailures = mutableListOf<Pair<String, Throwable?>>()
+
     /** The cloud file list, read once and only when the legacy protocol needs it. */
     private fun remoteSnapshots(): List<RemoteSnapshot> =
         remoteList ?: client.list().getOrThrow().also { remoteList = it }
 
     fun findings(): CloudFindings? =
         if (checkedKeys.isEmpty() && remoteList == null) null else CloudFindings(id, checkedKeys.toSet(), updates.toList(), remoteList)
+
+    /** Queues the background retry of the failed uploads the cloud may accept later; nothing else. */
+    fun schedulePendingUploads(context: Context) {
+        if (uploadFailures.isEmpty()) return
+        PendingUploadScheduler.schedule(context, PendingUploadPolicy.keysToRetry(config, uploadFailures))
+    }
 
     suspend fun run(entry: SourceGameEntry): BatchStepResult = when (operation) {
         BatchOperation.BACKUP -> backup(entry)
@@ -127,6 +140,7 @@ internal class BatchExecution(
         val manifest = GameSnapshotManifest.from(entry.game, GameLibrary.batchBackupLocations(entry.game))
         val captured = locked { ops.captureLocked(entry, manifest) }
         if (captured.published) remember(entry, captured.cloudUpdate)
+        if (captured.uploadError != null) uploadFailures += entry.libraryKey to captured.uploadException
         return captured.toResult()
     }
 
@@ -137,6 +151,7 @@ internal class BatchExecution(
             PendingUpload.LocalChanged -> BatchStepResult(BatchItemStatus.SKIPPED, "存档在备份后又有变更，请先备份")
             is PendingUpload.Published -> {
                 if (result.outcome.uploaded) remember(entry, result.outcome.cloudUpdate)
+                if (result.outcome.uploadError != null) uploadFailures += entry.libraryKey to result.outcome.uploadException
                 result.outcome.toResult()
             }
         }

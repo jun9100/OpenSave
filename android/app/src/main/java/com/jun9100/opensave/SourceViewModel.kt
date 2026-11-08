@@ -1547,6 +1547,18 @@ class SourceViewModel(
                     captured.reused -> log(ActivityKind.BACKUP, ActivityLevel.INFO, "${manifest.gameName}：$UNCHANGED_SKIPPED${reusedUploadSuffix(captured)}", captured.syncNotice.orEmpty())
                     else -> log(ActivityKind.BACKUP, ActivityLevel.SUCCESS, "已备份 ${manifest.gameName}", captured.syncNotice.orEmpty())
                 }
+                // The snapshot is saved; a refusal the cloud may accept later is retried once the network is back.
+                if (captured.uploadError != null) {
+                    runCatching {
+                        PendingUploadScheduler.schedule(
+                            app,
+                            PendingUploadPolicy.keysToRetry(
+                                gameSaveStore.load(),
+                                listOf(entry.libraryKey to captured.uploadException),
+                            ),
+                        )
+                    }
+                }
                 state.value = state.value.finished(
                     OpenSavePage.LIBRARY,
                     action = action,
