@@ -81,6 +81,14 @@ func TestCrossRestorePlanRoute(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
+		case "/v1/opensave/games":
+			_ = json.NewEncoder(w).Encode(map[string]any{"games": []cloud.GameSaveGame{{
+				Key: "switch/test", Type: "switch",
+				Scopes: []cloud.GameSaveGameMember{
+					{Type: "switch", GameID: "cross-game", Link: "auto"},
+					{Type: "switch", GameID: "member-1", Link: "auto"},
+				},
+			}}})
 		case "/v1/opensave/scopes/switch/member-1":
 			_ = json.NewEncoder(w).Encode(cloud.GameSaveScope{
 				Type: "switch", GameID: "member-1",

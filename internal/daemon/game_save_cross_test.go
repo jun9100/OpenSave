@@ -43,6 +43,11 @@ type crossRestoreTestServer struct {
 	uploadGate    chan struct{}
 	uploadReached chan struct{}
 	server        *httptest.Server
+	// ungrouped names scopes ("type/gameId") the games index puts in a group
+	// of their own; every other scope of a type shares one group with this
+	// device's game. gamesUnsupported makes the index route 404.
+	ungrouped        map[string]bool
+	gamesUnsupported bool
 }
 
 type crossRestoreTestScope struct {
@@ -85,9 +90,56 @@ func (s *crossRestoreTestServer) serveHTTP(w http.ResponseWriter, r *http.Reques
 		case "scopes":
 			s.handleScopes(w, r, parts)
 			return
+		case "games":
+			s.handleGames(w, r, parts)
+			return
 		}
 	}
 	w.WriteHeader(http.StatusNotFound)
+}
+
+// handleGames is the grouping index: one game per type holding this device's
+// scope and every scope not marked ungrouped, plus one game per ungrouped
+// scope.
+func (s *crossRestoreTestServer) handleGames(w http.ResponseWriter, r *http.Request, parts []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(parts) != 3 || r.Method != http.MethodGet || s.gamesUnsupported {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	byType := map[string]*cloud.GameSaveGame{}
+	var games []cloud.GameSaveGame
+	keys := make([]string, 0, len(s.scopes))
+	for key := range s.scopes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		kind, gameID, _ := strings.Cut(key, "/")
+		member := cloud.GameSaveGameMember{Type: kind, GameID: gameID, Link: "auto"}
+		if s.ungrouped[key] {
+			games = append(games, cloud.GameSaveGame{Key: kind + "/scope:" + gameID, Type: kind, Scopes: []cloud.GameSaveGameMember{member}})
+			continue
+		}
+		group := byType[kind]
+		if group == nil {
+			group = &cloud.GameSaveGame{Key: kind + "/test", Type: kind}
+			byType[kind] = group
+		}
+		group.Scopes = append(group.Scopes, member)
+	}
+	for kind, group := range byType {
+		found := false
+		for _, member := range group.Scopes {
+			found = found || member.GameID == cloudGame
+		}
+		if !found {
+			group.Scopes = append(group.Scopes, cloud.GameSaveGameMember{Type: kind, GameID: cloudGame, Link: "auto"})
+		}
+		games = append(games, *group)
+	}
+	writeNativeGameSaveJSON(w, http.StatusOK, map[string]any{"games": games})
 }
 
 func (s *crossRestoreTestServer) handleFiles(w http.ResponseWriter, r *http.Request, parts []string) {
@@ -927,6 +979,43 @@ func TestCrossRestoreRejectsConflictAndOwnScope(t *testing.T) {
 	if _, err := device.d.PlanCrossDeviceRestore(cloudGame, cloudGame, source.ID); !errors.Is(err, ErrCrossRestoreInvalid) ||
 		!strings.Contains(err.Error(), "own cloud scope") {
 		t.Fatalf("own scope error = %v, want ErrCrossRestoreInvalid", err)
+	}
+}
+
+func TestCrossRestoreRefusesAScopeOutsideThisGamesGroup(t *testing.T) {
+	service := newCrossRestoreTestServer(t)
+	device := newCrossRestoreDevice(t, "Desktop", "desktop-node", service.url(), "pc")
+	archiveName := "other-game__main__snap_1800000000000--dev-source.zip"
+	data := crossRestorePCData(t)
+	service.addArchive("pc", archiveName, data)
+	source := crossRestoreSourceSnapshot(archiveName, data, "Steam Deck", "linux")
+	service.addSnapshot("pc", "other-game", source, false)
+	service.mu.Lock()
+	service.ungrouped = map[string]bool{"pc/other-game": true}
+	service.mu.Unlock()
+
+	// Same type namespace, different game: never a restore source.
+	if _, err := device.d.PlanCrossDeviceRestore(cloudGame, "other-game", source.ID); !errors.Is(err, ErrCrossRestoreInvalid) ||
+		!strings.Contains(err.Error(), "not grouped") {
+		t.Fatalf("plan from another game = %v, want ErrCrossRestoreInvalid (not grouped)", err)
+	}
+	if _, err := device.d.ApplyCrossDeviceRestore(cloudGame, "other-game", source.ID,
+		[]snapshot.ForeignAssignment{{ArchiveLocation: snapshot.ForeignPCRoot}}); !errors.Is(err, ErrCrossRestoreInvalid) {
+		t.Fatalf("apply from another game = %v, want ErrCrossRestoreInvalid", err)
+	}
+
+	// A service without the games index cannot prove the match either.
+	service.mu.Lock()
+	service.ungrouped = nil
+	service.gamesUnsupported = true
+	service.mu.Unlock()
+	if _, err := device.d.PlanCrossDeviceRestore(cloudGame, "other-game", source.ID); !errors.Is(err, ErrCrossRestoreInvalid) {
+		t.Fatalf("plan without a games index = %v, want ErrCrossRestoreInvalid", err)
+	}
+	for _, request := range service.recordedRequests() {
+		if strings.HasPrefix(request.Path, "/v1/opensave/files/") {
+			t.Fatalf("an unmatched source was downloaded: %s %s", request.Method, request.Path)
+		}
 	}
 }
 

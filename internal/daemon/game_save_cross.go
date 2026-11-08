@@ -199,6 +199,10 @@ func (d *Daemon) crossRestoreSource(gameID, memberGameID, snapshotID string) (
 		return game, snap, "", cleanup, fmt.Errorf("%w: cannot restore from this device's own cloud scope", ErrCrossRestoreInvalid)
 	}
 
+	if err := d.requireSameGameGroup(game, memberGameID); err != nil {
+		return game, snap, "", cleanup, err
+	}
+
 	scope, err := d.Cloud.GetGameSaveScope(game.SaveType, memberGameID)
 	if err != nil {
 		if errors.Is(err, cloud.ErrGameSaveScopesUnsupported) {
@@ -265,6 +269,30 @@ func (d *Daemon) crossRestoreSource(gameID, memberGameID, snapshotID string) (
 		}
 	}
 	return game, snap, zipPath, cleanup, nil
+}
+
+// requireSameGameGroup refuses a source scope the service does not group
+// with this game. The UI only offers members of the game's own group, but the
+// API takes any scope id, and the same type namespace alone holds every other
+// game of that type: restoring one of those would replace this save with a
+// different game's.
+func (d *Daemon) requireSameGameGroup(game store.Game, memberGameID string) error {
+	games, err := d.Cloud.ListGameSaveGames()
+	if errors.Is(err, cloud.ErrGameSaveGamesUnsupported) {
+		return fmt.Errorf("%w: the cloud service does not group games, so another device's save cannot be matched to this one", ErrCrossRestoreInvalid)
+	}
+	if err != nil {
+		return fmt.Errorf("read game-save game groups: %w", err)
+	}
+	saveType := cloud.SaveTypeScope(game.SaveType)
+	if group := findGameSaveGroup(games, game); group != nil {
+		for _, member := range group.Scopes {
+			if member.Type == saveType && member.GameID == memberGameID {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: %q is not grouped with this game in the cloud", ErrCrossRestoreInvalid, memberGameID)
 }
 
 // crossRestoreLocalLocations is the main save folder plus every extra

@@ -26,6 +26,7 @@ export default [
   [/\bsave is in use\b/i, '存档正在使用中'],
   [/single-file save locations? cannot be restored/i, '单文件存档位置暂不支持跨设备恢复'],
   [/cannot restore from this device's own cloud scope/i, '不能从本机自己的云端范围恢复'],
+  [/not grouped with this game in the cloud|cloud service does not group games/i, '云端没有把这份存档和本游戏归为同一个游戏，不能恢复'],
   [/cloud save (manifest|archive)|foreign save archive is invalid/i, '云端存档清单无效'],
   [/not found/i, '找不到对象'],
   [/required|invalid/i, '请求参数无效']
