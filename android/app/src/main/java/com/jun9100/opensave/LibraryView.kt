@@ -63,6 +63,9 @@ enum class LibraryEmptyState {
     /** No source could be read: nothing granted and no Root. */
     NO_ACCESS,
 
+    /** Nothing is readable because the folders the user granted no longer are. */
+    GRANTS_UNAVAILABLE,
+
     /** Sources were read, but none holds a confirmed save location. */
     NOTHING_FOUND,
 
@@ -73,10 +76,18 @@ enum class LibraryEmptyState {
 /** Pure view logic of the game library, kept out of Compose so it can be unit tested. */
 object LibraryView {
     /** Null while the list shows games. */
-    fun emptyState(scanned: Boolean, readableSources: Int, gameCount: Int, visibleCount: Int): LibraryEmptyState? = when {
+    fun emptyState(
+        scanned: Boolean,
+        readableSources: Int,
+        gameCount: Int,
+        visibleCount: Int,
+        /** Folders granted through the system picker that the last scan could not read. */
+        unavailableGrants: Int = 0,
+    ): LibraryEmptyState? = when {
         visibleCount > 0 -> null
         gameCount > 0 -> LibraryEmptyState.FILTERED_OUT
         !scanned -> LibraryEmptyState.SCANNING
+        readableSources == 0 && unavailableGrants > 0 -> LibraryEmptyState.GRANTS_UNAVAILABLE
         readableSources == 0 -> LibraryEmptyState.NO_ACCESS
         else -> LibraryEmptyState.NOTHING_FOUND
     }

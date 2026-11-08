@@ -117,8 +117,8 @@ class SafStorage(private val context: Context) {
     ): Result<SaveScanReport> = withContext(Dispatchers.IO) {
         runCatching {
             val root = DocumentFile.fromTreeUri(context, uri)
-                ?: error("The selected storage provider is unavailable")
-            require(root.isDirectory) { "The selected URI is not a directory" }
+                ?: error(SafFailures.PROVIDER_UNAVAILABLE)
+            require(root.isDirectory) { SafFailures.NOT_A_DIRECTORY }
 
             val rootName = PathPolicy.requireSafeDocumentName(root.name ?: "authorized-storage")
             val directories = mutableListOf<String>()
@@ -241,8 +241,8 @@ class SafStorage(private val context: Context) {
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val root = DocumentFile.fromTreeUri(context, uri)
-                ?: error("The selected storage provider is unavailable")
-            require(root.isDirectory) { "The selected URI is not a directory" }
+                ?: error(SafFailures.PROVIDER_UNAVAILABLE)
+            require(root.isDirectory) { SafFailures.NOT_A_DIRECTORY }
             require(locations.isNotEmpty()) { "游戏没有可备份的存档位置" }
             if (destinationRoot.exists() && !destinationRoot.deleteRecursively()) {
                 error("Could not clear temporary game workspace")
@@ -267,8 +267,8 @@ class SafStorage(private val context: Context) {
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val root = DocumentFile.fromTreeUri(context, uri)
-                ?: error("The selected storage provider is unavailable")
-            require(root.isDirectory) { "The selected URI is not a directory" }
+                ?: error(SafFailures.PROVIDER_UNAVAILABLE)
+            require(root.isDirectory) { SafFailures.NOT_A_DIRECTORY }
             val targets = locations.map { location ->
                 val target = resolveDirectory(root, location.relativePath)
                 val archivePath = PathPolicy.requireSafeDocumentName(location.archivePath)
@@ -304,8 +304,8 @@ class SafStorage(private val context: Context) {
     suspend fun importTree(uri: Uri): Result<CopyReport> = withContext(Dispatchers.IO) {
         runCatching {
             val root = DocumentFile.fromTreeUri(context, uri)
-                ?: error("The selected storage provider is unavailable")
-            require(root.isDirectory) { "The selected URI is not a directory" }
+                ?: error(SafFailures.PROVIDER_UNAVAILABLE)
+            require(root.isDirectory) { SafFailures.NOT_A_DIRECTORY }
 
             val workspace = workspaceDirectory()
             if (workspace.exists() && !workspace.deleteRecursively()) {
@@ -331,8 +331,8 @@ class SafStorage(private val context: Context) {
     suspend fun restoreWorkspace(uri: Uri): Result<CopyReport> = withContext(Dispatchers.IO) {
         runCatching {
             val root = DocumentFile.fromTreeUri(context, uri)
-                ?: error("The selected storage provider is unavailable")
-            require(root.isDirectory) { "The selected URI is not a directory" }
+                ?: error(SafFailures.PROVIDER_UNAVAILABLE)
+            require(root.isDirectory) { SafFailures.NOT_A_DIRECTORY }
             val workspace = workspaceDirectory()
             require(workspace.isDirectory) { "Import a source directory before restoring it" }
 
@@ -351,8 +351,8 @@ class SafStorage(private val context: Context) {
     suspend fun replaceTreeFromWorkspace(uri: Uri): Result<CopyReport> = withContext(Dispatchers.IO) {
         runCatching {
             val root = DocumentFile.fromTreeUri(context, uri)
-                ?: error("The selected storage provider is unavailable")
-            require(root.isDirectory) { "The selected URI is not a directory" }
+                ?: error(SafFailures.PROVIDER_UNAVAILABLE)
+            require(root.isDirectory) { SafFailures.NOT_A_DIRECTORY }
             val workspace = workspaceDirectory()
             require(workspace.isDirectory) { "Restore a snapshot before writing it back" }
 
