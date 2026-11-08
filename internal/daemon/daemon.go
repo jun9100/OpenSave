@@ -739,6 +739,12 @@ func isDuplicateGameID(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: games.id")
 }
 
+// ErrOverlapsTrackedGame refuses a new game whose folder lies inside, or
+// holds, a tracked game's folder: both would be snapshotted on every write to
+// the inner one. Seen as forza-horizon-5 and forza-horizon-5-2, each uploading
+// the same save every few seconds.
+var ErrOverlapsTrackedGame = errors.New("overlaps a tracked game")
+
 // TrackGame adds a new game, takes its initial snapshot (when the save
 // location already has content), and starts watching it.
 func (d *Daemon) TrackGame(game store.Game) (store.Game, error) {
@@ -757,6 +763,12 @@ func (d *Daemon) TrackGame(game store.Game) (store.Game, error) {
 	if derivedID {
 		if existing, err := d.Store.FindGameBySavePath(abs); err == nil {
 			return store.Game{}, fmt.Errorf("this folder is already tracked (as %q)", existing.Name)
+		}
+		if other, inside, err := d.Store.FindGameOverlappingSavePath(abs); err == nil {
+			if inside {
+				return store.Game{}, fmt.Errorf("%w: this folder is inside the tracked folder of %q (%s)", ErrOverlapsTrackedGame, other.Name, other.SavePath)
+			}
+			return store.Game{}, fmt.Errorf("%w: this folder contains the tracked folder of %q (%s)", ErrOverlapsTrackedGame, other.Name, other.SavePath)
 		}
 		base := store.SlugifyGameID(game.Name)
 		// A Switch game is tracked under its title id rather than its name:

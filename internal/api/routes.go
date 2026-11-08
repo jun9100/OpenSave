@@ -370,7 +370,8 @@ func (s *Server) handleTrackGame(w http.ResponseWriter, r *http.Request) {
 		// Duplicates (id or path) are conflicts; anything else the daemon
 		// rejects is bad input.
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "already track") || strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, daemon.ErrOverlapsTrackedGame) ||
+			strings.Contains(err.Error(), "already track") || strings.Contains(err.Error(), "already exists") {
 			status = http.StatusConflict
 		}
 		writeError(w, status, err.Error())

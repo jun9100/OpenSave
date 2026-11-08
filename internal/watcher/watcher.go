@@ -91,6 +91,38 @@ const (
 // to it.
 var reconcileInterval = 15 * time.Minute
 
+// minAutoSnapshotInterval is the shortest gap between two automatic
+// snapshots of one game. Some games rewrite their save every few seconds
+// while being played (Forza Horizon 5 does, 7 MB at a time), and a version
+// per write fills the history and the cloud with mid-session states. A
+// change inside the window is not dropped: it is taken when the window ends,
+// so the last state of a session is always kept. Manual snapshots ignore it.
+//
+// OPENSAVE_AUTO_SNAPSHOT_MIN_INTERVAL (a Go duration, e.g. "0s") overrides
+// it; the end-to-end tests set it to zero.
+var minAutoSnapshotInterval = autoSnapshotIntervalFromEnv(3 * time.Minute)
+
+func autoSnapshotIntervalFromEnv(fallback time.Duration) time.Duration {
+	if v := os.Getenv("OPENSAVE_AUTO_SNAPSHOT_MIN_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return fallback
+}
+
+// autoSnapshotDelay is how long to wait before handling a change: the
+// debounce, or longer when the last automatic snapshot was too recent.
+func autoSnapshotDelay(last time.Time, now time.Time) time.Duration {
+	delay := debounceDelay
+	if !last.IsZero() {
+		if wait := last.Add(minAutoSnapshotInterval).Sub(now); wait > delay {
+			delay = wait
+		}
+	}
+	return delay
+}
+
 // Callbacks connect the watcher to the rest of the daemon without import
 // cycles. All are required.
 type Callbacks struct {
@@ -164,9 +196,12 @@ type gameWatch struct {
 	// pressed the button.
 	extra  map[string]string
 	isFile bool
-	fsw    *fsnotify.Watcher
-	cancel context.CancelFunc
-	done   chan struct{}
+	// lastAuto is when this game's last automatic snapshot was taken (unix
+	// nanoseconds, 0 for none yet); see minAutoSnapshotInterval.
+	lastAuto atomic.Int64
+	fsw      *fsnotify.Watcher
+	cancel   context.CancelFunc
+	done     chan struct{}
 	// log is the engine's logger, held here so stop() can report a watch
 	// that refused to exit. Nil in tests that build a gameWatch directly.
 	log func(level, msg string)
@@ -648,8 +683,13 @@ func (e *Engine) run(ctx context.Context, gw *gameWatch) {
 	var debounce *time.Timer
 	var debounceC <-chan time.Time
 	resetDebounce := func() {
+		var last time.Time
+		if n := gw.lastAuto.Load(); n != 0 {
+			last = time.Unix(0, n)
+		}
+		delay := autoSnapshotDelay(last, time.Now())
 		if debounce == nil {
-			debounce = time.NewTimer(debounceDelay)
+			debounce = time.NewTimer(delay)
 			debounceC = debounce.C
 			return
 		}
@@ -659,7 +699,7 @@ func (e *Engine) run(ctx context.Context, gw *gameWatch) {
 			default:
 			}
 		}
-		debounce.Reset(debounceDelay)
+		debounce.Reset(delay)
 	}
 
 	go e.registerFolders(ctx, gw)
@@ -838,6 +878,8 @@ func (e *Engine) handleChange(ctx context.Context, gw *gameWatch) {
 		e.log("error", fmt.Sprintf("auto-snapshot permanently failed for %q: %v", gw.gameID, err))
 		return
 	}
+
+	gw.lastAuto.Store(time.Now().UnixNano())
 
 	if err := e.cb.SetLastManifestHash(gw.gameID, currentHash); err != nil {
 		e.log("warn", fmt.Sprintf("failed to record manifest hash for %q: %v", gw.gameID, err))
@@ -1071,3 +1113,7 @@ func filterForHash(m delta.Manifest, rules ignore.Rules) delta.Manifest {
 	}
 	return out
 }
+
+// SetMinAutoSnapshotInterval replaces minAutoSnapshotInterval; for tests
+// that drive several automatic snapshots in a row.
+func SetMinAutoSnapshotInterval(d time.Duration) { minAutoSnapshotInterval = d }

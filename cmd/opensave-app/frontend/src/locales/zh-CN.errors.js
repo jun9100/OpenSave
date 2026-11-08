@@ -18,6 +18,7 @@ export default [
   [/not enabled/i, '云备份未开启'],
   [/snapshot is damaged|checksum|zip: not a valid/i, '快照已损坏'],
   [/no folder to snapshot|no such file or directory|cannot find the (path|file)|does not exist|no longer exists/i, '文件或文件夹不存在'],
+  [/(inside|contains) the tracked folder of/i, '这个文件夹和一个已跟踪的游戏重叠（在它里面或包含它）；同时跟踪两份会让每次存档都备份两次，请只保留一份'],
   [/already track|already exists/i, '已经存在'],
   [/not found/i, '找不到对象'],
   [/required|invalid/i, '请求参数无效']
