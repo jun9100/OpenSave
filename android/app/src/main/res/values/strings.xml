@@ -40,6 +40,7 @@
     <!-- 游戏库空状态 -->
     <string name="library_empty_scanning">正在扫描已知的游戏与模拟器存档来源。</string>
     <string name="library_empty_no_access">还没有可读取的来源。没有 Root 时，SaveVault 只能读取你授权的目录：请添加模拟器的存档目录，例如 PPSSPP 的 PSP 文件夹、RetroArch 或 Dolphin 的存档文件夹，添加后会自动扫描。</string>
+    <string name="library_empty_grants_unavailable">已授权的目录现在都无法读取：可能被移动、删除，或授权已被撤销。到“来源”页查看原因，重新授权或移除它。</string>
     <string name="library_empty_nothing_found">已扫描所有可用来源，但没有发现已确认的存档位置。待确认位置不会默认备份；可以在“来源”页查看扫描结果。</string>
     <string name="library_empty_filtered">当前筛选（%1$s）下没有游戏。</string>
     <string name="library_empty_add_folder">添加授权目录</string>

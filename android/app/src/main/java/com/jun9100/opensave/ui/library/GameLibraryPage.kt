@@ -97,6 +97,7 @@ import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.SourceUiState
+import com.jun9100.opensave.SourceSelection
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.SteamMetadataRepository
 import com.jun9100.opensave.SyncInbox
@@ -866,9 +867,14 @@ private fun GameList(
             readableSources = state.sourceScans.count { it.access.readable },
             gameCount = games.size,
             visibleCount = visibleGames.size,
+            unavailableGrants = state.sourceScans.count { it.source is SourceSelection.Saf && !it.access.readable },
         )
         when (emptyState) {
-            LibraryEmptyState.SCANNING, LibraryEmptyState.NO_ACCESS, LibraryEmptyState.NOTHING_FOUND -> item(key = "empty") {
+            LibraryEmptyState.SCANNING,
+            LibraryEmptyState.NO_ACCESS,
+            LibraryEmptyState.GRANTS_UNAVAILABLE,
+            LibraryEmptyState.NOTHING_FOUND,
+            -> item(key = "empty") {
                 EmptyGameLibrary(
                     state = emptyState,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
@@ -1215,6 +1221,7 @@ private fun EmptyGameLibrary(
         when (state) {
             LibraryEmptyState.SCANNING -> R.string.library_empty_scanning
             LibraryEmptyState.NO_ACCESS -> R.string.library_empty_no_access
+            LibraryEmptyState.GRANTS_UNAVAILABLE -> R.string.library_empty_grants_unavailable
             else -> R.string.library_empty_nothing_found
         },
     )
@@ -1228,12 +1235,23 @@ private fun EmptyGameLibrary(
         Text(message, style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onPickFolder, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
-                Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                Text(stringResource(R.string.library_empty_add_folder), modifier = Modifier.padding(start = 8.dp))
-            }
-            OutlinedButton(onClick = onOpenSources, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
-                Text(stringResource(R.string.library_empty_sources))
+            // A granted folder went missing: the way out is on the Sources page, where its reason is.
+            if (state == LibraryEmptyState.GRANTS_UNAVAILABLE) {
+                Button(onClick = onOpenSources, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
+                    Text(stringResource(R.string.library_empty_sources))
+                }
+                OutlinedButton(onClick = onPickFolder, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                    Text(stringResource(R.string.library_empty_add_folder), modifier = Modifier.padding(start = 8.dp))
+                }
+            } else {
+                Button(onClick = onPickFolder, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                    Text(stringResource(R.string.library_empty_add_folder), modifier = Modifier.padding(start = 8.dp))
+                }
+                OutlinedButton(onClick = onOpenSources, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
+                    Text(stringResource(R.string.library_empty_sources))
+                }
             }
             if (state == LibraryEmptyState.NO_ACCESS) {
                 OutlinedButton(onClick = onOpenWizard, modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp))) {
