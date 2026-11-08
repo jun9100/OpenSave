@@ -10,10 +10,11 @@
   import FolderPlus from 'lucide-svelte/icons/folder-plus';
   import Modal from '../../components/ui/Modal.svelte';
   import ModalFoot from '../../components/ui/ModalFoot.svelte';
-  import { navigate, toast } from '../../lib/stores.js';
+  import { navigate, toast, askConfirm } from '../../lib/stores.js';
   import { api, native } from '../../lib/api.js';
   import { folderName } from '../../lib/filedrop.js';
   import { t, trError } from '../../lib/i18n.js';
+  import { overlapOf } from '../../lib/overlap.js';
 
   const dispatch = createEventDispatcher();
 
@@ -66,7 +67,22 @@
     if (!name.trim() || !path || adding) return;
     adding = true;
     try {
-      const game = await api.post('/api/games', { name: name.trim(), savePath: path, saveType });
+      const body = { name: name.trim(), savePath: path, saveType };
+      let game;
+      try {
+        game = await api.post('/api/games', body);
+      } catch (e) {
+        // Inside, or around, another game's folder: both would back up the
+        // same files on every save. Say so, and add only if asked to.
+        const overlap = overlapOf(e.message);
+        if (!overlap) throw e;
+        const ok = await askConfirm(
+          $t('home.addGame.overlapMessage', { path, name: overlap.name, other: overlap.path }),
+          { title: $t('home.addGame.overlapTitle'), confirmText: $t('home.addGame.overlapConfirm'), danger: true }
+        );
+        if (!ok) return;
+        game = await api.post('/api/games', { ...body, allowOverlap: true });
+      }
       toast($t('common.nowTracking', { name: game.name ?? name }), 'success');
       dispatch('close');
       navigate('game', { gameId: game.id });

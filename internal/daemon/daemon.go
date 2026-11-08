@@ -216,6 +216,7 @@ func New(opts Options) (*Daemon, error) {
 	snaps.OnRestored = d.noteRestoreForCloud
 
 	d.Watcher = watcher.New(watcher.Callbacks{
+		MinInterval: autoSnapshotMinInterval(),
 		IgnoreRules: func(gameID string) string {
 			game, err := s.GetGame(gameID)
 			if err != nil {
@@ -742,6 +743,58 @@ func isDuplicateGameID(err error) bool {
 // TrackGame adds a new game, takes its initial snapshot (when the save
 // location already has content), and starts watching it.
 func (d *Daemon) TrackGame(game store.Game) (store.Game, error) {
+	return d.trackGame(game, false)
+}
+
+// TrackGameOverlapping is TrackGame for a folder the user has been told
+// overlaps one already tracked, and wants tracked anyway — an outer folder
+// that also holds other games' saves, say.
+func (d *Daemon) TrackGameOverlapping(game store.Game) (store.Game, error) {
+	return d.trackGame(game, true)
+}
+
+// OverlapError refuses a new game whose folder is inside, or holds, the save
+// location of a game already tracked. Both would snapshot and upload the same
+// files on every save: one Forza Horizon 5 tracked at CODEX and again at
+// CODEX/1551360/remote became two games in the cloud with every version twice.
+type OverlapError struct {
+	Name string // the tracked game
+	Path string // its overlapping location
+}
+
+// overlapErrorPrefix starts every OverlapError; the UI and the API recognise
+// the refusal by it.
+const overlapErrorPrefix = "this folder overlaps a tracked save location"
+
+func (e *OverlapError) Error() string {
+	return fmt.Sprintf("%s: %q at %s", overlapErrorPrefix, e.Name, e.Path)
+}
+
+// overlappingGame returns the first tracked game one of whose locations is
+// inside path or holds it.
+func (d *Daemon) overlappingGame(path string) (*OverlapError, error) {
+	games, err := d.Store.ListGames()
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range games {
+		if store.PathsOverlap(path, g.SavePath) {
+			return &OverlapError{Name: g.Name, Path: g.SavePath}, nil
+		}
+		roots, err := d.Store.ListGameRoots(g.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, root := range roots {
+			if store.PathsOverlap(path, root.Path) {
+				return &OverlapError{Name: g.Name, Path: root.Path}, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (d *Daemon) trackGame(game store.Game, allowOverlap bool) (store.Game, error) {
 	abs, err := d.ValidateSavePath(game.SavePath)
 	if err != nil {
 		return store.Game{}, err
@@ -757,6 +810,15 @@ func (d *Daemon) TrackGame(game store.Game) (store.Game, error) {
 	if derivedID {
 		if existing, err := d.Store.FindGameBySavePath(abs); err == nil {
 			return store.Game{}, fmt.Errorf("this folder is already tracked (as %q)", existing.Name)
+		}
+		if !allowOverlap {
+			overlap, err := d.overlappingGame(abs)
+			if err != nil {
+				return store.Game{}, err
+			}
+			if overlap != nil {
+				return store.Game{}, overlap
+			}
 		}
 		base := store.SlugifyGameID(game.Name)
 		// A Switch game is tracked under its title id rather than its name:
@@ -1367,3 +1429,21 @@ func (d *Daemon) RewatchGame(gameID string) {
 // change the game's folders: that work walks them, and on Windows a folder
 // being walked or put under watch cannot be deleted from under it.
 func (d *Daemon) WaitForTracking() { d.initialSnapshots.Wait(0) }
+
+// defaultAutoSnapshotMinInterval spaces out the automatic snapshots of a game
+// that saves continuously while it is played. Forza Horizon 5 rewrites its
+// 7 MB profile every few seconds, which produced a version, and an upload,
+// for every one of those writes.
+const defaultAutoSnapshotMinInterval = 3 * time.Minute
+
+// autoSnapshotMinInterval is defaultAutoSnapshotMinInterval, unless
+// OPENSAVE_AUTO_SNAPSHOT_MIN_INTERVAL (a Go duration such as "0" or "30s")
+// says otherwise; the end-to-end tests set it to zero.
+func autoSnapshotMinInterval() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("OPENSAVE_AUTO_SNAPSHOT_MIN_INTERVAL")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return defaultAutoSnapshotMinInterval
+}

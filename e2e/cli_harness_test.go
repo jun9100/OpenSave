@@ -35,6 +35,10 @@ import (
 var cliBin string
 
 func TestMain(m *testing.M) {
+	// Journeys play several sessions on one game within seconds; pacing
+	// auto-snapshots would hold each back for minutes. Inherited by the
+	// daemons these tests start in-process and as child processes.
+	os.Setenv("OPENSAVE_AUTO_SNAPSHOT_MIN_INTERVAL", "0")
 	dir, err := os.MkdirTemp("", "opensave-cli-e2e-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cli e2e: temp dir: %v\n", err)

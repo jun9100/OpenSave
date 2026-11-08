@@ -118,6 +118,13 @@ type Callbacks struct {
 	OnChanged func(gameID string)
 	// Log receives human-readable watcher activity. May be nil.
 	Log func(level, msg string)
+	// MinInterval is the shortest time between two automatic snapshots of
+	// one game. A game that saves every few seconds while it runs would
+	// otherwise fill its history (and the cloud) with mid-play states, each
+	// pushing an older, deliberate one out of retention. Changes inside the
+	// interval are not dropped: one snapshot is taken when it ends, of
+	// whatever is on disk then. Zero snapshots after every quiet period.
+	MinInterval time.Duration
 }
 
 // Engine owns one watch goroutine per tracked game.
@@ -197,6 +204,10 @@ type gameWatch struct {
 	// Buffered by one, and sent without waiting — one pending request covers
 	// any number more.
 	rescan chan struct{}
+
+	// lastAuto is when this watch last took an automatic snapshot; zero
+	// before the first. Read and written only by the event loop.
+	lastAuto time.Time
 }
 
 // folderQueueSize bounds the directories waiting to be registered. A burst
@@ -647,6 +658,20 @@ func (e *Engine) run(ctx context.Context, gw *gameWatch) {
 
 	var debounce *time.Timer
 	var debounceC <-chan time.Time
+	// pace holds a change back until MinInterval has passed since the last
+	// automatic snapshot; see Callbacks.MinInterval.
+	var pace *time.Timer
+	var paceC <-chan time.Time
+	defer func() {
+		if pace != nil {
+			pace.Stop()
+		}
+	}()
+	snapshot := func() {
+		if e.handleChange(ctx, gw) {
+			gw.lastAuto = time.Now()
+		}
+	}
 	resetDebounce := func() {
 		if debounce == nil {
 			debounce = time.NewTimer(debounceDelay)
@@ -758,7 +783,27 @@ func (e *Engine) run(ctx context.Context, gw *gameWatch) {
 			for _, path := range gw.extra {
 				delta.InvalidateRoot(path)
 			}
-			e.handleChange(ctx, gw)
+			if wait := e.cb.MinInterval - time.Since(gw.lastAuto); !gw.lastAuto.IsZero() && wait > 0 {
+				// Too soon after the last one. One timer covers every change
+				// until it fires; it reads the folder as it is then.
+				if pace == nil {
+					pace = time.NewTimer(wait)
+					paceC = pace.C
+					e.log("info", fmt.Sprintf("%q changed again within %s of its last auto-snapshot; the next one is in %s",
+						gw.gameID, e.cb.MinInterval.Round(time.Second), wait.Round(time.Second)))
+				}
+				continue
+			}
+			snapshot()
+
+		case <-paceC:
+			pace = nil
+			paceC = nil
+			delta.InvalidateRoot(gw.savePath)
+			for _, path := range gw.extra {
+				delta.InvalidateRoot(path)
+			}
+			snapshot()
 		}
 	}
 }
@@ -787,13 +832,13 @@ func (gw *gameWatch) eventRelevant(event fsnotify.Event) bool {
 // handleChange runs after the debounce window: wait out any file locks
 // (gameplay guard), skip if content is unchanged since the last
 // auto-snapshot, then snapshot with retries and notify.
-func (e *Engine) handleChange(ctx context.Context, gw *gameWatch) {
+func (e *Engine) handleChange(ctx context.Context, gw *gameWatch) bool {
 	// Gameplay guard: the game may still be mid-write.
 	for anyFileLocked(gw.savePath) {
 		e.log("info", fmt.Sprintf("save files for %q are in use; waiting (gameplay guard)", gw.gameID))
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-time.After(guardPollInterval):
 		}
 	}
@@ -801,7 +846,7 @@ func (e *Engine) handleChange(ctx context.Context, gw *gameWatch) {
 	manifest, failures, err := delta.BuildMultiManifest(gw.savePath, gw.extra)
 	if err != nil {
 		e.log("warn", fmt.Sprintf("manifest build failed for %q: %v", gw.gameID, err))
-		return
+		return false
 	}
 	for name, failure := range failures {
 		e.log("warn", fmt.Sprintf("cannot read the %q save location of %s: %v", name, gw.gameID, failure))
@@ -819,7 +864,7 @@ func (e *Engine) handleChange(ctx context.Context, gw *gameWatch) {
 	lastHash, err := e.cb.GetLastManifestHash(gw.gameID)
 	if err == nil && lastHash == currentHash {
 		e.log("info", fmt.Sprintf("no content change for %q; skipping auto-snapshot", gw.gameID))
-		return
+		return false
 	}
 
 	for attempt := 1; attempt <= snapshotMaxRetries; attempt++ {
@@ -830,13 +875,13 @@ func (e *Engine) handleChange(ctx context.Context, gw *gameWatch) {
 		e.log("warn", fmt.Sprintf("auto-snapshot failed for %q (attempt %d/%d): %v", gw.gameID, attempt, snapshotMaxRetries, err))
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-time.After(snapshotRetryDelay):
 		}
 	}
 	if err != nil {
 		e.log("error", fmt.Sprintf("auto-snapshot permanently failed for %q: %v", gw.gameID, err))
-		return
+		return false
 	}
 
 	if err := e.cb.SetLastManifestHash(gw.gameID, currentHash); err != nil {
@@ -847,6 +892,7 @@ func (e *Engine) handleChange(ctx context.Context, gw *gameWatch) {
 	if e.cb.OnChanged != nil {
 		e.cb.OnChanged(gw.gameID)
 	}
+	return true
 }
 
 // anyFileLocked walks the save location and reports whether any file in it

@@ -351,6 +351,9 @@ func (s *Server) handleTrackGame(w http.ResponseWriter, r *http.Request) {
 		SavePath string `json:"savePath"`
 		AppID    string `json:"appId"`
 		SaveType string `json:"saveType"`
+		// AllowOverlap tracks the folder even though it is inside, or holds,
+		// another game's save location — after the user was asked.
+		AllowOverlap bool `json:"allowOverlap"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -365,12 +368,17 @@ func (s *Server) handleTrackGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	game, err := s.Daemon.TrackGame(store.Game{Name: body.Name, SavePath: body.SavePath, AppID: body.AppID, SaveType: body.SaveType})
+	track := s.Daemon.TrackGame
+	if body.AllowOverlap {
+		track = s.Daemon.TrackGameOverlapping
+	}
+	game, err := track(store.Game{Name: body.Name, SavePath: body.SavePath, AppID: body.AppID, SaveType: body.SaveType})
 	if err != nil {
-		// Duplicates (id or path) are conflicts; anything else the daemon
-		// rejects is bad input.
+		// Duplicates (id or path) and overlapping folders are conflicts;
+		// anything else the daemon rejects is bad input.
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "already track") || strings.Contains(err.Error(), "already exists") {
+		var overlap *daemon.OverlapError
+		if errors.As(err, &overlap) || strings.Contains(err.Error(), "already track") || strings.Contains(err.Error(), "already exists") {
 			status = http.StatusConflict
 		}
 		writeError(w, status, err.Error())
