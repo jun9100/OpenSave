@@ -23,6 +23,7 @@ import com.jun9100.opensave.ops.GameCaptureOutcome
 import com.jun9100.opensave.ops.GameOperations
 import com.jun9100.opensave.ops.KeepLocal
 import com.jun9100.opensave.ops.ready
+import com.jun9100.opensave.ui.library.OtherDeviceText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -167,6 +168,10 @@ data class SourceUiState(
     val gameSaveSyncKey: String = "",
     val gameSaveSaved: Boolean = false,
     val autoBackupEnabled: Boolean = false,
+    /** Other devices' save locations per libraryKey; transient, never persisted. */
+    val otherDeviceSaves: Map<String, OtherDeviceSaves> = emptyMap(),
+    /** The other-device restore the dialog is editing; transient, never persisted. */
+    val pendingOtherDeviceRestore: OtherDeviceRestoreRequest? = null,
     val pendingRestore: RestoreRequest? = null,
     val pendingGameBackup: SourceGameEntry? = null,
     val pendingWriteBack: WorkspaceWriteBackRequest? = null,
@@ -1841,6 +1846,155 @@ class SourceViewModel(
 
     fun cancelRestore() = updateState { copy(pendingRestore = null) }
 
+    /**
+     * Reads the cloud's other save locations for one game. Read-only: no
+     * storage lock, no activity entry, no sync-state change.
+     */
+    fun loadOtherDeviceSaves(entry: SourceGameEntry, force: Boolean = false) {
+        val config = runCatching { gameSaveStore.load() }.getOrNull() ?: return
+        if (!config.ready) return
+        val key = entry.libraryKey
+        val previous = state.value.otherDeviceSaves[key]
+        if (previous is OtherDeviceSaves.Loading) return
+        val now = System.currentTimeMillis()
+        val previousAt = when (previous) {
+            is OtherDeviceSaves.Loaded -> previous.atMillis
+            // A failure is never cached: "重试" and reopening the game must ask again.
+            else -> null
+        }
+        if (!force && previousAt != null && now - previousAt < OTHER_DEVICE_REFRESH_MIN_MILLIS) return
+        val identity = GameCloudNaming.identity(entry.source, entry.sourceId, entry.game)
+        updateState { copy(otherDeviceSaves = otherDeviceSaves + (key to OtherDeviceSaves.Loading)) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { operations.client(config).gameOf(identity.saveType, identity.gameId).getOrThrow() }
+            }
+            val atMillis = System.currentTimeMillis()
+            val next = result.fold(
+                onSuccess = { game ->
+                    OtherDeviceSaves.Loaded(
+                        members = game?.othersThan(identity.saveType.id, identity.gameId).orEmpty(),
+                        atMillis = atMillis,
+                    )
+                },
+                onFailure = { error ->
+                    OtherDeviceSaves.Failed(error.message ?: "无法读取其他设备的存档", atMillis)
+                },
+            )
+            updateState { copy(otherDeviceSaves = otherDeviceSaves + (key to next)) }
+        }
+    }
+
+    /** Downloads and verifies the other device's head, then opens the mapping dialog. */
+    fun requestOtherDeviceRestore(entry: SourceGameEntry, member: GameSaveCloudGameMember) {
+        if (state.value.busy) return
+        if (member.head == null) {
+            updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, "该设备在云端还没有存档版本")) }
+            return
+        }
+        if (!canWriteTo(entry.source)) {
+            updateState {
+                copy(messages = messages.withError(OpenSavePage.LIBRARY, "当前系统授权目录为只读，不能恢复；请重新授予读写权限"))
+            }
+            return
+        }
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.LIBRARY, "正在下载其他设备的存档")
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val archive = operations.downloadOtherDeviceHead(member, savedGameSaveConfig())
+                    val currentGame = currentGameOf(entry)
+                    val plan = operations.planOtherDeviceRestore(archive, currentGame)
+                    OtherDeviceRestoreRequest(entry, member, archive.absolutePath, plan)
+                }
+            }
+            result.onSuccess { request ->
+                state.value = state.value.finished(OpenSavePage.LIBRARY).copy(pendingOtherDeviceRestore = request)
+            }.onFailure { error ->
+                state.value = state.value.finished(
+                    OpenSavePage.LIBRARY,
+                    error = "无法读取其他设备的存档：${error.message ?: "未知错误"}",
+                )
+            }
+        }
+    }
+
+    fun chooseOtherDeviceTarget(part: Int, relativePath: String?) {
+        val request = state.value.pendingOtherDeviceRestore ?: return
+        val plan = runCatching { CrossDeviceRestorePolicy.choose(request.plan, part, relativePath) }
+            .getOrElse { error ->
+                updateState { copy(messages = messages.withError(OpenSavePage.LIBRARY, error.message ?: "无法更新恢复位置")) }
+                return
+            }
+        updateState { copy(pendingOtherDeviceRestore = request.withPlan(plan)) }
+    }
+
+    fun cancelOtherDeviceRestore() = updateState { copy(pendingOtherDeviceRestore = null) }
+
+    /** Restores only the locations the user mapped; the cloud and sync state stay untouched. */
+    fun confirmOtherDeviceRestore() {
+        val request = state.value.pendingOtherDeviceRestore ?: return
+        // The grant may have changed while the dialog was open; recheck before
+        // the safety snapshot and the write.
+        if (!canWriteTo(request.entry.source)) {
+            updateState {
+                copy(
+                    pendingOtherDeviceRestore = null,
+                    messages = messages.withError(OpenSavePage.LIBRARY, "当前系统授权目录为只读，不能恢复；请重新授予读写权限"),
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.LIBRARY, "正在恢复其他设备的存档")
+                .copy(pendingOtherDeviceRestore = null)
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val currentGame = currentGameOf(request.entry)
+                    StorageOperationLock.withLock {
+                        operations.restoreOtherDeviceLocked(
+                            archive = File(request.archivePath),
+                            plan = request.plan,
+                            source = request.entry.source,
+                            requestedGame = request.entry.game,
+                            currentGame = currentGame,
+                        )
+                    }
+                }
+            }
+            val device = OtherDeviceText.deviceName(request.member)
+            val gameName = request.entry.game.presentation.primaryName
+            result.onSuccess {
+                val action = "已用 $device 的存档恢复 $gameName"
+                log(
+                    ActivityKind.RESTORE,
+                    ActivityLevel.SUCCESS,
+                    action,
+                    "恢复前的存档已保存为安全快照；云端版本没有改动，下次备份会作为本机的新版本上传",
+                )
+                state.value = state.value.finished(OpenSavePage.LIBRARY, action = action)
+                    .copy(snapshots = currentSnapshots())
+                readSaveSignatures(GameLibrary.sourceGames(state.value.sourceScans))
+            }.onFailure { error ->
+                val message = error.message ?: "未知错误"
+                log(ActivityKind.RESTORE, ActivityLevel.ERROR, "跨设备恢复失败", message)
+                state.value = state.value.finished(OpenSavePage.LIBRARY, error = "跨设备恢复失败：$message")
+                    .copy(snapshots = currentSnapshots())
+                readSaveSignatures(GameLibrary.sourceGames(state.value.sourceScans))
+            }
+        }
+    }
+
+    /** The freshly scanned copy of [entry]'s game; a restore never uses stale paths. */
+    private fun currentGameOf(entry: SourceGameEntry): DetectedGame {
+        val sourceId = SnapshotNaming.sourceId(entry.source.idSeed)
+        return state.value.sourceScans
+            .firstOrNull { it.sourceId == sourceId }
+            ?.scan
+            ?.let { scan -> GameLibrary.group(scan.detected).firstOrNull { it.gameKey == entry.game.gameKey } }
+            ?: error("请先扫描当前存档来源")
+    }
+
     fun confirmRestore() {
         val request = state.value.pendingRestore ?: return
         val page = request.page
@@ -2215,6 +2369,7 @@ class SourceViewModel(
         const val MAX_HISTORY = 40
         const val MAX_GAME_HISTORY = 100
         const val SIGNATURE_REFRESH_MIN_MILLIS = 5_000L
+        const val OTHER_DEVICE_REFRESH_MIN_MILLIS = 60_000L
         const val KEEP_LOCAL_UNSUPPORTED =
             "当前 SaveVault 云端只支持旧的同步协议，不能“保留本机并发布”；请升级 SaveVault 云端，或在 PC 端处理"
         const val FOLDER_GRANT_LOST = "目录授权已失效"

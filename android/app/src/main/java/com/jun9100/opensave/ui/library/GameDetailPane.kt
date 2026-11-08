@@ -28,7 +28,9 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -43,7 +45,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jun9100.opensave.CoverRepository
 import com.jun9100.opensave.GamePresentation
+import com.jun9100.opensave.GameSaveCloudGameMember
 import com.jun9100.opensave.GameSyncStatus
+import com.jun9100.opensave.OtherDeviceSaves
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SourceGameEntry
@@ -99,11 +103,19 @@ internal fun GameDetailPane(
     /** False while automatic backup is off for the whole app. */
     autoBackupScheduled: Boolean = true,
     onAutoBackupChange: (Boolean) -> Unit = {},
+    /** Other devices' cloud saves for this game; null hides the section. */
+    otherDevices: OtherDeviceSaves? = null,
+    onLoadOtherDevices: () -> Unit = {},
+    onRestoreOtherDevice: (GameSaveCloudGameMember) -> Unit = {},
 ) {
     val game = entry.game
     var localTab by rememberSaveable(entry.libraryKey) { mutableStateOf(DetailTab.VERSIONS) }
     val shownTab = tab ?: localTab
     val selectTab: (DetailTab) -> Unit = { localTab = it; onTabChange(it) }
+    // Entering the detail starts one read-only cloud lookup; it never runs while cloud sync is off.
+    LaunchedEffect(entry.libraryKey, gameSaveEnabled) {
+        if (gameSaveEnabled) onLoadOtherDevices()
+    }
     Column(
         modifier = modifier
             .testTag(GAME_DETAIL_TAG)
@@ -242,6 +254,9 @@ internal fun GameDetailPane(
                 remoteHistory = remoteHistory,
                 busy = busy,
                 gameSaveEnabled = gameSaveEnabled,
+                otherDevices = otherDevices,
+                onLoadOtherDevices = onLoadOtherDevices,
+                onRestoreOtherDevice = onRestoreOtherDevice,
                 onRestoreLocal = onRestoreLocal,
                 onRestoreRemote = onRestoreRemote,
             )
@@ -256,6 +271,9 @@ private fun VersionsTab(
     remoteHistory: List<RemoteSnapshot>,
     busy: Boolean,
     gameSaveEnabled: Boolean,
+    otherDevices: OtherDeviceSaves?,
+    onLoadOtherDevices: () -> Unit,
+    onRestoreOtherDevice: (GameSaveCloudGameMember) -> Unit,
     onRestoreLocal: (SnapshotRecord) -> Unit,
     onRestoreRemote: (RemoteSnapshot) -> Unit,
 ) {
@@ -297,6 +315,83 @@ private fun VersionsTab(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+    if (gameSaveEnabled && otherDevices != null) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+        Text("其他设备的存档", style = MaterialTheme.typography.labelLarge)
+        when (otherDevices) {
+            OtherDeviceSaves.Loading -> Text(
+                "正在读取其他设备的存档…",
+                modifier = Modifier.padding(top = 5.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            is OtherDeviceSaves.Failed -> {
+                Text(
+                    "读取失败：${otherDevices.message}",
+                    modifier = Modifier.padding(top = 5.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = onLoadOtherDevices,
+                    modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)),
+                ) { Text("重试") }
+            }
+            is OtherDeviceSaves.Loaded -> if (otherDevices.members.isEmpty()) {
+                Text(
+                    "其他设备暂时没有这款游戏的存档",
+                    modifier = Modifier.padding(top = 5.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                otherDevices.members.forEach { member ->
+                    OtherDeviceSaveRow(
+                        member = member,
+                        busy = busy,
+                        onRestore = { onRestoreOtherDevice(member) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OtherDeviceSaveRow(
+    member: GameSaveCloudGameMember,
+    busy: Boolean,
+    onRestore: () -> Unit,
+) {
+    // A member without a head stays focusable so D-pad focus never drops; the
+    // click is ignored and only the button is dimmed.
+    val enabled = member.head != null
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                OtherDeviceText.deviceName(member),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                OtherDeviceText.detail(member),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(
+            onClick = whenIdle(busy || !enabled, onRestore),
+            modifier = Modifier.handheldFocusRing(CircleShape).busyDimmed(busy || !enabled),
+        ) {
+            Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "用此设备的存档恢复")
+        }
     }
 }
 

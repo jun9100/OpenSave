@@ -85,6 +85,7 @@ import com.jun9100.opensave.ui.batch.BatchStripState
 import com.jun9100.opensave.ui.batch.LocalBatchStrip
 import com.jun9100.opensave.ui.dialogs.GameBackupConfirmDialog
 import com.jun9100.opensave.ui.dialogs.KeepLocalConfirmDialog
+import com.jun9100.opensave.ui.dialogs.OtherDeviceRestoreDialog
 import com.jun9100.opensave.ui.dialogs.RestoreConfirmDialog
 import com.jun9100.opensave.ui.dialogs.WorkspaceWriteBackDialog
 import com.jun9100.opensave.ui.input.FocusWatch
@@ -166,6 +167,15 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
             storageMode = state.storageMode,
             onDismiss = sourceViewModel::cancelRestore,
             onConfirm = sourceViewModel::confirmRestore,
+        )
+    }
+
+    state.pendingOtherDeviceRestore?.let { request ->
+        OtherDeviceRestoreDialog(
+            request = request,
+            onChoose = sourceViewModel::chooseOtherDeviceTarget,
+            onDismiss = sourceViewModel::cancelOtherDeviceRestore,
+            onConfirm = sourceViewModel::confirmOtherDeviceRestore,
         )
     }
 
