@@ -67,6 +67,10 @@ type Manager struct {
 	WriteGate func(gameID string) (done func())
 	// now is swappable for tests; defaults to time.Now.
 	now func() time.Time
+	// beforeForeignSafety, when non-nil, runs just before RestoreForeign takes
+	// its mandatory safety snapshot. Tests use it to prove that a failed
+	// safety copy aborts before any save file is touched.
+	beforeForeignSafety func() error
 	// idMu serialises snapshot id selection against insertion; see
 	// claimAndInsert.
 	idMu sync.Mutex

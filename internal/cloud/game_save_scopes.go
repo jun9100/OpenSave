@@ -51,6 +51,9 @@ type GameSaveScopeSnapshot struct {
 	ReceivedAt time.Time `json:"receivedAt"`
 	Conflict   bool      `json:"conflict,omitempty"`
 	ConflictOf string    `json:"conflictOf,omitempty"`
+	// PromotedAt records when a retained conflict copy became the head. It is
+	// audit metadata only and never participates in ordering or selection.
+	PromotedAt time.Time `json:"promotedAt,omitzero"`
 }
 
 // GameSaveScope is one typed {saveType}/{gameId} server scope. Head is nil

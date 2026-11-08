@@ -20,6 +20,14 @@ export default [
   [/no folder to snapshot|no such file or directory|cannot find the (path|file)|does not exist|no longer exists/i, '文件或文件夹不存在'],
   [/(inside|contains) the tracked folder of/i, '这个文件夹和一个已跟踪的游戏重叠（在它里面或包含它）；同时跟踪两份会让每次存档都备份两次，请只保留一份'],
   [/already track|already exists/i, '已经存在'],
+  [/cloud version failed verification|archive does not match its recorded checksum/i, '这个云端版本校验失败'],
+  [/could not take a safety snapshot before restoring|safety snapshot before restoring/i, '安全快照失败，未做任何改动'],
+  [/choose a restore target for at least one location/i, '请为至少一个位置选择恢复目标'],
+  [/\bsave is in use\b/i, '存档正在使用中'],
+  [/single-file save locations? cannot be restored/i, '单文件存档位置暂不支持跨设备恢复'],
+  [/cannot restore from this device's own cloud scope/i, '不能从本机自己的云端范围恢复'],
+  [/not grouped with this game in the cloud|cloud service does not group games/i, '云端没有把这份存档和本游戏归为同一个游戏，不能恢复'],
+  [/cloud save (manifest|archive)|foreign save archive is invalid/i, '云端存档清单无效'],
   [/not found/i, '找不到对象'],
   [/required|invalid/i, '请求参数无效']
 ];
