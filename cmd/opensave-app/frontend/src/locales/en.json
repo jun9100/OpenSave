@@ -1915,6 +1915,10 @@
     "one": "{n} file · last written {when}",
     "other": "{n} files · last written {when}"
   },
+  "duplicates.groupCount": {
+    "one": "{n} copy",
+    "other": "{n} copies"
+  },
   "duplicates.never": "never",
   "duplicates.reason.covers": "Its folder holds the folder of {names}, which is tracked on its own",
   "duplicates.reason.insideOf": "Inside the folder of {name} — the more specific copy",

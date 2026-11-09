@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coveredCopy, duplicateGroups, isInside, judgeGroup, otherAppIds } from './duplicates.js';
+import { coveredCopy, duplicateGroups, groupTitle, isInside, judgeGroup, otherAppIds } from './duplicates.js';
 
 const g = (id, name, savePath, appId = '') => ({ id, name, savePath, appId });
 const f = (path, mtimeMs = 1, sizeBytes = 10) => ({ path, mtimeMs, sizeBytes, location: '' });
@@ -95,5 +95,30 @@ describe('coveredCopy', () => {
     const other = g('x', 'Elden Ring', 'C:/RUNE/1245620/remote', '1245620');
     expect(coveredCopy(outer, [outer, inner, other])).toBe(inner);
     expect(coveredCopy(inner, [outer, inner, other])).toBe(null);
+  });
+});
+
+describe('groupTitle', () => {
+  it('names each game in a group once, in order', () => {
+    const rune = g('r', "Baldur's Gate 3", 'C:/Steam/RUNE', '1086940');
+    const bg3 = g('b', "Baldur's Gate 3", 'C:/Steam/RUNE/1086940/remote', '1086940');
+    const lc2 = g('l', 'Lost Castle 2', 'C:/Steam/RUNE/2445690/remote', '2445690');
+    expect(groupTitle([rune, bg3, lc2])).toEqual(["Baldur's Gate 3", 'Lost Castle 2']);
+    // Judged rows carry the game under .game.
+    expect(groupTitle(judgeGroup([rune, bg3], {}).map((r) => r))).toEqual(["Baldur's Gate 3"]);
+    expect(groupTitle([])).toEqual([]);
+  });
+
+  it('keeps the third group of the AIO library findable: Forza between Beholder and the rest', () => {
+    const list = [
+      g('baldur-s-gate-3', "Baldur's Gate 3", 'C:/Users/Public/Documents/Steam/RUNE', '1086940'),
+      g('baldur-s-gate-3-2', "Baldur's Gate 3", 'C:/Users/Public/Documents/Steam/RUNE/1086940/remote', '1086940'),
+      g('beholder', 'Beholder', 'C:/steam/userdata/1/475550', '475550'),
+      g('beholder-2', 'Beholder', 'C:/Documents/Beholder/Saves', '475550'),
+      g('forza-horizon-5', 'Forza Horizon 5', 'C:\\Users\\Public\\Documents\\Steam\\CODEX', '1551360'),
+      g('forza-horizon-5-2', 'Forza Horizon 5', 'C:\\Users\\Public\\Documents\\Steam\\CODEX\\1551360\\remote', '1551360'),
+      g('dark-souls-iii', 'DARK SOULS III', 'C:/Users/ron/AppData/Roaming/DarkSoulsIII/0110000100000666', '374320')
+    ];
+    expect(duplicateGroups(list).map(groupTitle)).toEqual([["Baldur's Gate 3"], ['Beholder'], ['Forza Horizon 5']]);
   });
 });
