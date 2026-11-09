@@ -1789,8 +1789,10 @@ class SourceViewModel(
             result.onSuccess { captured ->
                 // A recorded cloud stop is a state, not an upload failure: the
                 // local snapshot was saved and no retry may recreate the scope.
-                if (captured.uploadException is GameSaveScopeGoneException) {
-                    val action = "已备份 ${manifest.gameName}（云端存档已被删除/已合并，未上传）"
+                val gone = captured.uploadException as? GameSaveScopeGoneException
+                if (gone != null) {
+                    val why = if (gone.retired) "云端存档已合并到其他游戏" else "云端存档已被删除"
+                    val action = "已备份 ${manifest.gameName}（${why}，未上传）"
                     log(ActivityKind.BACKUP, ActivityLevel.INFO, action)
                     state.value = state.value.finished(OpenSavePage.LIBRARY, action = action).copy(
                         snapshots = currentSnapshots(),
