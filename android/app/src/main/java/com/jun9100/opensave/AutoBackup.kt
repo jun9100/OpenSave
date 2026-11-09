@@ -13,6 +13,7 @@ import com.jun9100.opensave.activity.ActivityKind
 import com.jun9100.opensave.activity.ActivityLevel
 import com.jun9100.opensave.activity.ActivityRecorder
 import com.jun9100.opensave.batch.BatchCenter
+import com.jun9100.opensave.ops.ready
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -24,7 +25,7 @@ class AutoBackupScheduler(context: Context) {
 
     fun setEnabled(enabled: Boolean) {
         preferences.edit().putBoolean(ENABLED_KEY, enabled).apply()
-        if (enabled) {
+        if (enabled && !credentialsBlocked()) {
             enqueue(ExistingPeriodicWorkPolicy.UPDATE)
         } else {
             WorkManager.getInstance(appContext).cancelUniqueWork(WORK_NAME)
@@ -32,8 +33,12 @@ class AutoBackupScheduler(context: Context) {
     }
 
     fun ensureScheduled() {
-        if (isEnabled()) enqueue(ExistingPeriodicWorkPolicy.KEEP)
+        // A rejected credential must stay stopped even if a new ViewModel starts
+        // before the user replaces the key; there is nothing a worker could do.
+        if (isEnabled() && !credentialsBlocked()) enqueue(ExistingPeriodicWorkPolicy.KEEP)
     }
+
+    private fun credentialsBlocked(): Boolean = GameSaveAuthStore(appContext).blocked().isNotBlank()
 
     private fun enqueue(policy: ExistingPeriodicWorkPolicy) {
         val constraints = Constraints.Builder()
@@ -45,10 +50,12 @@ class AutoBackupScheduler(context: Context) {
         WorkManager.getInstance(appContext).enqueueUniquePeriodicWork(WORK_NAME, policy, request)
     }
 
-    private companion object {
-        const val PREFERENCES = "opensave_automation"
-        const val ENABLED_KEY = "auto_backup_enabled"
-        const val WORK_NAME = "opensave_auto_backup"
+    internal companion object {
+        private const val PREFERENCES = "opensave_automation"
+        private const val ENABLED_KEY = "auto_backup_enabled"
+
+        /** Cancelled when the cloud rejects this install's credential. */
+        internal const val WORK_NAME = "opensave_auto_backup"
     }
 }
 
@@ -212,8 +219,8 @@ class AutoBackupWorker(
      */
     private suspend fun backUpChangedGames(): Result {
         val config = GameSaveConfigStore(applicationContext).load()
-        if (!config.enabled || config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
-            record(AutoBackupPolicy.skippedEntry("SaveVault 云端未配置或未开启“新版本自动上传”"))
+        if (!config.ready) {
+            record(AutoBackupPolicy.skippedEntry("SaveVault 云端未配置、未开启或此设备的云端凭据已失效"))
             return Result.success()
         }
 
@@ -221,7 +228,11 @@ class AutoBackupWorker(
         val rootStorage = RootStorage(applicationContext)
         val installedGameCatalog = InstalledGameCatalog(applicationContext)
         val repository = SnapshotRepository.forApp(applicationContext)
-        val client = GameSaveClient(config, GameSaveDeviceStore(applicationContext).identity())
+        val client = GameSaveClient(
+            config,
+            GameSaveDeviceStore(applicationContext).identity(),
+            GameSaveAuthGuard(applicationContext),
+        )
         // Do not publish a local current-save head until the latest remote
         // heads have been inspected. A failed read is retried rather than
         // turning an offline device's progress into the new cloud current.

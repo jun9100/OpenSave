@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.QrCode
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -28,12 +29,43 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.jun9100.opensave.AUTH_BLOCKED_SHARED_TOKEN_DISABLED
+import com.jun9100.opensave.AUTH_BLOCKED_TOKEN_REVOKED
+import com.jun9100.opensave.GameSaveAuthUi
 import com.jun9100.opensave.OpenSavePage
 import com.jun9100.opensave.SourceUiState
 import com.jun9100.opensave.SourceViewModel
 import com.jun9100.opensave.ui.input.busyDimmed
 import com.jun9100.opensave.ui.input.handheldFocusRing
 import com.jun9100.opensave.ui.input.whenIdle
+
+/** The credential status wording and colour level; pure, so 设置's lines are unit tested. */
+internal object GameSaveAuthText {
+    enum class Level { NORMAL, TERTIARY, ERROR }
+
+    fun status(ui: GameSaveAuthUi): Pair<String, Level>? {
+        val whoami = ui.whoami
+        return when {
+            ui.blocked == AUTH_BLOCKED_TOKEN_REVOKED ->
+                "此设备已被 SaveVault 云端移除，自动同步已停止。请用配对码重新连接。" to Level.ERROR
+            ui.blocked == AUTH_BLOCKED_SHARED_TOKEN_DISABLED ->
+                "SaveVault 云端已停用共享同步密钥，请用配对码连接本设备。" to Level.ERROR
+            whoami?.auth == AUTH_DEVICE -> "已用设备令牌连接：${whoami.name.ifBlank { "本设备" }}" to Level.NORMAL
+            whoami?.auth == "shared" -> "正在使用共享同步密钥" to Level.NORMAL
+            else -> null
+        }
+    }
+
+    /** The second line under "正在使用共享同步密钥"; null when the shared key is not in its warning stage. */
+    fun warning(ui: GameSaveAuthUi): String? {
+        val whoami = ui.whoami ?: return null
+        if (ui.blocked.isNotEmpty() || whoami.auth != "shared") return null
+        if (!ui.sharedWarning && whoami.sharedTokenMode != "warn") return null
+        return "共享同步密钥即将停用，请配对本设备。"
+    }
+
+    private const val AUTH_DEVICE = "device"
+}
 
 /**
  * 云端 (plan §3.4): the saved game-save address and key as summary rows; A on
@@ -73,6 +105,31 @@ internal fun GameSaveCard(
                 busy = state.busy,
                 onClick = viewModel::openGameSaveEditor,
             )
+            GameSaveAuthText.status(state.gameSaveAuth)?.let { (text, level) ->
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when (level) {
+                        GameSaveAuthText.Level.ERROR -> MaterialTheme.colorScheme.error
+                        GameSaveAuthText.Level.TERTIARY -> MaterialTheme.colorScheme.tertiary
+                        GameSaveAuthText.Level.NORMAL -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            GameSaveAuthText.warning(state.gameSaveAuth)?.let { text ->
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+            OutlinedButton(
+                onClick = whenIdle(state.busy) { viewModel.openPairing() },
+                modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
+            ) {
+                Icon(Icons.Outlined.QrCode, contentDescription = null)
+                Text("用配对码连接", modifier = Modifier.padding(start = 6.dp))
+            }
             OutlinedButton(
                 onClick = whenIdle(state.busy) { viewModel.importGameSaveConfig(readClipboardText(context)) },
                 modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),

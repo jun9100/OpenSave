@@ -51,6 +51,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,6 +103,8 @@ import com.jun9100.opensave.ui.library.GameLibraryPage
 import com.jun9100.opensave.ui.settings.ConfigImportConfirmDialog
 import com.jun9100.opensave.ui.settings.GameSaveEditorDialog
 import com.jun9100.opensave.ui.settings.GameSaveTestFailedDialog
+import com.jun9100.opensave.ui.settings.PairingConfirmDialog
+import com.jun9100.opensave.ui.settings.PairingDialog
 import com.jun9100.opensave.ui.settings.SettingsPage
 import com.jun9100.opensave.ui.sources.SourcesPage
 import com.jun9100.opensave.ui.sync.SyncTasksPage
@@ -122,6 +125,12 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
         asked = state.notificationsAsked,
         onAsked = sourceViewModel::markNotificationsAsked,
     )
+
+    // 设置 shows the credential's state; ask on entry so a pairing done elsewhere or a
+    // revocation seen by a worker is visible without restarting the app.
+    LaunchedEffect(state.page) {
+        if (state.page == OpenSavePage.SETTINGS) sourceViewModel.refreshGameSaveAuth()
+    }
 
     // First, so the dialogs it opens (game-save editor, import, test failure) come up on top of it.
     state.wizardStep?.let { step ->
@@ -204,6 +213,25 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
         )
     }
 
+    state.pairingDraft?.let { draft ->
+        PairingDialog(
+            draft = draft,
+            busy = state.busy,
+            onDismiss = sourceViewModel::closePairing,
+            onSubmit = sourceViewModel::submitPairingDraft,
+            onPaste = { text -> sourceViewModel.openPairingLink(text.orEmpty()) },
+        )
+    }
+
+    state.pendingPairing?.let { link ->
+        PairingConfirmDialog(
+            link = link,
+            busy = state.busy,
+            onDismiss = sourceViewModel::cancelPairing,
+            onConfirm = sourceViewModel::confirmPairing,
+        )
+    }
+
     state.gameSaveTestFailure?.let { failure ->
         GameSaveTestFailedDialog(
             failure = failure,
@@ -267,7 +295,10 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
                 onRefresh = {
                     when (state.page) {
                         OpenSavePage.LIBRARY, OpenSavePage.SOURCES -> sourceViewModel.scanSource()
-                        OpenSavePage.SETTINGS -> sourceViewModel.refreshPersistedSource()
+                        OpenSavePage.SETTINGS -> {
+                            sourceViewModel.refreshPersistedSource()
+                            sourceViewModel.refreshGameSaveAuth()
+                        }
                         OpenSavePage.SYNC -> sourceViewModel.checkCloudUpdates(OpenSavePage.SYNC)
                     }
                 },

@@ -126,6 +126,40 @@ data class GameSaveTestFailure(
     val message: String,
 )
 
+/** The "用配对码连接" dialog's fields; transient, so it never enters SavedStateHandle. */
+data class PairingDraft(val serviceUrl: String, val code: String)
+
+/** What 设置 shows about the saved credential; holds no token, only the cloud's whoami answer. */
+data class GameSaveAuthUi(
+    val blocked: String = "",
+    val sharedWarning: Boolean = false,
+    val whoami: GameSaveWhoami? = null,
+    val whoamiLoaded: Boolean = false,
+)
+
+/**
+ * Splits the pairing dialog's input into a link or an address plus a code.
+ * Pure, so the branch that decides which server is contacted is unit tested.
+ */
+internal object PairingInput {
+    private const val LINK_PREFIX = "savevault://"
+
+    fun isLink(text: String): Boolean = text.trim().startsWith(LINK_PREFIX, ignoreCase = true)
+
+    fun resolve(serviceUrl: String, codeOrLink: String): Result<PairingLink> {
+        val text = codeOrLink.trim()
+        if (isLink(text)) return PairingLinks.parse(text)
+        if (serviceUrl.isBlank()) {
+            return Result.failure(IllegalArgumentException("请填写 SaveVault 云端地址"))
+        }
+        val normalized = runCatching { GameSaveClient.normalizeServiceUrl(serviceUrl) }
+            .getOrElse { return Result.failure(it) }
+        val code = PairingCode.normalize(text)
+            ?: return Result.failure(IllegalArgumentException("配对码应为 8 位，例如 ABCD-EFGH"))
+        return Result.success(PairingLink(serverUrl = normalized, code = code))
+    }
+}
+
 /** A destructive batch waiting for its one confirmation (plan §5.7); only "安全恢复云端较新" asks. */
 data class BatchPlan(
     val operation: BatchOperation,
@@ -223,6 +257,12 @@ data class SourceUiState(
     val gameSaveTestFailure: GameSaveTestFailure? = null,
     /** A config read from the clipboard, waiting for its confirmation. */
     val pendingConfigImport: ImportedGameSaveConfig? = null,
+    /** The "用配对码连接" dialog being edited; transient, never persisted. */
+    val pairingDraft: PairingDraft? = null,
+    /** A parsed pairing link waiting for the user to confirm the server; transient. */
+    val pendingPairing: PairingLink? = null,
+    /** The cloud's verdict on the saved credential, for 设置; transient. */
+    val gameSaveAuth: GameSaveAuthUi = GameSaveAuthUi(),
     /** Hide the status and gesture bars in landscape (plan Q2: off by default). */
     val immersiveLandscape: Boolean = false,
     /** The step the first-run wizard shows; null while it is closed. */
@@ -337,11 +377,16 @@ class SourceViewModel(
                 val entries = withContext(Dispatchers.IO) { runCatching { activityStore.list() }.getOrDefault(emptyList()) }
                 val verdicts = withContext(Dispatchers.IO) { runCatching { cloudVerdictStore.load() }.getOrNull() }
                 val snapshots = withContext(Dispatchers.IO) { runCatching { currentSnapshots() }.getOrNull() }
+                // A worker's 401 updates the auth store before it records its line; never ask whoami here.
+                val auth = withContext(Dispatchers.IO) {
+                    GameSaveAuthStore(app).let { store -> store.blocked() to store.sharedTokenWarning() }
+                }
                 updateState {
                     copy(
                         activity = entries,
                         rememberedCloudVerdicts = verdicts ?: rememberedCloudVerdicts,
                         snapshots = snapshots ?: this.snapshots,
+                        gameSaveAuth = gameSaveAuth.copy(blocked = auth.first, sharedWarning = auth.second),
                     )
                 }
             }
@@ -895,7 +940,7 @@ class SourceViewModel(
                 runCatching { gameSaveClient(config).testConnection().getOrThrow() }
             }
             result.onSuccess {
-                storeGameSave(config, "SaveVault 云端连接成功，配置已保存")
+                storeGameSave(config, "SaveVault 云端连接成功，配置已保存", credentialsChanged = true)
             }.onFailure { error ->
                 state.value = state.value.finished(OpenSavePage.SETTINGS).copy(
                     gameSaveEditor = null,
@@ -912,7 +957,7 @@ class SourceViewModel(
         updateState { copy(gameSaveTestFailure = null) }
         viewModelScope.launch {
             state.value = state.value.started(OpenSavePage.SETTINGS, "正在加密保存 SaveVault 云端配置")
-            storeGameSave(failure.config, "SaveVault 云端配置已保存（连接测试未通过）")
+            storeGameSave(failure.config, "SaveVault 云端配置已保存（连接测试未通过）", credentialsChanged = true)
         }
     }
 
@@ -941,6 +986,133 @@ class SourceViewModel(
         testAndSaveGameSave(config.serviceUrl, config.syncKey)
     }
 
+    /** Opens "用配对码连接" on the saved address; nothing is sent until the user confirms the server. */
+    fun openPairing() = updateState {
+        copy(pairingDraft = PairingDraft(savedGameSaveConfig().serviceUrl, ""), pendingPairing = null)
+    }
+
+    fun closePairing() = updateState { copy(pairingDraft = null) }
+
+    /**
+     * "下一步": a link is parsed as is; otherwise the address and the code are
+     * normalized. Only [pendingPairing] is set here — the claim request waits
+     * for [confirmPairing], after the user has seen the host name.
+     */
+    fun submitPairingDraft(serviceUrl: String, codeOrLink: String) {
+        PairingInput.resolve(serviceUrl, codeOrLink)
+            .onSuccess { link -> updateState { copy(pairingDraft = null, pendingPairing = link) } }
+            .onFailure { error ->
+                updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, error.message ?: "配对信息无效")) }
+            }
+    }
+
+    /** A deep link or a pasted `savevault://pair` link goes straight to the confirm step on 设置. */
+    fun openPairingLink(text: String) {
+        PairingLinks.parse(text)
+            .onSuccess { link ->
+                updateState {
+                    copy(
+                        page = OpenSavePage.SETTINGS,
+                        previousPage = page,
+                        pairingDraft = null,
+                        pendingPairing = link,
+                        messages = messages.withError(OpenSavePage.SETTINGS, null),
+                    )
+                }
+            }
+            .onFailure { error ->
+                updateState {
+                    copy(
+                        page = OpenSavePage.SETTINGS,
+                        previousPage = page,
+                        messages = messages.withError(OpenSavePage.SETTINGS, "配对链接无效：${error.message ?: "格式无效"}"),
+                    )
+                }
+            }
+    }
+
+    fun cancelPairing() = updateState { copy(pendingPairing = null) }
+
+    /**
+     * Claims the shown code once. The token is returned only here, so it goes
+     * straight into the Keystore-backed config and never into 动态 or an error.
+     */
+    fun confirmPairing() {
+        if (state.value.busy) return
+        val link = state.value.pendingPairing ?: return
+        val saved = savedGameSaveConfig()
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在配对 SaveVault 云端")
+            val result = withContext(Dispatchers.IO) {
+                GameSaveClient.claimPairing(link.serverUrl, link.code, gameSaveDevice.identity())
+            }
+            result.onSuccess { paired ->
+                val config = GameSaveConfig(
+                    // Pairing a device for the first time also switches upload on, like 测试并保存.
+                    enabled = saved.enabled || saved.serviceUrl.isBlank() || saved.syncKey.isBlank(),
+                    serviceUrl = link.serverUrl,
+                    syncKey = paired.token,
+                )
+                state.value = state.value.copy(pendingPairing = null)
+                storeGameSave(config, "已用设备令牌连接：${paired.name}", credentialsChanged = true)
+                log(ActivityKind.UPLOAD, ActivityLevel.SUCCESS, "已配对 SaveVault 云端", "设备名称：${paired.name}")
+            }.onFailure { error ->
+                val finished = state.value.finished(OpenSavePage.SETTINGS)
+                state.value = finished.copy(
+                    pendingPairing = null,
+                    messages = finished.messages.withError(
+                        OpenSavePage.SETTINGS,
+                        if (error is GameSavePairingUnsupportedException) {
+                            "SaveVault 云端不支持配对（需要 v1.7.0 或更新）。仍可在上方填写同步密钥。"
+                        } else {
+                            "配对失败：${error.message ?: "未知错误"}"
+                        },
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Re-reads the stored verdict and asks whoami for 设置. A failed whoami only
+     * leaves the status line hidden: a sleeping NAS must not add an error here.
+     */
+    fun refreshGameSaveAuth() {
+        val store = GameSaveAuthStore(app)
+        val blocked = store.blocked()
+        val warning = store.sharedTokenWarning()
+        updateState {
+            copy(gameSaveAuth = gameSaveAuth.copy(blocked = blocked, sharedWarning = warning, whoami = null, whoamiLoaded = false))
+        }
+        val config = savedGameSaveConfig()
+        if (blocked.isNotEmpty() || config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
+            updateState { copy(gameSaveAuth = gameSaveAuth.copy(whoamiLoaded = true)) }
+            return
+        }
+        viewModelScope.launch {
+            val whoami = withContext(Dispatchers.IO) {
+                runCatching { gameSaveClient(config).whoami().getOrThrow() }.getOrNull()
+            }
+            // A newer config has its own whoami; do not let this answer label it.
+            val current = savedGameSaveConfig()
+            if (current.serviceUrl != config.serviceUrl || current.syncKey != config.syncKey) return@launch
+            if (whoami?.auth == AUTH_DEVICE) {
+                runCatching { GameSaveAuthStore(app).setSharedTokenWarning(false) }
+            }
+            val latest = GameSaveAuthStore(app)
+            updateState {
+                copy(
+                    gameSaveAuth = gameSaveAuth.copy(
+                        blocked = latest.blocked(),
+                        sharedWarning = latest.sharedTokenWarning(),
+                        whoami = whoami,
+                        whoamiLoaded = true,
+                    ),
+                )
+            }
+        }
+    }
+
     /** "新版本自动上传" (自动化): needs a saved game-save address and key. */
     fun setAutoUploadEnabled(enabled: Boolean) {
         if (state.value.busy) return
@@ -955,9 +1127,18 @@ class SourceViewModel(
         }
     }
 
-    private suspend fun storeGameSave(config: GameSaveConfig, success: String) {
+    private suspend fun storeGameSave(
+        config: GameSaveConfig,
+        success: String,
+        /** New credentials were saved: drop the old verdict and restore the periodic work. */
+        credentialsChanged: Boolean = false,
+    ) {
         val result = withContext(Dispatchers.IO) { runCatching { gameSaveStore.save(config) } }
         result.onSuccess {
+            if (credentialsChanged) {
+                // New credentials make a revocation or a shared-key warning stale.
+                withContext(Dispatchers.IO) { runCatching { GameSaveAuthGuard.credentialsReplaced(app) } }
+            }
             state.value = state.value.finished(OpenSavePage.SETTINGS, action = success).copy(
                 gameSaveEnabled = config.enabled,
                 gameSaveUrl = GameSaveClient.normalizeServiceUrl(config.serviceUrl),
@@ -965,6 +1146,7 @@ class SourceViewModel(
                 gameSaveSaved = config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank(),
                 gameSaveEditor = null,
             )
+            if (credentialsChanged) refreshGameSaveAuth()
         }.onFailure { error ->
             state.value = state.value.finished(OpenSavePage.SETTINGS, error = "保存 SaveVault 云端配置失败：${error.message}")
         }
@@ -2109,7 +2291,7 @@ class SourceViewModel(
         }
         if (previous != null) {
             var uploadError: String? = null
-            if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank() && !previous.uploaded) {
+            if (upload && config.ready && !previous.uploaded) {
                 val recordType = GameSaveTypes.fromId(previous.saveType)
                 val uploadResult = gameSaveClient(config).upload(snapshotRepository.fileFor(previous), recordType, previous.remoteName)
                 if (uploadResult.isSuccess) {
@@ -2144,7 +2326,7 @@ class SourceViewModel(
         snapshotRepository.add(record)
 
         var uploadError: String? = null
-        if (upload && config.enabled && config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank()) {
+        if (upload && config.ready) {
             val uploadResult = gameSaveClient(config).upload(build.archive, saveType, remoteName)
             if (uploadResult.isSuccess) {
                 snapshotRepository.markUploaded(record.id)
@@ -2314,7 +2496,7 @@ class SourceViewModel(
         runCatching { gameSaveStore.load() }.getOrDefault(GameSaveConfig())
 
     private fun gameSaveClient(config: GameSaveConfig) =
-        GameSaveClient(config, gameSaveDevice.identity())
+        GameSaveClient(config, gameSaveDevice.identity(), GameSaveAuthGuard(app))
 
     /** Every game keeps its own newest versions, so status and history never drop a game backed up long ago. */
     private fun currentSnapshots(): List<SnapshotRecord> = LibraryView.retainedSnapshots(
@@ -2395,6 +2577,7 @@ class SourceViewModel(
         const val KEEP_LOCAL_UNSUPPORTED =
             "当前 SaveVault 云端只支持旧的同步协议，不能“保留本机并发布”；请升级 SaveVault 云端，或在 PC 端处理"
         const val FOLDER_GRANT_LOST = "目录授权已失效"
+        const val AUTH_DEVICE = "device"
         const val ROOT_NOT_CHOSEN = "未启用 Root：请在 设置 → 关于 → 首次使用向导 中选择“使用 Root”"
         const val ROOT_GRANTED_NOTICE =
             "Root 可用。请确认在 Magisk 中选择了“永久”授权：后台自动备份无法弹出授权提示，只授权一次时会跳过 Root 来源。"

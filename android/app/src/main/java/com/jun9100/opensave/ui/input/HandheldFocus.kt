@@ -18,6 +18,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
@@ -34,6 +35,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
@@ -122,6 +124,24 @@ fun Modifier.dpadScrollable(state: ScrollState): Modifier {
 }
 
 private val DPAD_SCROLL_STEP = 96.dp
+
+/**
+ * A single-line text field keeps Up/Down to itself, so with the pad the user
+ * could type an address but never reach the next field or the dialog's
+ * buttons. Up/Down move focus out instead; Left/Right still move the cursor.
+ */
+@Composable
+fun Modifier.dpadLeavesTextField(): Modifier {
+    val focusManager = LocalFocusManager.current
+    return onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (event.key) {
+            Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
+            Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
+            else -> false
+        }
+    }
+}
 
 /**
  * Dialogs are their own windows, so `MainActivity` never sees their keys.

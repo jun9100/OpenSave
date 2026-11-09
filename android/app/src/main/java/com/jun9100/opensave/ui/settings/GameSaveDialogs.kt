@@ -36,6 +36,7 @@ import com.jun9100.opensave.OpenSaveTheme
 import com.jun9100.opensave.ui.dialogs.dialogButtonFocus
 import com.jun9100.opensave.ui.input.busyDimmed
 import com.jun9100.opensave.ui.input.consumeHandheldShortcuts
+import com.jun9100.opensave.ui.input.dpadLeavesTextField
 import com.jun9100.opensave.ui.input.handheldFocusRing
 import com.jun9100.opensave.ui.input.rememberInitialFocus
 import com.jun9100.opensave.ui.input.whenIdle
@@ -71,7 +72,7 @@ internal fun GameSaveEditorDialog(
                     placeholder = { Text("http://nas.example:8788") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth().focusRequester(rememberInitialFocus()),
+                    modifier = Modifier.fillMaxWidth().dpadLeavesTextField().focusRequester(rememberInitialFocus()),
                 )
                 OutlinedTextField(
                     value = key,
@@ -88,7 +89,7 @@ internal fun GameSaveEditorDialog(
                             )
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().dpadLeavesTextField(),
                 )
                 Text(
                     if (busy) "正在测试连接…" else "先测试连接，通过后才保存；同步密钥用 Android Keystore 加密保存。",
