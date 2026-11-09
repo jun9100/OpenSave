@@ -140,7 +140,7 @@ func (p gameSave) upload(f *os.File, size int64, fileName string) error {
 	if err := p.authorize(req); err != nil {
 		return err
 	}
-	resp, err := p.s.doTransfer(req)
+	resp, err := p.transfer(req)
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (p gameSave) list() ([]CloudFile, error) {
 	if err := p.authorizeReadOnly(req); err != nil {
 		return nil, err
 	}
-	resp, err := p.s.httpClient().Do(req)
+	resp, err := p.do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (p gameSave) downloadFile(file CloudFile, localPath string) error {
 	if err := p.authorizeReadOnly(req); err != nil {
 		return err
 	}
-	return p.s.fetchToFile(req, localPath)
+	return p.fetchToFile(req, localPath)
 }
 
 func (p gameSave) remove(f CloudFile) error {
@@ -216,5 +216,10 @@ func (p gameSave) remove(f CloudFile) error {
 	if err := p.authorize(req); err != nil {
 		return err
 	}
-	return p.s.doOK(req)
+	resp, err := p.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return transferOK(resp)
 }

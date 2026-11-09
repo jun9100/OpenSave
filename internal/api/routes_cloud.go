@@ -46,6 +46,11 @@ func (s *Server) cloudRoutes(r chi.Router) {
 	r.Post("/api/cloud/offers/accept", s.handleCloudOfferAnswer(true))
 	r.Post("/api/cloud/offers/dismiss", s.handleCloudOfferAnswer(false))
 	r.Post("/api/cloud/check", s.handleCloudCheck)
+
+	r.Post("/api/cloud/pair/preview", s.handleCloudPairPreview)
+	r.Post("/api/cloud/pair/claim", s.handleCloudPairClaim)
+	r.Get("/api/cloud/auth-status", s.handleCloudAuthStatus)
+	r.Post("/api/cloud/auth-warning/dismiss", s.handleCloudAuthWarningDismiss)
 }
 
 // handleCloudStatus returns a read-only native game-save lineage summary for
