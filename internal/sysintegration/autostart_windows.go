@@ -14,6 +14,13 @@ import (
 const runKeyPath = `Software\Microsoft\Windows\CurrentVersion\Run`
 const runValueName = "OpenSave"
 
+// strayRunValueName is what the 2.5 and 2.6 installers wrote for their "start
+// when Windows starts" checkbox: the product name after the rename, not the
+// name this code keeps. A machine with both started the app twice at every
+// boot. It is never written; SetAutostart removes it, and AutostartEnabled
+// counts it so that a box ticked in one of those installers is still adopted.
+const strayRunValueName = "SaveVault"
+
 // SetAutostart registers or removes OpenSave in the current user's Run
 // key (no admin rights needed).
 func SetAutostart(enabled bool) error {
@@ -22,6 +29,10 @@ func SetAutostart(enabled bool) error {
 		return fmt.Errorf("open Run key: %w", err)
 	}
 	defer key.Close()
+
+	if err := key.DeleteValue(strayRunValueName); err != nil && err != registry.ErrNotExist {
+		return fmt.Errorf("remove duplicate autostart entry: %w", err)
+	}
 
 	if !enabled {
 		err := key.DeleteValue(runValueName)
@@ -51,13 +62,18 @@ func SetAutostart(enabled bool) error {
 	return nil
 }
 
-// AutostartEnabled reports whether the Run entry exists.
+// AutostartEnabled reports whether a Run entry exists, under the app's name
+// or the one the 2.5 and 2.6 installers used.
 func AutostartEnabled() bool {
 	key, err := registry.OpenKey(registry.CURRENT_USER, runKeyPath, registry.QUERY_VALUE)
 	if err != nil {
 		return false
 	}
 	defer key.Close()
-	_, _, err = key.GetStringValue(runValueName)
-	return err == nil
+	for _, name := range []string{runValueName, strayRunValueName} {
+		if _, _, err := key.GetStringValue(name); err == nil {
+			return true
+		}
+	}
+	return false
 }

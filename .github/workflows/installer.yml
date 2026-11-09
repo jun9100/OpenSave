@@ -1,0 +1,131 @@
+name: Windows installer upgrade
+
+# Installs the last release published as OpenSave, then this branch's
+# SaveVault installer over it, the way a 2.4.x user upgrades, and checks that
+# one copy is left: the old folder, uninstall entry and shortcuts gone, the
+# data directory untouched, and a single start-with-Windows entry. Then the
+# new installer over itself, and its own uninstaller. Silent throughout, as
+# the in-app update and a scripted install both run it.
+
+on:
+  pull_request:
+    paths:
+      - "cmd/opensave-app/build/windows/**"
+      - "cmd/opensave-app/wails.json"
+      - "internal/sysintegration/**"
+      - ".github/workflows/installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Wails and NSIS
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+          choco install nsis -y --no-progress
+          $makensis = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'),
+            (Join-Path $env:ProgramFiles 'NSIS\makensis.exe')
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $makensis) { throw 'makensis.exe not found' }
+          (Split-Path -Parent $makensis) | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Build this branch's installer
+        shell: pwsh
+        run: |
+          Push-Location cmd/opensave-app
+          wails build -nsis
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          $installer = Get-ChildItem cmd/opensave-app/build/bin -Filter '*installer*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Wails did not produce an NSIS installer' }
+          Copy-Item $installer.FullName "$env:RUNNER_TEMP\SaveVault.Setup.exe"
+      - name: Download the last OpenSave-named release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v2.4.5 --repo jun9100/OpenSave --pattern OpenSave.Setup.exe --dir "$env:RUNNER_TEMP\old"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upgrade from OpenSave 2.4.5 and check what is left
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $uninstallRoot = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $oldDir = Join-Path $env:ProgramFiles 'OpenSave\OpenSave'
+          $newDir = Join-Path $env:ProgramFiles 'SaveVault\SaveVault'
+          $newExe = Join-Path $newDir 'SaveVault.exe'
+          $data = Join-Path $env:USERPROFILE '.opensave'
+          $marker = Join-Path $data 'installer-test-marker.txt'
+          $publicDesktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
+          $commonPrograms = [Environment]::GetFolderPath('CommonPrograms')
+          function Check($ok, $what) {
+            if (-not $ok) { throw "FAILED: $what" }
+            Write-Host "ok - $what"
+          }
+          function RunValue($name) {
+            (Get-ItemProperty -Path $runKey -Name $name -ErrorAction SilentlyContinue).$name
+          }
+          function Install($path) {
+            $p = Start-Process -FilePath $path -ArgumentList '/S' -Wait -PassThru
+            Write-Host "$path exited $($p.ExitCode)"
+          }
+
+          # Someone's data, which must survive every step.
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          Set-Content -Path $marker -Value 'keep me'
+
+          Install "$env:RUNNER_TEMP\old\OpenSave.Setup.exe"
+          Check (Test-Path (Join-Path $oldDir 'OpenSave.exe')) 'OpenSave 2.4.5 installed'
+          Check (Test-Path "$uninstallRoot\OpenSaveOpenSave") 'OpenSave uninstall entry present'
+
+          # Start with Windows as 2.4.5 writes it, plus the stray value a 2.5
+          # or 2.6 installer added on a machine that has both.
+          New-ItemProperty -Path $runKey -Name 'OpenSave' -Value "`"$oldDir\OpenSave.exe`" --start-hidden" -Force | Out-Null
+          New-ItemProperty -Path $runKey -Name 'SaveVault' -Value "`"$newExe`" --start-hidden" -Force | Out-Null
+
+          # Running, as it would be on the person's machine. It may not stay up
+          # on a runner; either way nothing may be left running afterwards.
+          Start-Process -FilePath (Join-Path $oldDir 'OpenSave.exe') -ArgumentList '--start-hidden'
+          Start-Sleep -Seconds 5
+          Write-Host "OpenSave.exe running before upgrade: $([bool](Get-Process OpenSave -ErrorAction SilentlyContinue))"
+
+          Install "$env:RUNNER_TEMP\SaveVault.Setup.exe"
+
+          Check (-not (Get-Process OpenSave -ErrorAction SilentlyContinue)) 'old OpenSave.exe is not running'
+          Check (-not (Test-Path "$uninstallRoot\OpenSaveOpenSave")) 'OpenSave uninstall entry removed'
+          Check (-not (Test-Path (Join-Path $oldDir 'OpenSave.exe'))) 'old OpenSave.exe removed'
+          Check (-not (Test-Path (Join-Path $publicDesktop 'OpenSave.lnk'))) 'old desktop shortcut removed'
+          Check (-not (Test-Path (Join-Path $commonPrograms 'OpenSave.lnk'))) 'old Start menu shortcut removed'
+          Check (Test-Path $newExe) 'SaveVault.exe installed'
+          Check (Test-Path "$uninstallRoot\SaveVaultSaveVault") 'SaveVault uninstall entry present'
+          Check (Test-Path (Join-Path $publicDesktop 'SaveVault.lnk')) 'SaveVault desktop shortcut present'
+          Check ((Get-Content $marker) -eq 'keep me') 'data directory untouched'
+          Check ((RunValue 'OpenSave') -eq "`"$newExe`" --start-hidden") 'one Run value, pointing at SaveVault.exe'
+          Check ($null -eq (RunValue 'SaveVault')) 'stray SaveVault Run value removed'
+
+          # The same installer again: a reinstall or a scripted update.
+          Install "$env:RUNNER_TEMP\SaveVault.Setup.exe"
+          Check (Test-Path $newExe) 'reinstall keeps SaveVault.exe'
+          Check ((Get-ChildItem $uninstallRoot | Where-Object { $_.PSChildName -like '*SaveVault*' -or $_.PSChildName -like '*OpenSave*' }).Count -eq 1) 'still exactly one uninstall entry'
+          Check ((RunValue 'OpenSave') -eq "`"$newExe`" --start-hidden") 'Run value kept across reinstall'
+
+          # And its own uninstaller, silently: the data stays.
+          $p = Start-Process -FilePath (Join-Path $newDir 'uninstall.exe') -ArgumentList '/S', "_?=$newDir" -Wait -PassThru
+          Write-Host "uninstall exited $($p.ExitCode)"
+          Check (-not (Test-Path "$uninstallRoot\SaveVaultSaveVault")) 'SaveVault uninstall entry removed'
+          Check ((Get-Content $marker) -eq 'keep me') 'data directory kept by a silent uninstall'
+          Check ($null -eq (RunValue 'OpenSave')) 'Run value removed on uninstall'

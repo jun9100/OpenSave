@@ -157,6 +157,33 @@ ManifestDPIAware true
 ## The autostart entry the app writes when "start with Windows" is on, and
 ## which the checkbox on the finish page writes directly.
 !define OPENSAVE_RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
+## The value's name. It must be the one the app itself writes and repairs
+## (runValueName in internal/sysintegration/autostart_windows.go), which kept
+## the old name through the rename to SaveVault. The 2.5 and 2.6 installers
+## wrote ${INFO_PRODUCTNAME} instead, so a machine that ticked the box there
+## has both and starts the app twice at every boot; that second value is
+## removed on install, on uninstall, and by the app at launch.
+!define OPENSAVE_RUN_VALUE "OpenSave"
+!define STRAY_RUN_VALUE "SaveVault"
+
+####
+## The app before it was renamed: up to 2.4.x it installed as OpenSave, under
+## its own folder and its own uninstall key. Wails derives both from the
+## product name, so from 2.5 on this installer put SaveVault next to it rather
+## than over it, and the two then ran at once over the same data directory
+## and the same local port. Setup now finds that copy and removes it first.
+## Overridable, like the paths above, so a test build cannot reach a real
+## installation.
+####
+!ifndef LEGACY_PRODUCT_NAME
+    !define LEGACY_PRODUCT_NAME "OpenSave"
+!endif
+!ifndef LEGACY_EXECUTABLE
+    !define LEGACY_EXECUTABLE "OpenSave.exe"
+!endif
+!ifndef LEGACY_UNINST_KEY
+    !define LEGACY_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenSaveOpenSave"
+!endif
 
 ####
 ## Finish page: two checkboxes.
@@ -213,23 +240,30 @@ InstallColors E8E8EA 111112       ## --text on --bg-sidebar
 ## taskkill is the fallback for a build too old to know the flag, or an app
 ## already wedged, and only after the polite request has had its time.
 ####
-!macro StopRunningOpenSave un
-Function ${un}StopRunningOpenSave
+## The same steps serve the app and the copy installed before the rename,
+## which runs as a different executable from a different folder, so the
+## function reads which one from these two variables.
+####
+Var StopExe
+Var StopDir
+
+!macro StopRunningApp un
+Function ${un}StopRunningApp
     Push $0
     Push $1
 
     ; Nothing running? Nothing to do. FindProcDLL isn't available, so ask
     ; tasklist, which ships with Windows.
-    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"'
+    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq $StopExe" /NH | find /I "$StopExe"'
     Pop $0
     Pop $1
     ${If} $0 != 0
         Goto done
     ${EndIf}
 
-    DetailPrint "Closing ${INFO_PRODUCTNAME}..."
-    ${If} ${FileExists} "$INSTDIR\${PRODUCT_EXECUTABLE}"
-        nsExec::ExecToLog '"$INSTDIR\${PRODUCT_EXECUTABLE}" --quit'
+    DetailPrint "Closing $StopExe..."
+    ${If} ${FileExists} "$StopDir\$StopExe"
+        nsExec::ExecToLog '"$StopDir\$StopExe" --quit'
         Pop $0
     ${EndIf}
 
@@ -238,11 +272,11 @@ Function ${un}StopRunningOpenSave
     StrCpy $1 0
     ${Do}
         Sleep 500
-        nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH | find /I "${PRODUCT_EXECUTABLE}"'
+        nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq $StopExe" /NH | find /I "$StopExe"'
         Pop $0
         Pop $1
         ${If} $0 != 0
-            DetailPrint "${INFO_PRODUCTNAME} closed."
+            DetailPrint "$StopExe closed."
             Goto done
         ${EndIf}
         IntOp $1 $1 + 1
@@ -251,8 +285,8 @@ Function ${un}StopRunningOpenSave
         ${EndIf}
     ${Loop}
 
-    DetailPrint "${INFO_PRODUCTNAME} did not close on request; stopping it."
-    nsExec::ExecToLog 'taskkill /F /IM "${PRODUCT_EXECUTABLE}" /T'
+    DetailPrint "$StopExe did not close on request; stopping it."
+    nsExec::ExecToLog 'taskkill /F /IM "$StopExe" /T'
     Pop $0
     Sleep 1000
 
@@ -261,8 +295,107 @@ done:
     Pop $0
 FunctionEnd
 !macroend
-!insertmacro StopRunningOpenSave ""
-!insertmacro StopRunningOpenSave "un."
+!insertmacro StopRunningApp ""
+!insertmacro StopRunningApp "un."
+
+Function StopRunningOpenSave
+    StrCpy $StopExe "${PRODUCT_EXECUTABLE}"
+    StrCpy $StopDir "$INSTDIR"
+    Call StopRunningApp
+FunctionEnd
+
+Function un.StopRunningOpenSave
+    StrCpy $StopExe "${PRODUCT_EXECUTABLE}"
+    StrCpy $StopDir "$INSTDIR"
+    Call un.StopRunningApp
+FunctionEnd
+
+####
+## RemoveLegacyOpenSave takes out the copy installed before the rename, if
+## there is one, leaving the person's data exactly where it is.
+##
+## Its own uninstaller does the work, silently. Every OpenSave uninstaller
+## that asks about the data directory or the command-line tool defaults to
+## keeping them in silent mode (/SD IDNO on both; checked in the 2.4.0 to
+## 2.4.5 scripts), and the ones from before 2.4.0 were the stock Wails
+## uninstaller, which never touches either. It is run from a copy in the temp
+## directory with _?= for the reason given at "uninstall:" in .onInit.
+##
+## Then whatever it may have left: an uninstaller from before 2.4.0 does not
+## stop the app or clear the Run value, and a folder whose uninstaller is
+## missing has nothing to run at all. Only files this product put there are
+## deleted by name, and the folders only if that leaves them empty.
+##
+## It runs before this installer writes a single file, so even an old copy
+## installed into this very folder cannot take the new files with it.
+####
+Function RemoveLegacyOpenSave
+    Push $0
+    Push $1
+    Push $2
+    Push $3
+    Push $4
+
+    SetRegView 64
+    ReadRegStr $0 ${UNINST_ROOT} "${LEGACY_UNINST_KEY}" "UninstallString"
+    ReadRegStr $1 ${UNINST_ROOT} "${LEGACY_UNINST_KEY}" "InstallLocation"
+    ReadRegStr $2 ${UNINST_ROOT} "${LEGACY_UNINST_KEY}" "DisplayVersion"
+    ${If} $0 == ""
+        Goto done
+    ${EndIf}
+
+    ; UninstallString is stored quoted.
+    StrCpy $3 $0
+    StrCpy $4 $3 1
+    ${If} $4 == '"'
+        StrLen $4 $3
+        IntOp $4 $4 - 2
+        StrCpy $3 $3 $4 1
+    ${EndIf}
+    ${If} $1 == ""
+        ${GetParent} "$3" $1
+    ${EndIf}
+    DetailPrint "Found ${LEGACY_PRODUCT_NAME} $2 in $1; replacing it with ${INFO_PRODUCTNAME}."
+
+    StrCpy $StopExe "${LEGACY_EXECUTABLE}"
+    StrCpy $StopDir "$1"
+    Call StopRunningApp
+
+    ${If} ${FileExists} "$3"
+        CopyFiles /SILENT "$3" "$TEMP\${LEGACY_PRODUCT_NAME}-legacy-uninstall.exe"
+        ExecWait '"$TEMP\${LEGACY_PRODUCT_NAME}-legacy-uninstall.exe" /S _?=$1' $4
+        Delete "$TEMP\${LEGACY_PRODUCT_NAME}-legacy-uninstall.exe"
+        DetailPrint "${LEGACY_PRODUCT_NAME} uninstaller finished (exit code $4); your snapshots and settings in ${OPENSAVE_DATA_DIR} are kept."
+    ${Else}
+        DetailPrint "${LEGACY_PRODUCT_NAME}'s uninstaller is missing; removing its program files directly."
+    ${EndIf}
+
+    Delete "$1\${LEGACY_EXECUTABLE}"
+    Delete "$1\uninstall.exe"
+    RMDir "$1"
+    ${GetParent} "$1" $4
+    RMDir "$4"
+
+    SetRegView 64
+    DeleteRegKey ${UNINST_ROOT} "${LEGACY_UNINST_KEY}"
+
+    ; Its shortcuts, for everyone and for this user: the stock uninstaller
+    ; removes them only in the context it was installed in.
+    SetShellVarContext all
+    Delete "$SMPROGRAMS\${LEGACY_PRODUCT_NAME}.lnk"
+    Delete "$DESKTOP\${LEGACY_PRODUCT_NAME}.lnk"
+    SetShellVarContext current
+    Delete "$SMPROGRAMS\${LEGACY_PRODUCT_NAME}.lnk"
+    Delete "$DESKTOP\${LEGACY_PRODUCT_NAME}.lnk"
+    !insertmacro wails.setShellContext
+
+done:
+    Pop $4
+    Pop $3
+    Pop $2
+    Pop $1
+    Pop $0
+FunctionEnd
 
 ####
 ## Already installed? Say so, and offer the two things a person opening an
@@ -275,6 +408,24 @@ FunctionEnd
 ####
 Function .onInit
     !insertmacro wails.checkArchitecture
+
+    ; The key is written in the 64-bit view (wails.writeUninstaller), and this
+    ; installer is a 32-bit process: without this the read lands in
+    ; WOW6432Node, finds nothing, and every run looks like a first install.
+    SetRegView 64
+
+    ; The copy from before the rename is removed during the install itself;
+    ; say so first, since it is not this product's name on the box.
+    ReadRegStr $R0 ${UNINST_ROOT} "${LEGACY_UNINST_KEY}" "UninstallString"
+    ReadRegStr $R1 ${UNINST_ROOT} "${LEGACY_UNINST_KEY}" "DisplayVersion"
+    ${If} $R0 != ""
+        MessageBox MB_OKCANCEL|MB_ICONINFORMATION \
+            "${LEGACY_PRODUCT_NAME} $R1 is installed on this computer. ${INFO_PRODUCTNAME} is the same app under its new name, and Setup will replace it.$\r$\n$\r$\n\
+            Your games, snapshots, settings and paired devices are kept: both use the same data folder." \
+            /SD IDOK IDOK legacyok
+        Abort
+legacyok:
+    ${EndIf}
 
     ReadRegStr $R0 ${UNINST_ROOT} "${UNINST_KEY}" "UninstallString"
     ReadRegStr $R1 ${UNINST_ROOT} "${UNINST_KEY}" "DisplayVersion"
@@ -335,6 +486,24 @@ Section
     ; Before anything is written: the app holds its own files open.
     Call StopRunningOpenSave
 
+    ; Whether this person had the app starting with Windows, read before the
+    ; old uninstaller clears the value it shares with this version.
+    ReadRegStr $R5 HKCU "${OPENSAVE_RUN_KEY}" "${OPENSAVE_RUN_VALUE}"
+    ReadRegStr $R6 HKCU "${OPENSAVE_RUN_KEY}" "${STRAY_RUN_VALUE}"
+
+    ; And the copy from before the rename, which would otherwise keep running
+    ; beside this one over the same data.
+    Call RemoveLegacyOpenSave
+
+    ; One start-with-Windows entry, under the name the app itself keeps, and
+    ; pointing here. A silent update has no finish page to tick it again.
+    ${If} $R5 != ""
+    ${OrIf} $R6 != ""
+        WriteRegStr HKCU "${OPENSAVE_RUN_KEY}" "${OPENSAVE_RUN_VALUE}" \
+            '"$INSTDIR\${PRODUCT_EXECUTABLE}" --start-hidden'
+    ${EndIf}
+    DeleteRegValue HKCU "${OPENSAVE_RUN_KEY}" "${STRAY_RUN_VALUE}"
+
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
@@ -379,8 +548,9 @@ Function LaunchOpenSave
 FunctionEnd
 
 Function EnableAutostart
-    WriteRegStr HKCU "${OPENSAVE_RUN_KEY}" "${INFO_PRODUCTNAME}" \
+    WriteRegStr HKCU "${OPENSAVE_RUN_KEY}" "${OPENSAVE_RUN_VALUE}" \
         '"$INSTDIR\${PRODUCT_EXECUTABLE}" --start-hidden'
+    DeleteRegValue HKCU "${OPENSAVE_RUN_KEY}" "${STRAY_RUN_VALUE}"
 FunctionEnd
 
 ####
@@ -413,7 +583,8 @@ Section "uninstall"
     ; program that is no longer there at every boot, and the person who
     ; uninstalled OpenSave has to find out what a stale Run entry is to make
     ; it stop.
-    DeleteRegValue HKCU "${OPENSAVE_RUN_KEY}" "${INFO_PRODUCTNAME}"
+    DeleteRegValue HKCU "${OPENSAVE_RUN_KEY}" "${OPENSAVE_RUN_VALUE}"
+    DeleteRegValue HKCU "${OPENSAVE_RUN_KEY}" "${STRAY_RUN_VALUE}"
 
     ; What the app registers so its desktop notifications show as OpenSave's
     ; and can be clicked (notify_windows.go): its name and icon, and the class

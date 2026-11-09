@@ -174,6 +174,12 @@ func (a *App) startup(ctx context.Context) {
 		} else {
 			d.Log.Log("info", "start-with-system was switched on outside the app; Settings now agrees")
 		}
+		// And rewrite it as the app's own entry: the one found may be the
+		// 2.5/2.6 installer's, under another name, which SetAutostart folds
+		// into this one rather than leaving two that each start the app.
+		if err := sysintegration.SetAutostart(true); err != nil {
+			d.Log.Log("warn", "could not refresh the start-with-system entry: "+err.Error())
+		}
 	}
 
 	// Started hidden, but with nowhere to come back from? Show the window.
