@@ -145,6 +145,9 @@ func (p gameSave) upload(f *os.File, size int64, fileName string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if gone, ok := parseGameSaveScopeGone(resp); ok {
+		return gone
+	}
 	return transferOK(resp)
 }
 

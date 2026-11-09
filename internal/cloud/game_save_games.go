@@ -27,6 +27,7 @@ type GameSaveGameMember struct {
 	SnapshotCount  int                    `json:"snapshotCount"`
 	ConflictCount  int                    `json:"conflictCount"`
 	LastReceivedAt time.Time              `json:"lastReceivedAt,omitzero"`
+	Retired        bool                   `json:"retired,omitempty"`
 }
 
 // GameSaveGame groups same-type scopes that hold saves of one game. The

@@ -43,6 +43,7 @@ type GameSaveScopeStatus struct {
 	Conflicts          []GameSaveScopeStatusItem `json:"conflicts"`
 	RestoreBlocked     bool                      `json:"restoreBlocked"`
 	Publishable        bool                      `json:"publishable"`
+	Gone               *GameSaveScopeGoneStatus  `json:"gone,omitempty"`
 }
 
 // GameSaveScopeStatusItem is deliberately limited to the lineage and source
@@ -59,6 +60,7 @@ type GameSaveScopeStatusItem struct {
 	Platform   string    `json:"platform"`
 	Conflict   bool      `json:"conflict"`
 	ConflictOf string    `json:"conflictOf"`
+	Locked     bool      `json:"locked"`
 }
 
 const (
@@ -71,6 +73,8 @@ const (
 	gameSaveStatusDisabled        = "disabled"
 	gameSaveStatusLegacy          = "legacy"
 	gameSaveStatusInUse           = "in_use"
+	gameSaveStatusScopeDeleted    = "scope_deleted"
+	gameSaveStatusScopeRetired    = "scope_retired"
 )
 
 // runGameSaveScopeUpload sends a conventional local snapshot through the
@@ -97,9 +101,17 @@ func (d *Daemon) runGameSaveScopeUpload(zipPath, legacyName string) (handled boo
 	d.cloudRd.native.Lock()
 	defer d.cloudRd.native.Unlock()
 
+	if _, stopped := d.gameSaveScopeGone(game.ID); stopped {
+		return true, ErrGameSaveScopeSyncStopped
+	}
+
 	scope, err := d.Cloud.GetGameSaveScope(game.SaveType, game.ID)
 	if errors.Is(err, cloud.ErrGameSaveScopesUnsupported) {
 		return false, nil
+	}
+	if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+		d.noteGameSaveScopeGone(game, gone, false)
+		return true, gone
 	}
 	if err != nil {
 		return true, err
@@ -132,6 +144,10 @@ func (d *Daemon) runGameSaveScopeUpload(zipPath, legacyName string) (handled boo
 	}
 
 	if err := d.Cloud.Upload(archive, archiveName); err != nil {
+		if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+			d.noteGameSaveScopeGone(game, gone, false)
+			return true, gone
+		}
 		return true, err
 	}
 
@@ -164,7 +180,14 @@ func (d *Daemon) runGameSaveScopeUpload(zipPath, legacyName string) (handled boo
 		CreatedAt:     snapshotCreatedAt(localSnapshotID),
 	}
 	if scope.Head != nil && knownHead != scope.Head.ID {
-		return true, d.retainNativeGameSaveConflict(game, candidate, scope.Head.ID)
+		if err := d.retainNativeGameSaveConflict(game, candidate, scope.Head.ID); err != nil {
+			if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+				d.noteGameSaveScopeGone(game, gone, false)
+				return true, gone
+			}
+			return true, err
+		}
+		return true, nil
 	}
 	if scope.Head == nil {
 		candidate.Parent = ""
@@ -175,9 +198,20 @@ func (d *Daemon) runGameSaveScopeUpload(zipPath, legacyName string) (handled boo
 		d.reportNativeGameSaveIdentity(game)
 		return true, nil
 	}
+	if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+		d.noteGameSaveScopeGone(game, gone, false)
+		return true, gone
+	}
 	var conflict *cloud.GameSaveScopeConflictError
 	if errors.As(err, &conflict) {
-		return true, d.retainNativeGameSaveConflict(game, candidate, conflict.Head)
+		if err := d.retainNativeGameSaveConflict(game, candidate, conflict.Head); err != nil {
+			if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+				d.noteGameSaveScopeGone(game, gone, false)
+				return true, gone
+			}
+			return true, err
+		}
+		return true, nil
 	}
 	return true, err
 }
@@ -206,12 +240,28 @@ func nativeGameSaveIdentity(game store.Game) cloud.GameSaveScopeIdentity {
 // reportNativeGameSaveIdentity is best effort: the backup already reached the
 // cloud, and an older service simply does not group games.
 func (d *Daemon) reportNativeGameSaveIdentity(game store.Game) {
+	if _, stopped := d.gameSaveScopeGone(game.ID); stopped {
+		return
+	}
 	identity := nativeGameSaveIdentity(game)
 	if identity == (cloud.GameSaveScopeIdentity{}) {
 		return
 	}
 	if _, err := d.Cloud.PutGameSaveScopeIdentity(game.SaveType, game.ID, identity); err != nil {
-		d.Log.Log("info", "game-save: could not record which game "+game.ID+" is: "+err.Error())
+		if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+			d.noteGameSaveScopeGone(game, gone, false)
+			return
+		}
+		var refused *cloud.GameSaveScopeGoneError
+		if errors.As(err, &refused) {
+			if d.Log != nil {
+				d.Log.Log("warn", fmt.Sprintf("game-save: could not record which game %s is: %v", game.ID, err))
+			}
+			return
+		}
+		if d.Log != nil {
+			d.Log.Log("info", "game-save: could not record which game "+game.ID+" is: "+err.Error())
+		}
 	}
 }
 
@@ -282,6 +332,7 @@ func gameSaveStatusItem(snapshot cloud.GameSaveScopeSnapshot) GameSaveScopeStatu
 		Platform:   snapshot.Platform,
 		Conflict:   snapshot.Conflict,
 		ConflictOf: snapshot.ConflictOf,
+		Locked:     snapshot.Locked,
 	}
 }
 
@@ -367,11 +418,23 @@ func (d *Daemon) GameSaveStatus(gameID string) (GameSaveScopeStatus, error) {
 		}
 	}
 
+	if gone, stopped := d.gameSaveScopeGone(game.ID); stopped {
+		d.applyGameSaveScopeGone(&status, gone)
+		return status, nil
+	}
+
 	scope, err := d.Cloud.GetGameSaveScope(status.SaveType, game.ID)
 	if errors.Is(err, cloud.ErrGameSaveScopesUnsupported) {
 		status.State = gameSaveStatusLegacy
 		status.Detail = "The service does not expose native scope lineage, source devices, or retained conflicts."
 		return status, nil
+	}
+	if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+		d.noteGameSaveScopeGone(game, gone, false)
+		if record, stopped := d.gameSaveScopeGone(game.ID); stopped {
+			d.applyGameSaveScopeGone(&status, record)
+			return status, nil
+		}
 	}
 	if err != nil {
 		status.State = gameSaveStatusError
@@ -495,6 +558,9 @@ func (d *Daemon) PublishCurrentGameSaveHead(gameID string) error {
 	if err != nil {
 		return err
 	}
+	if _, stopped := d.gameSaveScopeGone(game.ID); stopped {
+		return ErrGameSaveScopeSyncStopped
+	}
 	record, err := d.cloudHeadFor(game)
 	if err != nil {
 		return err
@@ -527,11 +593,25 @@ func (d *Daemon) checkNativeGameSaveScopes() bool {
 	}
 	var offers []CloudOffer
 	for _, game := range games {
+		if _, stopped := d.gameSaveScopeGone(game.ID); stopped {
+			continue
+		}
 		scope, err := d.Cloud.GetGameSaveScope(game.SaveType, game.ID)
 		if errors.Is(err, cloud.ErrGameSaveScopesUnsupported) {
 			return false
 		}
+		if gone, ok := cloud.IsGameSaveScopeGone(err); ok {
+			d.noteGameSaveScopeGone(game, gone, false)
+			continue
+		}
 		if err != nil {
+			var refused *cloud.GameSaveScopeGoneError
+			if errors.As(err, &refused) {
+				if d.Log != nil {
+					d.Log.Log("warn", fmt.Sprintf("cloud: game-save refused scope for %q with unknown 410 code %q", game.Name, refused.Code))
+				}
+				continue
+			}
 			if d.Log != nil && !cloud.IsNotConfigured(err) {
 				d.Log.Log("warn", fmt.Sprintf("cloud: could not read game-save scope for %q: %v", game.Name, err))
 			}
