@@ -1,5 +1,19 @@
-import { describe, expect, it } from 'vitest';
-import { canLaunch, gameMenuItems, latestSnapshot } from './gameactions.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./api.js', () => ({
+  api: {
+    get: vi.fn(async () => ({ cloudSync: { ready: true } })),
+    post: vi.fn(async () => ({})),
+    patch: vi.fn(async () => ({})),
+    del: vi.fn(async () => ({}))
+  },
+  native: {},
+  gameCover: () => ''
+}));
+
+import { api } from './api.js';
+import { UNDO_DELAY } from './undo.js';
+import { canLaunch, gameMenuItems, latestSnapshot, untrackGame } from './gameactions.js';
 
 const game = (extra = {}) => ({
   id: 'g1',
@@ -56,5 +70,31 @@ describe('gameMenuItems', () => {
     const items = gameMenuItems(game());
     expect(items.at(-1)).toMatchObject({ id: 'untrack', danger: true });
     expect(items.at(-2)).toBe(null);
+  });
+});
+
+describe('untrackGame', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  const run = async (options) => {
+    vi.useFakeTimers();
+    const outcome = untrackGame(game(), options);
+    await vi.advanceTimersByTimeAsync(UNDO_DELAY);
+    return outcome;
+  };
+
+  it('offers to delete the cloud copies afterwards', async () => {
+    await expect(run()).resolves.toBe('done');
+    expect(api.del).toHaveBeenCalledWith('/api/games/g1');
+    expect(api.get).toHaveBeenCalledWith('/api/settings');
+  });
+
+  it('skips that offer when the caller says the cloud copies are not ours to delete', async () => {
+    await expect(run({ skipCloudCleanup: true })).resolves.toBe('done');
+    expect(api.del).toHaveBeenCalledWith('/api/games/g1');
+    expect(api.get).not.toHaveBeenCalled();
   });
 });

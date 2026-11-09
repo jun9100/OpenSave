@@ -19,6 +19,7 @@
   import LocationConflictModal from './components/LocationConflictModal.svelte';
   import PairingBanner from './components/PairingBanner.svelte';
   import CloudOfferBanner from './components/CloudOfferBanner.svelte';
+  import ScopeGoneBanner from './components/ScopeGoneBanner.svelte';
   import NewGamesBanner from './components/NewGamesBanner.svelte';
   import ConfirmDialog from './components/ConfirmDialog.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
@@ -275,6 +276,9 @@
              sat on the page's own header buttons for as long as they were
              shown. These wait for an answer; they should not take anything away
              while they do. -->
+        <!-- This one fetches its own list, so it is mounted even when there
+             is nothing else in the notice stack. -->
+        <ScopeGoneBanner />
         {#if $cloudOffers.length > 0 || $newGames.length > 0}
           <div class="notices">
             <CloudOfferBanner />
