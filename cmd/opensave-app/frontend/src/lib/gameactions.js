@@ -98,8 +98,12 @@ async function restoreLatest(game) {
   return attempt(() => api.post(`/api/games/${game.id}/rollback`, { snapshotId: snap.id }), tt('gameActions.restored', { game: game.name }));
 }
 
-/** Stops tracking a game, with a few seconds to undo it. */
-export async function untrackGame(game) {
+/** Stops tracking a game, with a few seconds to undo it.
+ *
+ *  `skipCloudCleanup` is for entries that exist only as a duplicate cloud
+ *  scope (the merge banner): its cloud copies are not this device's to
+ *  delete, so the "delete them?" offer must not follow. */
+export async function untrackGame(game, { skipCloudCleanup = false } = {}) {
   const current = get(view);
   if (current.name === 'game' && current.params?.gameId === game.id) navigate('home');
   const outcome = await withUndo({
@@ -108,7 +112,7 @@ export async function untrackGame(game) {
     stillThere: (id) => !!get(games)[id],
     run: () => api.del(`/api/games/${game.id}`)
   });
-  if (outcome === 'done') offerCloudCleanup(game);
+  if (outcome === 'done' && !skipCloudCleanup) offerCloudCleanup(game);
   return outcome;
 }
 

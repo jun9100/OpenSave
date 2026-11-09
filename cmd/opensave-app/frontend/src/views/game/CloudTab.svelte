@@ -1,15 +1,19 @@
 <script>
-  import { navigate, toast, askConfirm, settings } from '../../lib/stores.js';
+  import { navigate, toast, askConfirm, settings, games } from '../../lib/stores.js';
   import { api } from '../../lib/api.js';
   import { fmtSize } from '../../lib/format.js';
   import { t, segments, trError } from '../../lib/i18n.js';
+  import { goneNotice, goneStatusLabel, isScopeGoneState, resumeGone } from '../../lib/scopegone.js';
   import Spinner from '../../components/ui/Spinner.svelte';
   import OtherDevices from './OtherDevices.svelte';
   import CircleAlert from 'lucide-svelte/icons/circle-alert';
   import CircleCheck from 'lucide-svelte/icons/circle-check';
   import Cloud from 'lucide-svelte/icons/cloud';
   import CloudDownload from 'lucide-svelte/icons/cloud-download';
+  import CloudOff from 'lucide-svelte/icons/cloud-off';
+  import GitMerge from 'lucide-svelte/icons/git-merge';
   import History from 'lucide-svelte/icons/history';
+  import Lock from 'lucide-svelte/icons/lock';
   import RefreshCw from 'lucide-svelte/icons/refresh-cw';
   import ShieldAlert from 'lucide-svelte/icons/shield-alert';
   import Upload from 'lucide-svelte/icons/upload';
@@ -22,10 +26,14 @@
   let status = null;
   let loading = false;
   let statusReadFailed = false;
+  let resuming = false;
 
   // `legacy` is the sole compatibility fallback. A failed native status read
   // must not make the UI reopen the timestamped archive path.
   $: native = status?.provider === 'game-save' && status?.state !== 'legacy';
+  // The scope is gone (deleted or merged on the server): not a sync failure,
+  // and nothing that talks to the cloud should be offered for it.
+  $: gone = native && isScopeGoneState(status?.state) ? goneNotice(status.gone ?? status) : null;
   $: statusTone = native ? toneFor(status.state) : 'muted';
   $: publishHint = native ? nativePublishHint(status) : '';
 
@@ -54,13 +62,20 @@
 
   function toneFor(state) {
     if (state === 'up_to_date') return 'success';
+    // A deleted or merged scope is not a failure: nothing is wrong with the
+    // save, the cloud simply no longer accepts it.
+    if (isScopeGoneState(state)) return 'muted';
     if (state === 'upload_pending' || state === 'download_pending') return 'pending';
     if (state === 'conflict' || state === 'in_use' || state === 'error' || state === 'offline') return 'danger';
     return 'muted';
   }
 
-  function stateLabel(state) {
-    return $t(`game.cloud.state.${state || 'error'}`);
+  function stateLabel(current) {
+    if (isScopeGoneState(current?.state)) {
+      const label = goneStatusLabel(current);
+      return $t(label.key, label.params);
+    }
+    return $t(`game.cloud.state.${current?.state || 'error'}`);
   }
 
   function stateIcon(state) {
@@ -68,11 +83,17 @@
     if (state === 'upload_pending') return Upload;
     if (state === 'download_pending') return CloudDownload;
     if (state === 'conflict') return ShieldAlert;
+    if (state === 'scope_deleted') return CloudOff;
+    if (state === 'scope_retired') return GitMerge;
     return CircleAlert;
   }
 
   function nativeDetail(current) {
     if (!current) return '';
+    if (isScopeGoneState(current.state)) {
+      const notice = goneNotice(current.gone ?? current);
+      return $t(notice.key, notice.params);
+    }
     if (current.state === 'up_to_date') return $t('game.cloud.detail.up_to_date');
     if (current.state === 'upload_pending') {
       return current.publishable ? $t('game.cloud.detail.publishable') : $t('game.cloud.detail.snapshot_required');
@@ -88,6 +109,35 @@
   function nativePublishHint(current) {
     if (!current?.publishable) return nativeDetail(current);
     return $t('game.cloud.publish.ready');
+  }
+
+  // The name to put in "merged into …" and "open …", preferring the game this
+  // device tracks for the successor.
+  function successorName(current) {
+    const info = current?.gone ?? {};
+    return $games[info.successorLocalGameId]?.name || info.successorName || info.successorGameId || '';
+  }
+
+  function openSuccessor() {
+    const id = status?.gone?.successorLocalGameId;
+    if (id) navigate('game', { gameId: id });
+  }
+
+  async function resume() {
+    if (resuming) return;
+    resuming = true;
+    try {
+      await resumeGone(game.id);
+      toast($t('cloud.gone.resumed'), 'success');
+    } catch (e) {
+      // A 409 means the server still has the tombstone; the message says
+      // which one and what has to happen on the web page first.
+      toast(trError(e.message), 'error');
+    } finally {
+      resuming = false;
+      // Either way the answer changed (or did not): show what is true now.
+      await load();
+    }
   }
 
   function shortID(value) {
@@ -147,11 +197,11 @@
       <button class="btn small" disabled={$busy || loading} title={$t('game.cloud.refresh')} on:click={load}>
         <RefreshCw size={13} />{$t('game.cloud.refresh')}
       </button>
-      {#if native}
+      {#if native && !gone}
         <button class="btn small primary" disabled={$busy || !status.publishable} title={publishHint} on:click={upload}>
           <Upload size={13} />{$t('game.cloud.native.publish')}
         </button>
-      {:else if !statusReadFailed}
+      {:else if !native && !statusReadFailed}
         <button class="btn small primary" disabled={$busy || loading} on:click={upload}>
           <Upload size={13} />{$t('game.cloud.upload.action')}
         </button>
@@ -174,11 +224,25 @@
       <div class="state-icon"><svelte:component this={stateIcon(status.state)} size={21} /></div>
       <div class="state-copy">
         <div class="state-topline">
-          <strong>{stateLabel(status.state)}</strong>
+          <strong>{stateLabel(status)}</strong>
           <span class="badge offline">{status.saveType}</span>
           {#if !status.automatic}<span class="badge warn">{$t('game.cloud.auto_off')}</span>{/if}
         </div>
         <p>{nativeDetail(status)}</p>
+        {#if gone?.hintKey}<p class="gone-hint">{$t(gone.hintKey, gone.params)}</p>{/if}
+        {#if gone?.refusedKey}<p class="gone-hint">{$t(gone.refusedKey)}</p>{/if}
+        {#if gone}
+          <div class="gone-actions">
+            <button class="btn small primary" disabled={$busy || loading || resuming} on:click={resume}>
+              <RefreshCw size={13} />{$t('cloud.gone.resume')}
+            </button>
+            {#if status.gone?.successorLocalGameId}
+              <button class="btn small" disabled={$busy || loading} on:click={openSuccessor}>
+                {$t('cloud.gone.openSuccessor', { successor: successorName(status) })}
+              </button>
+            {/if}
+          </div>
+        {/if}
       </div>
     </section>
 
@@ -211,7 +275,7 @@
             <p>{$t('game.cloud.native.no_head')}</p>
           {/if}
         </div>
-        {#if status.cloudSnapshot}
+        {#if status.cloudSnapshot && !gone}
           <button class="btn small primary" disabled={$busy || status.restoreBlocked} title={status.restoreBlocked ? nativeDetail(status) : $t('game.cloud.native.restore_action')} on:click={restoreAuthoritative}>
             <CloudDownload size={14} />{$t('game.cloud.native.restore_action')}
           </button>
@@ -238,6 +302,9 @@
               <div class="version-primary">
                 <code title={snap.id}>{shortID(snap.id)}</code>
                 {#if snap.id === status.cloudHead}<span class="badge online">{$t('game.cloud.native.authoritative')}</span>{/if}
+                {#if snap.locked}
+                  <Lock size={13} title={$t('cloud.locked')} aria-label={$t('cloud.locked')} />
+                {/if}
               </div>
               <span>{sourceLabel(snap)}</span>
               <span>{timestamp(snap.receivedAt)}</span>
@@ -258,7 +325,12 @@
         <div class="version-list">
           {#each status.conflicts as conflict (conflict.id)}
             <div class="version-row conflict-row">
-              <div class="version-primary"><code title={conflict.id}>{shortID(conflict.id)}</code></div>
+              <div class="version-primary">
+                <code title={conflict.id}>{shortID(conflict.id)}</code>
+                {#if conflict.locked}
+                  <Lock size={13} title={$t('cloud.locked')} aria-label={$t('cloud.locked')} />
+                {/if}
+              </div>
               <span>{sourceLabel(conflict)}</span>
               <span>{timestamp(conflict.receivedAt)}</span>
             </div>
@@ -327,6 +399,8 @@
   .state-copy { min-width: 0; }
   .state-topline { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
   .state-copy p { color: var(--text-dim); font-size: 0.82rem; line-height: 1.45; margin-top: 4px; }
+  .state-copy p.gone-hint { color: var(--text-faint); }
+  .gone-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   .lineage-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 14px; }
   .lineage-grid > div { padding: 10px; min-width: 0; border-right: 1px solid var(--border); }
   .lineage-grid > div:last-child { border-right: none; }

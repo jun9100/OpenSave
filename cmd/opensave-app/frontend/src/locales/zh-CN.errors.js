@@ -2,6 +2,25 @@
 // trError): recognised by what they are about, since their wording comes
 // from all over the Go side. The original stays alongside in brackets.
 export default [
+  // A cloud scope deleted or merged on the server (C6). Said first: these are
+  // the whole reason sync stopped, and the generic rules below would answer
+  // with something about the network or a missing object instead.
+  [/game-save scope was deleted on the server/i, '这个游戏的云端存档已被删除'],
+  [/game-save scope was merged into another game on the server/i, '这个游戏的云端存档已合并到另一个游戏'],
+  [/game-save refused this scope/i, '云端拒绝了这个游戏的存档（410）'],
+  [/cloud sync stopped for this game: its cloud save was deleted or merged/i, '这个游戏的云端存档已被删除或合并，已停止云同步'],
+  [
+    /the cloud still marks this game's save as deleted; clear the deletion mark on the cloud web page first/i,
+    '云端仍标记为已删除，需要先在云端网页上解除删除标记'
+  ],
+  [
+    /the cloud still marks this game's save as merged into another game; undo the merge on the cloud web page first/i,
+    '云端仍标记为已合并，需要先在云端网页上取消合并'
+  ],
+  [
+    /this game's cloud save was deleted or merged on the server; its cloud copies are left as they are/i,
+    '这个游戏的云端存档已被删除或合并，云端副本保持不动'
+  ],
   // Pairing errors first: the generic "not authenticated", "401" and
   // "invalid" rules below would otherwise claim these messages and lose the
   // one detail that tells the user what to do next.
