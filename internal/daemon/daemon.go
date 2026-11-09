@@ -1139,9 +1139,11 @@ func (d *Daemon) UntrackGame(gameID string) error {
 	// Read before deleting: the tombstone remembers where this game was, so
 	// a later re-track puts it back there instead of guessing.
 	name, savePath := "", ""
-	if game, err := d.Store.GetGame(gameID); err == nil {
+	game, gameErr := d.Store.GetGame(gameID)
+	if gameErr == nil {
 		name, savePath = game.Name, game.SavePath
 	}
+	_, scopeGone, _ := d.Store.GetCloudScopeGone(gameID)
 	if err := d.Store.DeleteGame(gameID); err != nil {
 		return err
 	}
@@ -1151,6 +1153,13 @@ func (d *Daemon) UntrackGame(gameID string) error {
 	// (they remove it and tombstone it). Re-tracking on any device clears
 	// the tombstones (NotifyRetrack) and re-shares via sync-on-track.
 	_ = d.Store.AddUntrackedTombstone(gameID, name, savePath)
+	// The game row is gone, but "delete its cloud copies", offered right
+	// after this, still needs the save type to scope the provider listing,
+	// and must still refuse a scope the server deleted or merged — the
+	// record of that is dropped below.
+	if gameErr == nil {
+		_ = d.Store.RememberUntrackedCloudState(gameID, game.SaveType, scopeGone)
+	}
 	// The deletion records describe a folder this device no longer has an
 	// opinion about. Kept, they would outlive the game and could still
 	// remove a peer's file if it were tracked again later.
@@ -1306,13 +1315,20 @@ func (d *Daemon) untrackFromPeer(gameID string) {
 	// left behind for a new empty one at a guessed path, and syncing of the
 	// real saves stopped without a word.
 	name, savePath := "", ""
-	if game, err := d.Store.GetGame(gameID); err == nil {
+	game, gameErr := d.Store.GetGame(gameID)
+	if gameErr == nil {
 		name, savePath = game.Name, game.SavePath
 	}
+	_, scopeGone, _ := d.Store.GetCloudScopeGone(gameID)
 	if err := d.Store.DeleteGame(gameID); err != nil && err != store.ErrNotFound {
 		d.Log.Log("warn", fmt.Sprintf("untrack from peer: delete %q failed: %v", gameID, err))
 	}
 	_ = d.Store.AddUntrackedTombstone(gameID, name, savePath)
+	// Kept current for the same reason as in UntrackGame: an older row would
+	// otherwise describe a save type this id no longer had.
+	if gameErr == nil {
+		_ = d.Store.RememberUntrackedCloudState(gameID, game.SaveType, scopeGone)
+	}
 	// The deletion records describe a folder this device no longer has an
 	// opinion about. Kept, they would outlive the game and could still
 	// remove a peer's file if it were tracked again later.

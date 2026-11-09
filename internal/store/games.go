@@ -326,3 +326,49 @@ func checkRowAffected(res sql.Result) error {
 	}
 	return nil
 }
+
+// UntrackedCloudState is what an untrack tombstone kept for cleaning up the
+// game's cloud copies afterwards. See migrations/0044_tombstone_cloud_cleanup.sql.
+type UntrackedCloudState struct {
+	// SaveType is the untracked game's save type; meaningful only when
+	// SaveTypeKnown.
+	SaveType      string
+	SaveTypeKnown bool
+	// ScopeGone records that the game-save scope was tombstoned on the server
+	// (deleted or merged) when the game was untracked.
+	ScopeGone bool
+}
+
+// RememberUntrackedCloudState stores the cloud cleanup state on an existing
+// untrack tombstone. Call it after AddUntrackedTombstone; it does nothing
+// when there is no tombstone.
+func (s *Store) RememberUntrackedCloudState(gameID, saveType string, scopeGone bool) error {
+	_, err := s.db.Exec(
+		`UPDATE untracked_games SET save_type = ?, cloud_scope_gone = ? WHERE game_id = ?`,
+		saveType, scopeGone, gameID)
+	if err != nil {
+		return fmt.Errorf("remember untracked cloud state %s: %w", gameID, err)
+	}
+	return nil
+}
+
+// GetUntrackedCloudState returns the cloud cleanup state of an untrack
+// tombstone, and false when the game carries no tombstone.
+func (s *Store) GetUntrackedCloudState(gameID string) (UntrackedCloudState, bool, error) {
+	var row struct {
+		SaveType  sql.NullString `db:"save_type"`
+		ScopeGone bool           `db:"cloud_scope_gone"`
+	}
+	err := s.db.Get(&row, `SELECT save_type, cloud_scope_gone FROM untracked_games WHERE game_id = ?`, gameID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UntrackedCloudState{}, false, nil
+	}
+	if err != nil {
+		return UntrackedCloudState{}, false, fmt.Errorf("get untracked cloud state %s: %w", gameID, err)
+	}
+	return UntrackedCloudState{
+		SaveType:      row.SaveType.String,
+		SaveTypeKnown: row.SaveType.Valid,
+		ScopeGone:     row.ScopeGone,
+	}, true, nil
+}
