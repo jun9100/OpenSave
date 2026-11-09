@@ -41,6 +41,7 @@ type GameSaveGroupMember struct {
 	ConflictCount int       `json:"conflictCount"`
 	HeadID        string    `json:"headId"`
 	HeadArchive   string    `json:"headArchive"`
+	Retired       bool      `json:"retired"`
 }
 
 // GameSaveGroup is the read-only answer for one local game. Unsupported,
@@ -67,6 +68,7 @@ type GameSaveMemberVersion struct {
 	DeviceName string    `json:"deviceName"`
 	Platform   string    `json:"platform"`
 	IsHead     bool      `json:"isHead"`
+	Locked     bool      `json:"locked"`
 }
 
 // GameSaveGroup finds the cloud game group this local game belongs to. It
@@ -181,6 +183,7 @@ func gameSaveGroupMembers(group cloud.GameSaveGame, game store.Game) []GameSaveG
 			LastVersionAt: scope.LastReceivedAt,
 			SnapshotCount: scope.SnapshotCount,
 			ConflictCount: scope.ConflictCount,
+			Retired:       scope.Retired,
 		}
 		if scope.Head != nil {
 			member.DeviceName = scope.Head.DeviceName
@@ -254,5 +257,6 @@ func gameSaveMemberVersionFromScope(snapshot cloud.GameSaveScopeSnapshot, isHead
 		DeviceName: snapshot.DeviceName,
 		Platform:   snapshot.Platform,
 		IsHead:     isHead,
+		Locked:     snapshot.Locked,
 	}
 }

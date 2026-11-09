@@ -29,6 +29,13 @@ type nativeGameSaveTestServer struct {
 	archives           map[string][]byte
 	scopes             map[string]*nativeGameSaveTestScope
 	races              map[string]cloud.GameSaveScopeSnapshot
+	goneScopes         map[string]cloud.GameSaveScopeGoneError
+	goneUploads        map[string]cloud.GameSaveScopeGoneError
+	locked             bool
+	filePuts           int
+	scopePuts          int
+	scopeGets          int
+	requests           []string
 	scopeRoutesEnabled bool
 	server             *httptest.Server
 }
@@ -45,6 +52,8 @@ func newNativeGameSaveTestServer(t *testing.T) *nativeGameSaveTestServer {
 		archives:           map[string][]byte{},
 		scopes:             map[string]*nativeGameSaveTestScope{},
 		races:              map[string]cloud.GameSaveScopeSnapshot{},
+		goneScopes:         map[string]cloud.GameSaveScopeGoneError{},
+		goneUploads:        map[string]cloud.GameSaveScopeGoneError{},
 		scopeRoutesEnabled: true,
 	}
 	s.server = httptest.NewServer(http.HandlerFunc(s.serveHTTP))
@@ -74,6 +83,9 @@ func (s *nativeGameSaveTestServer) serveHTTP(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	s.mu.Lock()
+	s.requests = append(s.requests, r.Method+" "+r.URL.Path)
+	s.mu.Unlock()
 	if r.Method != http.MethodGet && strings.TrimSpace(r.Header.Get("X-OpenSave-Device-ID")) == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -104,6 +116,14 @@ func (s *nativeGameSaveTestServer) handleFiles(w http.ResponseWriter, r *http.Re
 	key := kind + "/" + name
 	switch r.Method {
 	case http.MethodPut:
+		s.mu.Lock()
+		s.filePuts++
+		uploadGone, uploadIsGone := s.goneUploads[kind+"/"+gameIDFromArchiveName(name)]
+		s.mu.Unlock()
+		if uploadIsGone {
+			writeNativeGameSaveGone(w, uploadGone)
+			return
+		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -135,6 +155,29 @@ func (s *nativeGameSaveTestServer) handleFiles(w http.ResponseWriter, r *http.Re
 }
 
 func (s *nativeGameSaveTestServer) handleScopes(w http.ResponseWriter, r *http.Request, parts []string) {
+	if r.Method == http.MethodPut {
+		s.mu.Lock()
+		s.scopePuts++
+		s.mu.Unlock()
+	}
+	if len(parts) == 5 && r.Method == http.MethodGet {
+		s.mu.Lock()
+		s.scopeGets++
+		s.mu.Unlock()
+	}
+	if len(parts) >= 5 {
+		s.mu.Lock()
+		gone, isGone := s.goneScopes[nativeGameSaveScopeKey(parts[3], parts[4])]
+		s.mu.Unlock()
+		if isGone {
+			writeNativeGameSaveGone(w, gone)
+			return
+		}
+	}
+	if len(parts) == 6 && parts[5] == "identity" && r.Method == http.MethodPut {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if len(parts) == 5 && r.Method == http.MethodGet {
 		s.mu.Lock()
 		response := s.scopeResponseLocked(parts[3], parts[4])
@@ -208,6 +251,25 @@ func (s *nativeGameSaveTestServer) handleScopes(w http.ResponseWriter, r *http.R
 	writeNativeGameSaveJSON(w, http.StatusCreated, stored)
 }
 
+func gameIDFromArchiveName(name string) string {
+	gameID, _, _, ok := cloud.ParseGameSaveArchiveName(name)
+	if !ok {
+		return ""
+	}
+	return gameID
+}
+
+func writeNativeGameSaveGone(w http.ResponseWriter, gone cloud.GameSaveScopeGoneError) {
+	body := map[string]any{"code": gone.Code, "error": "server explanation"}
+	if !gone.DeletedAt.IsZero() {
+		body["deletedAt"] = gone.DeletedAt.UTC().Format(time.RFC3339)
+	}
+	if gone.SuccessorType != "" || gone.SuccessorGameID != "" {
+		body["successor"] = map[string]string{"type": gone.SuccessorType, "gameId": gone.SuccessorGameID}
+	}
+	writeNativeGameSaveJSON(w, http.StatusGone, body)
+}
+
 func (s *nativeGameSaveTestServer) validateArchiveLocked(kind string, candidate cloud.GameSaveScopeCandidate) error {
 	archive, exists := s.archives[kind+"/"+candidate.Archive]
 	if !exists {
@@ -225,12 +287,15 @@ func (s *nativeGameSaveTestServer) scopeResponseLocked(kind, gameID string) clou
 	response := cloud.GameSaveScope{Type: kind, GameID: gameID}
 	if state.head != "" {
 		head := state.snapshots[state.head]
+		head.Locked = s.locked
 		response.Head = &head
 	}
 	for _, item := range state.snapshots {
+		item.Locked = s.locked
 		response.Snapshots = append(response.Snapshots, item)
 	}
 	for _, item := range state.conflicts {
+		item.Locked = s.locked
 		response.Conflicts = append(response.Conflicts, item)
 	}
 	return response
