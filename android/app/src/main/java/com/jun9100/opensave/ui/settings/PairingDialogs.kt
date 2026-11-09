@@ -30,6 +30,7 @@ import com.jun9100.opensave.PairingLink
 import com.jun9100.opensave.ui.dialogs.dialogButtonFocus
 import com.jun9100.opensave.ui.input.busyDimmed
 import com.jun9100.opensave.ui.input.consumeHandheldShortcuts
+import com.jun9100.opensave.ui.input.dpadLeavesTextField
 import com.jun9100.opensave.ui.input.rememberInitialFocus
 import com.jun9100.opensave.ui.input.whenIdle
 import com.jun9100.opensave.ui.preview.OdinScreenPreviews
@@ -66,7 +67,7 @@ internal fun PairingDialog(
                     placeholder = { Text("http://nas.example:8788") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth().focusRequester(rememberInitialFocus()),
+                    modifier = Modifier.fillMaxWidth().dpadLeavesTextField().focusRequester(rememberInitialFocus()),
                 )
                 OutlinedTextField(
                     value = code,
@@ -79,7 +80,7 @@ internal fun PairingDialog(
                         imeAction = ImeAction.Done,
                     ),
                     keyboardActions = KeyboardActions(onDone = { submit() }),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().dpadLeavesTextField(),
                 )
                 Text(
                     "在 SaveVault 云端网页生成配对码。也可以用系统相机扫描配对二维码，或粘贴 savevault://pair 链接。",
