@@ -4,22 +4,26 @@ import android.content.Context
 import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.GameSaveCloudUpdate
 import com.jun9100.opensave.GameSaveRemoteAction
+import com.jun9100.opensave.GameSaveScopeGoneException
 import com.jun9100.opensave.GameSnapshotManifest
 import com.jun9100.opensave.PendingUploadPolicy
 import com.jun9100.opensave.PendingUploadScheduler
 import com.jun9100.opensave.RemoteSnapshot
+import com.jun9100.opensave.ScopeTombstoneStore
 import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.StorageOperationLock
 import com.jun9100.opensave.activity.ActivityEntry
 import com.jun9100.opensave.activity.ActivityKind
 import com.jun9100.opensave.activity.ActivityLevel
 import com.jun9100.opensave.activity.ActivityRecorder
+import com.jun9100.opensave.cloudScopeIdentity
 import com.jun9100.opensave.ops.GameCaptureOutcome
 import com.jun9100.opensave.ops.GameOperations
 import com.jun9100.opensave.ops.PendingUpload
 import com.jun9100.opensave.ops.PublishOutcome
 import com.jun9100.opensave.ops.SafeRestore
 import com.jun9100.opensave.ops.ready
+import com.jun9100.opensave.stopNotice
 
 /**
  * Runs one batch to the end: the ViewModel calls it for local batches, the
@@ -39,7 +43,7 @@ internal object BatchJobs {
     ): BatchReport {
         val appContext = context.applicationContext
         val store = BatchReportStore.forApp(appContext)
-        val execution = BatchExecution(id, operation, GameOperations(appContext))
+        val execution = BatchExecution(id, operation, GameOperations(appContext), ScopeTombstoneStore(appContext))
         var report: BatchReport? = null
         try {
             val ran = BatchRunner.run(
@@ -98,6 +102,7 @@ internal class BatchExecution(
     private val id: String,
     private val operation: BatchOperation,
     private val ops: GameOperations,
+    private val tombstones: ScopeTombstoneStore,
 ) {
     private val checkedKeys = linkedSetOf<String>()
     private val updates = mutableListOf<GameSaveCloudUpdate>()
@@ -136,7 +141,13 @@ internal class BatchExecution(
         block()
     }
 
+    /** A deleted or merged scope is skipped before any request; the local saves stay untouched. */
+    private fun stopped(entry: SourceGameEntry): BatchStepResult? =
+        tombstones.get(entry.cloudScopeIdentity())
+            ?.let { BatchStepResult(BatchItemStatus.SKIPPED, it.stopNotice) }
+
     private suspend fun backup(entry: SourceGameEntry): BatchStepResult {
+        stopped(entry)?.let { return it }
         val manifest = GameSnapshotManifest.from(entry.game, GameLibrary.batchBackupLocations(entry.game))
         val captured = locked { ops.captureLocked(entry, manifest) }
         if (captured.published) remember(entry, captured.cloudUpdate)
@@ -145,6 +156,7 @@ internal class BatchExecution(
     }
 
     private suspend fun uploadPending(entry: SourceGameEntry): BatchStepResult {
+        stopped(entry)?.let { return it }
         require(config.ready) { "未启用 SaveVault 云端同步" }
         return when (val result = locked { ops.uploadPendingLocked(entry, config) }) {
             PendingUpload.NothingPending -> BatchStepResult(BatchItemStatus.UNCHANGED, "最新版本已在云端")
@@ -158,6 +170,7 @@ internal class BatchExecution(
     }
 
     private suspend fun checkCloud(entry: SourceGameEntry): BatchStepResult {
+        stopped(entry)?.let { return it }
         require(config.ready) { "未启用 SaveVault 云端同步" }
         val update = locked { ops.checkCloudLocked(entry, config, client, ::remoteSnapshots) }
         checkedKeys += entry.libraryKey
@@ -172,6 +185,7 @@ internal class BatchExecution(
     }
 
     private suspend fun restoreCloudNewer(entry: SourceGameEntry): BatchStepResult {
+        stopped(entry)?.let { return it }
         require(config.ready) { "未启用 SaveVault 云端同步" }
         val result = locked { ops.safeRestoreLocked(entry, config, client, ::remoteSnapshots) }
         checkedKeys += entry.libraryKey
@@ -202,6 +216,8 @@ internal class BatchExecution(
 
     private fun GameCaptureOutcome.toResult(): BatchStepResult {
         uploadException?.takeIf(BatchRunner::isAuthFailure)?.let { throw BatchAbortException(BatchRunner.AUTH_REFUSED) }
+        // A scope deleted or merged mid-capture is a state, not a failed backup.
+        (uploadException as? GameSaveScopeGoneException)?.let { return BatchStepResult(BatchItemStatus.SKIPPED, it.stopNotice) }
         return when {
             uploadError != null -> BatchStepResult(
                 BatchItemStatus.FAILED,
@@ -215,6 +231,7 @@ internal class BatchExecution(
 
     private fun PublishOutcome.toResult(): BatchStepResult {
         uploadException?.takeIf(BatchRunner::isAuthFailure)?.let { throw BatchAbortException(BatchRunner.AUTH_REFUSED) }
+        (uploadException as? GameSaveScopeGoneException)?.let { return BatchStepResult(BatchItemStatus.SKIPPED, it.stopNotice) }
         return when {
             uploadError != null -> BatchStepResult(BatchItemStatus.FAILED, uploadError)
             syncNotice != null -> BatchStepResult(BatchItemStatus.NEEDS_REVIEW, syncNotice)

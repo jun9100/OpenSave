@@ -27,6 +27,21 @@ class PendingUploadTest {
     }
 
     @Test
+    fun aDeletedOrMergedScopeIsNeverQueuedForRetry() {
+        val deleted = GameSaveScopeGoneException.of(GameSaveScopeGoneException.DELETED, deletedAt = "2026-11-09T12:00:00Z")
+        val retired = GameSaveScopeGoneException.of(
+            GameSaveScopeGoneException.RETIRED,
+            successorType = GameSaveTypes.PC.id,
+            successorGameId = "forza-horizon-5",
+        )
+
+        assertEquals(
+            emptyList<String>(),
+            PendingUploadPolicy.keysToRetry(config, listOf("source::$game" to deleted, "source::$game" to retired)),
+        )
+    }
+
+    @Test
     fun noRetryWhileAutomaticUploadIsOffOrCloudIsUnconfigured() {
         val failures = listOf("source::$game" to GameSaveException("连接超时", retryable = true))
 

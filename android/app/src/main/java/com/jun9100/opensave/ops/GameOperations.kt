@@ -25,6 +25,7 @@ import com.jun9100.opensave.GameSaveNativeProtocol
 import com.jun9100.opensave.GameSaveNativePublishResult
 import com.jun9100.opensave.GameSaveNativeSync
 import com.jun9100.opensave.GameSaveRemoteAction
+import com.jun9100.opensave.GameSaveScopeGoneException
 import com.jun9100.opensave.GameSaveScopesUnsupportedException
 import com.jun9100.opensave.GameSnapshotLocation
 import com.jun9100.opensave.GameSnapshotManifest
@@ -35,6 +36,7 @@ import com.jun9100.opensave.RestoreRequest
 import com.jun9100.opensave.RootStorage
 import com.jun9100.opensave.SafStorage
 import com.jun9100.opensave.SaveSignatureReader
+import com.jun9100.opensave.ScopeTombstoneStore
 import com.jun9100.opensave.SnapshotEngine
 import com.jun9100.opensave.SnapshotNaming
 import com.jun9100.opensave.SnapshotRecord
@@ -132,6 +134,7 @@ internal class GameOperations(
     private val gameSaveStore = GameSaveConfigStore(app)
     private val gameSaveDevice = GameSaveDeviceStore(app)
     private val signatureReader = SaveSignatureReader(storage, rootStorage)
+    private val tombstones = ScopeTombstoneStore(app)
 
     fun loadConfig(): GameSaveConfig = gameSaveStore.load()
 
@@ -291,6 +294,11 @@ internal class GameOperations(
         manifestHash: String,
         config: GameSaveConfig,
     ): PublishOutcome {
+        // A stopped scope never receives a request again; the local snapshot is still saved.
+        tombstones.get(cloudIdentity)?.let { tombstone ->
+            val error = GameSaveScopeGoneException.from(tombstone)
+            return PublishOutcome(uploaded = false, uploadError = error.message, uploadException = error)
+        }
         val client = client(config)
         val native = GameSaveNativeSync(app, config, client)
         var uploaded = false
@@ -313,6 +321,14 @@ internal class GameOperations(
                 syncNotice = "本机版本已保留为冲突副本，云端当前版本没有被覆盖"
             }
         }.onFailure { error ->
+            // 410: the cloud deleted or merged this scope. It must never fall back
+            // to the legacy upload (that would recreate an orphaned archive), and
+            // the tombstone wording is the state the user sees, not a failure reason.
+            if (error is GameSaveScopeGoneException) {
+                uploadError = error.message
+                uploadException = error
+                return@onFailure
+            }
             if (error !is GameSaveScopesUnsupportedException) {
                 uploadError = "云端原生同步失败：${error.message ?: "未知错误"}"
                 uploadException = error

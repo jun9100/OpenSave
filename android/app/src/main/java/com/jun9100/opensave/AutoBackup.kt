@@ -99,6 +99,8 @@ internal data class AutoBackupTally(
     val deferred: List<Pair<String, String>> = emptyList(),
     /** (game, reason) of games whose backup or upload failed. */
     val failed: List<Pair<String, String>> = emptyList(),
+    /** Games whose cloud scope was deleted or merged by an administrator; never a failure. */
+    val cloudStopped: Int = 0,
     /** "来源：原因" of sources that could not be scanned. */
     val scanFailures: List<String> = emptyList(),
 )
@@ -135,10 +137,13 @@ internal object AutoBackupPolicy {
                 "失败" to tally.failed.size,
             ),
         )
+        val stopped = tally.cloudStopped.takeIf { it > 0 }
+            ?.let { "；$it 款游戏的云端存档已被删除或合并，已跳过" }
+            .orEmpty()
         val text = when {
             tally.games == 0 && tally.scanFailures.isEmpty() -> "自动备份：没有可备份的游戏"
-            counts.isEmpty() -> "自动备份：没有处理任何游戏"
-            else -> "自动备份：$counts"
+            counts.isEmpty() && stopped.isEmpty() -> "自动备份：没有处理任何游戏"
+            else -> "自动备份：${counts.ifEmpty { "没有处理任何游戏" }}$stopped"
         }
         val level = when {
             tally.failed.isNotEmpty() || tally.scanFailures.isNotEmpty() -> ActivityLevel.WARNING
@@ -243,6 +248,7 @@ class AutoBackupWorker(
             return if (retrying) Result.retry() else Result.success()
         }
         val headReader = GameSaveHeadReader(applicationContext, config, client)
+        val tombstones = ScopeTombstoneStore(applicationContext)
         var retryableFailure = false
         var tally = AutoBackupTally()
         val verdicts = mutableMapOf<String, CloudVerdict>()
@@ -266,6 +272,16 @@ class AutoBackupWorker(
                 }
                 tally = tally.copy(games = tally.games + 1)
                 val name = game.presentation.primaryName
+                val identity = GameCloudNaming.identity(
+                    source.source,
+                    sourceId,
+                    game.copy(saves = GameLibrary.batchBackupLocations(game)),
+                )
+                // A stopped scope gets no snapshot and no request; the user re-enables it by hand.
+                if (ScopeTombstonePolicy.shouldSkip(tombstones.get(identity))) {
+                    tally = tally.copy(cloudStopped = tally.cloudStopped + 1)
+                    continue
+                }
                 when (val outcome = runCatching {
                     StorageOperationLock.withLock(StorageOperationLock.AUTO_BACKUP) {
                         backupGame(
@@ -281,7 +297,7 @@ class AutoBackupWorker(
                             headReader = headReader,
                         )
                     }
-                }.getOrElse { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) }) {
+                }.getOrElse { error -> backupFailure(error) }) {
                     GameBackupOutcome.Skipped -> tally = tally.copy(unchanged = tally.unchanged + 1)
                     GameBackupOutcome.Uploaded -> tally = tally.copy(uploaded = tally.uploaded + 1)
                     GameBackupOutcome.Restored -> {
@@ -298,6 +314,20 @@ class AutoBackupWorker(
                     is GameBackupOutcome.UploadFailed -> {
                         retryableFailure = retryableFailure || outcome.error.retryable
                         tally = tally.copy(failed = tally.failed + (name to (outcome.error.message ?: "上传失败")))
+                    }
+                    is GameBackupOutcome.CloudStopped -> {
+                        // Reaching this branch means the tombstone was created in this round
+                        // (a pre-existing one was skipped above), so the user is told once.
+                        tally = tally.copy(cloudStopped = tally.cloudStopped + 1)
+                        record(
+                            ActivityEntry.create(
+                                ActivityKind.CLOUD_CHECK,
+                                ActivityLevel.WARNING,
+                                if (outcome.error.retired) "云端存档已合并" else "云端存档已被删除",
+                                "$name：已停止云同步，本机存档不受影响。请在游戏详情里处理。",
+                                needsAction = true,
+                            ),
+                        )
                     }
                     is GameBackupOutcome.Deferred -> {
                         retryableFailure = retryableFailure || outcome.retryable
@@ -682,7 +712,7 @@ class AutoBackupWorker(
         if (!cloudIdentity.desktopCompatible) return GameBackupOutcome.Skipped
         return GameSaveHeadPublisher(applicationContext, config).publishSnapshot(cloudIdentity, record, archiveFile).fold(
             onSuccess = { GameBackupOutcome.Uploaded },
-            onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
+            onFailure = { error -> backupFailure(error) },
         )
     }
 
@@ -705,8 +735,15 @@ class AutoBackupWorker(
                 )
             }
         },
-        onFailure = { error -> GameBackupOutcome.UploadFailed(asGameSaveError(error)) },
+        onFailure = { error -> backupFailure(error) },
     )
+
+    private fun backupFailure(error: Throwable): GameBackupOutcome = when {
+        // A deleted or merged scope is a state the user has to see, not a failed upload;
+        // an unknown 410 keeps the generic failure and is never retried.
+        error is GameSaveScopeGoneException && (error.deleted || error.retired) -> GameBackupOutcome.CloudStopped(error)
+        else -> GameBackupOutcome.UploadFailed(asGameSaveError(error))
+    }
 
     private fun asGameSaveError(error: Throwable): GameSaveException = when (error) {
         is GameSaveException -> error
@@ -718,6 +755,9 @@ class AutoBackupWorker(
         data object Uploaded : GameBackupOutcome
         data object Restored : GameBackupOutcome
         data class UploadFailed(val error: GameSaveException) : GameBackupOutcome
+        /** The cloud deleted this scope or merged it; the game is skipped until the user acts. */
+        data class CloudStopped(val error: GameSaveScopeGoneException) : GameBackupOutcome
+
         /** [action] is the cloud verdict the user must decide on; null for waits that resolve themselves. */
         data class Deferred(
             val reason: String,
