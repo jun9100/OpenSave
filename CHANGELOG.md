@@ -3,6 +3,32 @@
 All notable changes to OpenSave are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [2.6.0] — 2026-11-09
+
+需要 SaveVault 云端（game-save）v1.7.0 或更新版本才能使用配对和跨设备恢复；连接旧版云端时，这两项会给出提示，其他功能照常。
+
+### 新增
+
+- **用配对码连接云端。** 在云端网页上生成配对码，在「云备份」里选「用配对码连接」，输入服务地址和 8 位配对码，或粘贴整条 `savevault://pair?...` 链接。连接前会先显示服务器主机名请你确认，防止被来路不明的配对码引到别人的服务器。每台设备有自己的令牌，丢了设备只需在网页上移除这一台。
+- **设备令牌状态。** 「云备份」页显示当前是「已用设备令牌连接」还是「正在使用共享令牌」；云端准备停用共享令牌时，这里会提醒一次。
+- **设备被移除后自动停止同步。** 如果这台设备在云端网页上被移除，SaveVault 会停止自动同步、不再反复重试，并提示你重新配对。
+- **其他设备上的同一游戏存档。** 游戏的「云端」标签新增「其他设备」，列出云端归为同一游戏的、来自其他电脑或手机的存档，可以查看历史版本。
+- **跨设备恢复。** 可以把其他设备的某个存档版本恢复到本机。恢复前一定先给本机当前存档拍一份安全快照；只改本机文件，不会改动云端任何设备的版本链。来自 Android 的存档按位置类型对应到本机，对应不上的位置由你选择，不会猜。
+- **Switch 2。** 识别 Switch 2 游戏的存档（TitleID 以 04 开头），并把解压版的 Eglantine 识别为 Eden。
+
+### 变更
+
+- **不再重复跟踪同一个文件夹。** 添加的存档文件夹如果在某个已跟踪游戏的文件夹里面，或者包含它，会被拒绝并说明原因。之前同一份存档可能被跟踪两次，每次都上传两份。
+- **自动快照有了最小间隔。** 同一个游戏两次自动快照至少间隔 3 分钟，期间的改动会在间隔结束时补上，一局游戏结束时的存档不会丢。玩游戏时不再每隔几秒就上传一个新版本。
+
+Pair this device with a SaveVault cloud (game-save v1.7.0+) using a pairing
+code or a savevault://pair link, with the server's host shown for confirmation
+first; sync stops if the device is removed on the web. The Cloud tab lists the
+same game's saves from other devices and can restore one locally after a
+safety snapshot, without moving any cloud history. Also: Switch 2 saves, no
+more overlapping save folders, and at least 3 minutes between automatic
+snapshots of a game.
+
 ## [2.5.0] — 2026-11-03
 
 OpenSave 的这个分支改名为 **SaveVault（存档库）**，并换了新图标。
