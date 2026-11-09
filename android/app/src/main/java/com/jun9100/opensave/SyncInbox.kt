@@ -65,7 +65,14 @@ object SyncInbox {
     fun fromState(state: SourceUiState): List<SyncInboxItem> {
         val games = GameLibrary.sourceGames(state.sourceScans)
         val actions = GameStatusResolver.effectiveCloudActions(state.cloudUpdates, state.rememberedCloudVerdicts, state.snapshots)
-        val statuses = GameStatusResolver.resolveAll(games, state.snapshots, state.saveSignatures, actions, state.gameSaveEnabled)
+        val statuses = GameStatusResolver.resolveAll(
+            games,
+            state.snapshots,
+            state.saveSignatures,
+            actions,
+            state.gameSaveEnabled,
+            state.scopeTombstones,
+        )
         return items(games, statuses, state.cloudUpdates, actions, state.syncDismissed)
     }
 

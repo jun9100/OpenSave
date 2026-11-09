@@ -13,7 +13,7 @@ import org.json.JSONObject
  * every later sync can stop before sending a request. The server keeps the
  * same record permanently; this copy only remembers it until the user acts.
  */
-internal data class ScopeTombstone(
+data class ScopeTombstone(
     val type: String,
     val gameId: String,
     /** [STATE_DELETED] or [STATE_RETIRED]. */

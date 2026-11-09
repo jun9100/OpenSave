@@ -287,4 +287,15 @@ class LibraryViewTest {
         assertEquals(listOf("android:com.poncle.vampiresurvivors"), LibraryView.libraryEntries(entries).map { it.game.gameKey })
         assertEquals(listOf("com.google.android.youtube"), LibraryView.unconfirmedApps(entries).map { it.packageName })
     }
+
+    @Test
+    fun cloudStopsShareTheNeedsAttentionFilterButAreNotPendingUploads() {
+        assertTrue(LibraryStatusFilter.CONFLICT.matches(GameSyncStatus.CLOUD_DELETED))
+        assertTrue(LibraryStatusFilter.CONFLICT.matches(GameSyncStatus.CLOUD_MERGED))
+        assertFalse(LibraryStatusFilter.NOT_UPLOADED.matches(GameSyncStatus.CLOUD_DELETED))
+        assertFalse(LibraryStatusFilter.NOT_UPLOADED.matches(GameSyncStatus.CLOUD_MERGED))
+        assertFalse(LibraryStatusFilter.CHANGED.matches(GameSyncStatus.CLOUD_MERGED))
+        assertFalse(LibraryStatusFilter.NEVER_BACKED_UP.matches(GameSyncStatus.CLOUD_DELETED))
+        assertFalse(GameSyncStatus.CLOUD_DELETED.needsBackup)
+    }
 }

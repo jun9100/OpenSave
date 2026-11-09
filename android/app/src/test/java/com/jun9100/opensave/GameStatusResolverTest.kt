@@ -75,6 +75,74 @@ class GameStatusResolverTest {
     }
 
     @Test
+    fun aTombstoneWinsOverEveryCloudStateButNeverBackedUp() {
+        val latest = record(uploaded = true, signature = "s1:1:1:1")
+        val deleted = tombstone(ScopeTombstone.STATE_DELETED)
+        val retired = tombstone(ScopeTombstone.STATE_RETIRED)
+
+        // The recorded stop is newer than any verdict about the same scope.
+        assertEquals(
+            GameSyncStatus.CLOUD_DELETED,
+            resolve(latest, "s1:1:1:1", GameSaveRemoteAction.AUTO_RESTORE, tombstone = deleted),
+        )
+        assertEquals(
+            GameSyncStatus.CLOUD_DELETED,
+            resolve(latest, "s1:1:1:1", GameSaveRemoteAction.REVIEW_REQUIRED, tombstone = deleted),
+        )
+        assertEquals(
+            GameSyncStatus.CLOUD_MERGED,
+            resolve(latest, "s1:1:1:1", GameSaveRemoteAction.AUTO_RESTORE, tombstone = retired),
+        )
+        assertEquals(
+            GameSyncStatus.CLOUD_MERGED,
+            resolve(latest, "s1:1:1:1", GameSaveRemoteAction.REVIEW_REQUIRED, tombstone = retired),
+        )
+        // A pending upload is not a failure to show either.
+        assertEquals(
+            GameSyncStatus.CLOUD_DELETED,
+            resolve(record(uploaded = false, signature = "s1:1:1:1"), "s1:1:1:1", tombstone = deleted),
+        )
+        // Nothing backed up here stays "never backed up"; the stop only explains why syncing stopped.
+        assertEquals(
+            GameSyncStatus.NEVER_BACKED_UP,
+            resolve(null, null, GameSaveRemoteAction.AUTO_RESTORE, tombstone = deleted),
+        )
+        // Without a tombstone the same verdicts are unchanged.
+        assertEquals(GameSyncStatus.CLOUD_NEWER, resolve(latest, "s1:1:1:1", GameSaveRemoteAction.AUTO_RESTORE))
+        assertEquals(GameSyncStatus.CONFLICT, resolve(latest, "s1:1:1:1", GameSaveRemoteAction.REVIEW_REQUIRED))
+        assertFalse(GameSyncStatus.CLOUD_DELETED.needsBackup)
+        assertFalse(GameSyncStatus.CLOUD_MERGED.needsBackup)
+    }
+
+    @Test
+    fun resolveAllUsesTheTombstoneOfEachGameScope() {
+        val (a, b) = games
+        val identity = GameCloudNaming.identity(a.source, a.sourceId, a.game)
+        val tombstones = mapOf(
+            "${identity.saveType.id}/${identity.gameId}" to ScopeTombstone(
+                type = identity.saveType.id,
+                gameId = identity.gameId,
+                state = ScopeTombstone.STATE_RETIRED,
+                seenAtMillis = 1,
+            ),
+        )
+        val snapshots = listOf(
+            record(uploaded = true, signature = "s1:1:1:1", gameKey = "pc:a"),
+            record(uploaded = true, signature = "s1:1:1:1", gameKey = "pc:b"),
+        )
+        val statuses = GameStatusResolver.resolveAll(
+            entries = games,
+            snapshots = snapshots,
+            signatures = mapOf(a.libraryKey to "s1:1:1:1", b.libraryKey to "s1:1:1:1"),
+            cloudActions = emptyMap(),
+            cloudEnabled = true,
+            tombstones = tombstones,
+        )
+        assertEquals(GameSyncStatus.CLOUD_MERGED, statuses[a.libraryKey])
+        assertEquals(GameSyncStatus.SYNCED, statuses[b.libraryKey])
+    }
+
+    @Test
     fun onlyNeverBackedUpAndLocalChangesNeedABackup() {
         assertEquals(
             setOf(GameSyncStatus.NEVER_BACKED_UP, GameSyncStatus.LOCAL_CHANGED),
@@ -114,7 +182,17 @@ class GameStatusResolverTest {
         current: String?,
         cloud: GameSaveRemoteAction? = null,
         cloudEnabled: Boolean = true,
-    ) = GameStatusResolver.resolve(latest, current, cloud, cloudEnabled)
+        tombstone: ScopeTombstone? = null,
+    ) = GameStatusResolver.resolve(latest, current, cloud, cloudEnabled, tombstone)
+
+    private fun tombstone(
+        state: String,
+    ) = ScopeTombstone(
+        type = "pc",
+        gameId = "game-a",
+        state = state,
+        seenAtMillis = 1,
+    )
 
     @Test
     fun rememberedVerdictHoldsUntilANewerSnapshotAndLiveOnesWin() {

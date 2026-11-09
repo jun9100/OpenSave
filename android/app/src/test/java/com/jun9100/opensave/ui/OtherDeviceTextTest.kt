@@ -73,6 +73,18 @@ class OtherDeviceTextTest {
     }
 
     @Test
+    fun detailMarksARetiredMemberWithOrWithoutAHead() {
+        val receivedAt = "2025-11-08T20:13:00Z"
+        val time = formatShortTime(Instant.parse(receivedAt).toEpochMilli())
+
+        assertEquals("云端还没有版本 · 已合并", OtherDeviceText.detail(member(head = null, retired = true)))
+        assertEquals(
+            "Android · $time · 3 个版本 · 已合并",
+            OtherDeviceText.detail(member(snapshot(receivedAt = receivedAt, platform = "opensave-android"), retired = true)),
+        )
+    }
+
+    @Test
     fun partLabelUsesTheKindOrThePcFolderLabel() {
         assertEquals("Yuzu/Eden Switch", OtherDeviceText.partLabel(CrossDeviceArchivePart("part-0", "yuzu-switch")))
         assertEquals("存档文件夹", OtherDeviceText.partLabel(CrossDeviceArchivePart("", null)))
@@ -101,6 +113,7 @@ class OtherDeviceTextTest {
         conflictCount: Int = 0,
         link: String = "auto",
         snapshotCount: Int = 3,
+        retired: Boolean = false,
     ) = GameSaveCloudGameMember(
         type = "switch",
         gameId = "game",
@@ -109,5 +122,6 @@ class OtherDeviceTextTest {
         head = head,
         snapshotCount = snapshotCount,
         conflictCount = conflictCount,
+        retired = retired,
     )
 }

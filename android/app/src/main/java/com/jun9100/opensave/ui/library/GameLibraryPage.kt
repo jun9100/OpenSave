@@ -94,6 +94,7 @@ import com.jun9100.opensave.OpenSavePage
 import com.jun9100.opensave.PageMessage
 import com.jun9100.opensave.R
 import com.jun9100.opensave.RemoteSnapshot
+import com.jun9100.opensave.ScopeTombstone
 import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.SourceUiState
@@ -161,6 +162,16 @@ internal class LibraryActions(
     val onLoadOtherDevices: (SourceGameEntry) -> Unit = {},
     /** Open the mapping dialog for one other device's save location. */
     val onRestoreOtherDevice: (SourceGameEntry, GameSaveCloudGameMember) -> Unit = { _, _ -> },
+    /** Name of a local game that already tracks the scope a tombstone was merged into; null when none. */
+    val onLocalSuccessorName: (ScopeTombstone) -> String? = { null },
+    /** "不再同步这个游戏": acknowledges the tombstone. */
+    val onStopCloudSync: (SourceGameEntry) -> Unit = {},
+    /** "稍后再说": hides the tombstone card for this run. */
+    val onDismissTombstone: (SourceGameEntry) -> Unit = {},
+    /** "处理": shows a dismissed tombstone card again. */
+    val onExpandTombstone: (SourceGameEntry) -> Unit = {},
+    /** "重新开启云同步": clears the tombstone and checks the cloud again. */
+    val onResumeCloudSync: (SourceGameEntry) -> Unit = {},
     val onSourceDetailsExpanded: (Boolean) -> Unit = {},
     val onOpenSources: () -> Unit = {},
     val onOpenSyncTasks: () -> Unit = {},
@@ -237,6 +248,11 @@ internal fun GameLibraryPage(
             onRestoreRemote = viewModel::requestRemoteGameRestore,
             onLoadOtherDevices = { entry -> viewModel.loadOtherDeviceSaves(entry) },
             onRestoreOtherDevice = viewModel::requestOtherDeviceRestore,
+            onLocalSuccessorName = viewModel::localSuccessorName,
+            onStopCloudSync = viewModel::stopCloudSync,
+            onDismissTombstone = viewModel::dismissTombstone,
+            onExpandTombstone = viewModel::expandTombstone,
+            onResumeCloudSync = viewModel::resumeCloudSync,
             onSourceDetailsExpanded = viewModel::setSourceDetailsExpanded,
             onOpenSources = onOpenSources,
             onOpenSyncTasks = viewModel::openSyncTasks,
@@ -295,13 +311,14 @@ internal fun GameLibraryContent(
     }
     val typeOptions = remember(games) { LibraryView.typeOptions(games) }
     val typeId = LibraryView.effectiveTypeId(state.libraryTypeFilter, typeOptions)
-    val statuses = remember(games, state.snapshots, state.saveSignatures, state.cloudUpdates, state.rememberedCloudVerdicts, state.gameSaveEnabled) {
+    val statuses = remember(games, state.snapshots, state.saveSignatures, state.cloudUpdates, state.rememberedCloudVerdicts, state.gameSaveEnabled, state.scopeTombstones) {
         GameStatusResolver.resolveAll(
             entries = games,
             snapshots = state.snapshots,
             signatures = state.saveSignatures,
             cloudActions = GameStatusResolver.effectiveCloudActions(state.cloudUpdates, state.rememberedCloudVerdicts, state.snapshots),
             cloudEnabled = state.gameSaveEnabled,
+            tombstones = state.scopeTombstones,
         )
     }
     val typeGames = remember(games, typeId) { LibraryView.filter(games, typeId) }
@@ -1057,6 +1074,8 @@ private fun GameDetailFor(
     modifier: Modifier = Modifier,
 ) {
     val game = entry.game
+    val cloudIdentity = GameCloudNaming.identity(entry.source, entry.sourceId, game)
+    val tombstone = state.scopeTombstones["${cloudIdentity.saveType.id}/${cloudIdentity.gameId}"]
     GameDetailPane(
         entry = entry,
         presentation = game.presentation,
@@ -1075,6 +1094,14 @@ private fun GameDetailFor(
         otherDevices = state.otherDeviceSaves[entry.libraryKey],
         onLoadOtherDevices = { actions.onLoadOtherDevices(entry) },
         onRestoreOtherDevice = { member -> actions.onRestoreOtherDevice(entry, member) },
+        lockedArchives = state.lockedArchives[entry.libraryKey].orEmpty(),
+        tombstone = tombstone,
+        tombstoneDismissed = entry.libraryKey in state.dismissedTombstones,
+        localSuccessorName = tombstone?.let { actions.onLocalSuccessorName(it) },
+        onStopCloudSync = { actions.onStopCloudSync(entry) },
+        onDismissTombstone = { actions.onDismissTombstone(entry) },
+        onExpandTombstone = { actions.onExpandTombstone(entry) },
+        onResumeCloudSync = { actions.onResumeCloudSync(entry) },
         tab = tab,
         onTabChange = onTabChange,
         scrollState = scrollState,

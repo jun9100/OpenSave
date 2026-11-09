@@ -25,7 +25,10 @@ enum class LibraryStatusFilter(val label: String) {
         CHANGED -> status == GameSyncStatus.LOCAL_CHANGED
         NOT_UPLOADED -> status == GameSyncStatus.NOT_UPLOADED
         NEVER_BACKED_UP -> status == GameSyncStatus.NEVER_BACKED_UP
-        CONFLICT -> status == GameSyncStatus.CONFLICT
+        // A stop needs the user's decision; it is never "not uploaded" (the game may still sync).
+        CONFLICT -> status == GameSyncStatus.CONFLICT ||
+            status == GameSyncStatus.CLOUD_DELETED ||
+            status == GameSyncStatus.CLOUD_MERGED
         CLOUD_NEWER -> status == GameSyncStatus.CLOUD_NEWER
     }
 }
@@ -259,13 +262,15 @@ object LibraryView {
         group.members.mapNotNull { statuses[it.libraryKey] }.minByOrNull(::statusPriority)
 
     private fun statusPriority(status: GameSyncStatus): Int = when (status) {
-        GameSyncStatus.CONFLICT -> 0
-        GameSyncStatus.CLOUD_NEWER -> 1
-        GameSyncStatus.LOCAL_CHANGED -> 2
-        GameSyncStatus.NEVER_BACKED_UP -> 3
-        GameSyncStatus.NOT_UPLOADED -> 4
-        GameSyncStatus.LOCAL_ONLY -> 5
-        GameSyncStatus.SYNCED -> 6
+        GameSyncStatus.CLOUD_DELETED -> 0
+        GameSyncStatus.CLOUD_MERGED -> 1
+        GameSyncStatus.CONFLICT -> 2
+        GameSyncStatus.CLOUD_NEWER -> 3
+        GameSyncStatus.LOCAL_CHANGED -> 4
+        GameSyncStatus.NEVER_BACKED_UP -> 5
+        GameSyncStatus.NOT_UPLOADED -> 6
+        GameSyncStatus.LOCAL_ONLY -> 7
+        GameSyncStatus.SYNCED -> 8
     }
 
     /** Short name of a save location for the detail's location switcher: the folder kind of its source. */

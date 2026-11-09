@@ -128,9 +128,15 @@ internal fun GameListRow(
 
 /** "● 已同步"-style status label; [short] is the row badge, otherwise the detail wording. */
 @Composable
-internal fun GameStatusBadge(status: GameSyncStatus, modifier: Modifier = Modifier, short: Boolean = false) {
+internal fun GameStatusBadge(
+    status: GameSyncStatus,
+    modifier: Modifier = Modifier,
+    short: Boolean = false,
+    /** Overrides the enum wording where only the caller knows the detail (e.g. a merged successor). */
+    label: String? = null,
+) {
     Text(
-        "${status.symbol} ${if (short) status.shortLabel else status.label}",
+        "${status.symbol} ${label ?: if (short) status.shortLabel else status.label}",
         modifier = modifier,
         style = MaterialTheme.typography.labelSmall,
         color = statusColor(status),
@@ -143,6 +149,8 @@ private fun statusColor(status: GameSyncStatus): Color = when (status) {
     GameSyncStatus.SYNCED, GameSyncStatus.LOCAL_ONLY -> MaterialTheme.colorScheme.primary
     GameSyncStatus.CLOUD_NEWER -> MaterialTheme.colorScheme.primary
     GameSyncStatus.LOCAL_CHANGED -> MaterialTheme.colorScheme.tertiary
+    // A stopped scope is a state to review, not an error of this device.
+    GameSyncStatus.CLOUD_DELETED, GameSyncStatus.CLOUD_MERGED -> MaterialTheme.colorScheme.tertiary
     GameSyncStatus.NOT_UPLOADED -> MaterialTheme.colorScheme.secondary
     GameSyncStatus.NEVER_BACKED_UP -> MaterialTheme.colorScheme.onSurfaceVariant
     GameSyncStatus.CONFLICT -> MaterialTheme.colorScheme.error
