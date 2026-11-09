@@ -621,58 +621,39 @@ func (s *Server) handleCloudDelete(w http.ResponseWriter, r *http.Request) {
 // provider forever. Local snapshots are untouched.
 func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 	gameID := chi.URLParam(r, "gameId")
-	game, gameErr := s.Daemon.Store.GetGame(gameID)
+	game, err := s.Daemon.Store.GetGame(gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 	cfg, err := s.Daemon.Store.GetCloudConfig()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if cfg.Provider == cloud.GameSaveProvider {
-		// Untracking removes local metadata before the UI calls this route, so
-		// the gone row may already be gone. Ask the scope as well: an answered
-		// 410 proves its archives are a tombstone or merged data and must not
-		// be deleted. A 404 is the older service; keep the old path.
+		// A deleted or merged scope's archives are the server's to manage: a
+		// merged one is still readable data. Refuse when this device recorded
+		// the tombstone, and ask the scope as well in case it has not seen it
+		// yet. A 404 is the older service with no scopes; keep the old path.
+		const refused = "this game's cloud save was deleted or merged on the server; its cloud copies are left as they are"
 		if _, gone, goneErr := s.Daemon.Store.GetCloudScopeGone(gameID); goneErr != nil {
 			writeError(w, http.StatusInternalServerError, goneErr.Error())
 			return
 		} else if gone {
-			writeError(w, http.StatusConflict,
-				"this game's cloud save was deleted or merged on the server; its cloud copies are left as they are")
+			writeError(w, http.StatusConflict, refused)
 			return
 		}
-		saveTypes := []string{game.SaveType}
-		if gameErr != nil {
-			// The game record is gone, so its save type is no longer locally
-			// available. The grouping index still names retired scopes; if it
-			// cannot, try the namespaces this build understands rather than
-			// deleting archives without asking the server first.
-			saveTypes = s.gameSaveScopeTypesForDeletedGame(gameID)
+		_, scopeErr := s.Daemon.Cloud.GetGameSaveScope(game.SaveType, gameID)
+		var gone *cloud.GameSaveScopeGoneError
+		if errors.As(scopeErr, &gone) {
+			writeError(w, http.StatusConflict, refused)
+			return
 		}
-		for _, saveType := range saveTypes {
-			_, scopeErr := s.Daemon.Cloud.GetGameSaveScope(saveType, gameID)
-			var gone *cloud.GameSaveScopeGoneError
-			if errors.As(scopeErr, &gone) {
-				writeError(w, http.StatusConflict,
-					"this game's cloud save was deleted or merged on the server; its cloud copies are left as they are")
-				return
-			}
-			if scopeErr == nil {
-				break
-			}
-			if !errors.Is(scopeErr, cloud.ErrGameSaveScopesUnsupported) {
-				writeError(w, http.StatusBadGateway, scopeErr.Error())
-				return
-			}
-			// A missing route or a type that does not match this game: try
-			// the next candidate only when the game record itself is gone.
-			if gameErr == nil {
-				break
-			}
+		if scopeErr != nil && !errors.Is(scopeErr, cloud.ErrGameSaveScopesUnsupported) {
+			writeError(w, http.StatusBadGateway, scopeErr.Error())
+			return
 		}
-	}
-	if gameErr != nil {
-		writeError(w, http.StatusNotFound, gameErr.Error())
-		return
 	}
 	files, err := s.Daemon.Cloud.List()
 	if err != nil {

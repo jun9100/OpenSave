@@ -251,8 +251,10 @@ func TestCloudDeleteGameRefusesGoneScope(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		// With no local record there is nothing to delete by: the route keeps
+		// its existing 404 and sends nothing to the service.
 		resp, body := ts.do(t, http.MethodPost, "/api/cloud/delete-game/hollow-knight", nil)
-		if resp.StatusCode != http.StatusConflict {
+		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("delete status = %d, body = %v", resp.StatusCode, body)
 		}
 		mu.Lock()

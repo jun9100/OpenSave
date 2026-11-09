@@ -24,29 +24,6 @@ type scopeGoneItem struct {
 	ResumeRefused        bool   `json:"resumeRefused"`
 }
 
-// gameSaveScopeTypesForDeletedGame finds a type for a game whose local row is
-// already gone. The grouping index is authoritative for retired scopes; the
-// fixed namespaces are only a conservative fallback for a deleted scope that
-// no longer appears there.
-func (s *Server) gameSaveScopeTypesForDeletedGame(gameID string) []string {
-	seen := map[string]bool{}
-	var found []string
-	if games, err := s.Daemon.Cloud.ListGameSaveGames(); err == nil {
-		for _, group := range games {
-			for _, member := range group.Scopes {
-				if member.GameID == gameID && member.Type != "" && !seen[member.Type] {
-					seen[member.Type] = true
-					found = append(found, member.Type)
-				}
-			}
-		}
-	}
-	if len(found) > 0 {
-		return found
-	}
-	return []string{"pc", "switch", "emulator-ppsspp", "emulator-generic"}
-}
-
 func (s *Server) handleCloudScopeGoneList(w http.ResponseWriter, r *http.Request) {
 	records, err := s.Daemon.Store.ListCloudScopeGone()
 	if err != nil {
