@@ -42,6 +42,10 @@ func (s *Server) cloudRoutes(r chi.Router) {
 	r.Post("/api/cloud/delete-game/{gameId}", s.handleCloudDeleteGame)
 	r.Post("/api/cloud/sync-local/{gameId}", s.handleCloudSyncLocal)
 
+	r.Get("/api/cloud/scope-gone", s.handleCloudScopeGoneList)
+	r.Post("/api/cloud/scope-gone/{gameId}/off", s.handleCloudScopeGoneOff)
+	r.Post("/api/cloud/scope-gone/{gameId}/resume", s.handleCloudScopeGoneResume)
+
 	r.Get("/api/cloud/offers", s.handleCloudOffers)
 	r.Post("/api/cloud/offers/accept", s.handleCloudOfferAnswer(true))
 	r.Post("/api/cloud/offers/dismiss", s.handleCloudOfferAnswer(false))
@@ -626,6 +630,30 @@ func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if cfg.Provider == cloud.GameSaveProvider {
+		// A deleted or merged scope's archives are the server's to manage: a
+		// merged one is still readable data. Refuse when this device recorded
+		// the tombstone, and ask the scope as well in case it has not seen it
+		// yet. A 404 is the older service with no scopes; keep the old path.
+		const refused = "this game's cloud save was deleted or merged on the server; its cloud copies are left as they are"
+		if _, gone, goneErr := s.Daemon.Store.GetCloudScopeGone(gameID); goneErr != nil {
+			writeError(w, http.StatusInternalServerError, goneErr.Error())
+			return
+		} else if gone {
+			writeError(w, http.StatusConflict, refused)
+			return
+		}
+		_, scopeErr := s.Daemon.Cloud.GetGameSaveScope(game.SaveType, gameID)
+		var gone *cloud.GameSaveScopeGoneError
+		if errors.As(scopeErr, &gone) {
+			writeError(w, http.StatusConflict, refused)
+			return
+		}
+		if scopeErr != nil && !errors.Is(scopeErr, cloud.ErrGameSaveScopesUnsupported) {
+			writeError(w, http.StatusBadGateway, scopeErr.Error())
+			return
+		}
 	}
 	files, err := s.Daemon.Cloud.List()
 	if err != nil {

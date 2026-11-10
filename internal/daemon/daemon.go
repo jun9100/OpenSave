@@ -540,6 +540,21 @@ func SteamCoverURL(appID string) string {
 	return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appID + "/header.jpg"
 }
 
+// cloudRetryKeyForUpload derives the same typed key used when an upload is
+// queued. Keeping it in one place matters when a tombstoned upload must drop
+// a retry entry that was written with its provider namespace.
+func (d *Daemon) cloudRetryKeyForUpload(remoteFileName string) string {
+	gameID, _, _, ok := snapshot.ParseExportEntryName(remoteFileName)
+	if !ok {
+		return ""
+	}
+	saveType := "pc"
+	if game, err := d.Store.GetGame(gameID); err == nil {
+		saveType = game.SaveType
+	}
+	return cloud.RetryKey(saveType, remoteFileName)
+}
+
 // runCloudUpload mirrors one snapshot to the configured cloud provider and
 // then trims that game's remote copies. Always started with d.uploads already
 // incremented by the caller, and it owns releasing that count.
@@ -549,6 +564,23 @@ func (d *Daemon) runCloudUpload(zipPath, remoteFileName, retryKey string, log *l
 		handled, nativeErr := d.runGameSaveScopeUpload(zipPath, remoteFileName)
 		if handled {
 			if nativeErr != nil {
+				var gone *cloud.GameSaveScopeGoneError
+				stopped := errors.Is(nativeErr, ErrGameSaveScopeSyncStopped) || errors.As(nativeErr, &gone)
+				if stopped {
+					// A server tombstone is not a transport failure: retrying
+					// the same archive would only repeat a request the server
+					// has already refused. Drop any older queued copy too.
+					if gone != nil && !cloud.IsGameSaveScopeGoneKnown(gone.Code) {
+						log.Log("error", fmt.Sprintf("game-save upload of %s was refused: %v", remoteFileName, nativeErr))
+					}
+					if retryKey == "" {
+						retryKey = d.cloudRetryKeyForUpload(remoteFileName)
+					}
+					if retryKey != "" {
+						_ = d.Store.ForgetCloudRetry(retryKey)
+					}
+					return
+				}
 				if !cloud.IsNotConfigured(nativeErr) {
 					log.Log("error", fmt.Sprintf("game-save upload of %s failed: %v — it will be sent again once the cloud can be reached", remoteFileName, nativeErr))
 					d.noteUploadFailed(zipPath, remoteFileName, retryKey)
@@ -556,13 +588,7 @@ func (d *Daemon) runCloudUpload(zipPath, remoteFileName, retryKey string, log *l
 				return
 			}
 			if retryKey == "" {
-				if gameID, _, _, ok := snapshot.ParseExportEntryName(remoteFileName); ok {
-					saveType := "pc"
-					if game, err := d.Store.GetGame(gameID); err == nil {
-						saveType = game.SaveType
-					}
-					retryKey = cloud.RetryKey(saveType, remoteFileName)
-				}
+				retryKey = d.cloudRetryKeyForUpload(remoteFileName)
 			}
 			if retryKey != "" {
 				_ = d.Store.ForgetCloudRetry(retryKey)
@@ -586,13 +612,7 @@ func (d *Daemon) runCloudUpload(zipPath, remoteFileName, retryKey string, log *l
 		return
 	}
 	if retryKey == "" {
-		if gameID, _, _, ok := snapshot.ParseExportEntryName(remoteFileName); ok {
-			saveType := "pc"
-			if game, err := d.Store.GetGame(gameID); err == nil {
-				saveType = game.SaveType
-			}
-			retryKey = cloud.RetryKey(saveType, remoteFileName)
-		}
+		retryKey = d.cloudRetryKeyForUpload(remoteFileName)
 	}
 	if retryKey != "" {
 		_ = d.Store.ForgetCloudRetry(retryKey)
@@ -1140,6 +1160,9 @@ func (d *Daemon) UntrackGame(gameID string) error {
 	// same ID and would inherit all of it — and a stale lineage reads a file
 	// that went missing while untracked as a deletion to propagate.
 	_ = d.Store.ForgetGameSyncState(gameID)
+	// A server scope tombstone belongs to this game id too. A later game with
+	// the same id is a new local decision and must not inherit the old refusal.
+	_ = d.Store.DeleteCloudScopeGone(gameID)
 	d.P2P.ClearPendingResync(gameID)
 	d.P2P.NotifyUntrack(gameID)
 	return nil
@@ -1297,6 +1320,7 @@ func (d *Daemon) untrackFromPeer(gameID string) {
 	// And everything it agreed with any peer, for the reason given in
 	// UntrackGame: the ID comes back, and this must not come back with it.
 	_ = d.Store.ForgetGameSyncState(gameID)
+	_ = d.Store.DeleteCloudScopeGone(gameID)
 	d.P2P.ClearPendingResync(gameID)
 	d.Log.Log("info", fmt.Sprintf("game %q untracked on a paired device", gameID))
 }

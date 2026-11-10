@@ -147,4 +147,27 @@ describe('daemon errors in Chinese', () => {
   it('recognises pairing and device-token errors before the generic rules', () => {
     for (const [message, said] of cases) expect(trError(message), message).toBe(`${said}（${message}）`);
   });
+
+  const goneCases = [
+    ['game-save scope was deleted on the server', '这个游戏的云端存档已被删除'],
+    ['game-save scope was merged into another game on the server', '这个游戏的云端存档已合并到另一个游戏'],
+    ['game-save refused this scope (HTTP 410)', '云端拒绝了这个游戏的存档（410）'],
+    ['cloud sync stopped for this game: its cloud save was deleted or merged', '这个游戏的云端存档已被删除或合并，已停止云同步'],
+    [
+      "the cloud still marks this game's save as deleted; clear the deletion mark on the cloud web page first",
+      '云端仍标记为已删除，需要先在云端网页上解除删除标记'
+    ],
+    [
+      "the cloud still marks this game's save as merged into another game; undo the merge on the cloud web page first",
+      '云端仍标记为已合并，需要先在云端网页上取消合并'
+    ],
+    [
+      "this game's cloud save was deleted or merged on the server; its cloud copies are left as they are",
+      '这个游戏的云端存档已被删除或合并，云端副本保持不动'
+    ]
+  ];
+
+  it('says scope-gone errors in Chinese before the generic rules', () => {
+    for (const [message, said] of goneCases) expect(trError(message), message).toBe(`${said}（${message}）`);
+  });
 });

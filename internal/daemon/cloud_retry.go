@@ -71,6 +71,15 @@ func (d *Daemon) retryFailedUploads(inCloud []cloud.CloudFile) {
 			_ = d.Store.ForgetCloudRetry(p.RemoteKey)
 			continue
 		}
+		// A game-save scope with a server tombstone will refuse every upload.
+		// Drop the queued copy here as well, so a retry loop cannot keep
+		// waking up a game whose cloud sync is deliberately stopped.
+		if cfg.Provider == cloud.GameSaveProvider {
+			if _, gone := d.gameSaveScopeGone(p.GameID); gone {
+				_ = d.Store.ForgetCloudRetry(p.RemoteKey)
+				continue
+			}
+		}
 		send = append(send, p)
 	}
 	if len(send) == 0 {

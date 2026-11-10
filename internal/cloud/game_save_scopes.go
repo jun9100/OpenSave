@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,6 +17,79 @@ import (
 // is being upgraded, but must not fall back after authentication, validation,
 // or server errors.
 var ErrGameSaveScopesUnsupported = errors.New("game-save native scope API is not supported")
+
+// GameSaveScopeGoneError is the service's 410 tombstone answer for a scope
+// that was deleted or merged into another one. Code is kept verbatim so an
+// unrecognised future code is still surfaced as a refusal, not mistaken for
+// a retryable transport failure.
+type GameSaveScopeGoneError struct {
+	Code            string
+	DeletedAt       time.Time
+	SuccessorType   string
+	SuccessorGameID string
+}
+
+func (e *GameSaveScopeGoneError) Error() string {
+	if e == nil {
+		return "game-save refused this scope (HTTP 410)"
+	}
+	switch e.Code {
+	case "scope_deleted":
+		return "game-save scope was deleted on the server"
+	case "scope_retired":
+		return "game-save scope was merged into another game on the server"
+	default:
+		return "game-save refused this scope (HTTP 410)"
+	}
+}
+
+// IsGameSaveScopeGone reports whether err is a 410 for one of the two
+// tombstone states this client understands. A future code returns false: it
+// must still be treated as an error, but not as permission to stop syncing
+// and clear the local confirmed head.
+func IsGameSaveScopeGone(err error) (*GameSaveScopeGoneError, bool) {
+	var gone *GameSaveScopeGoneError
+	if !errors.As(err, &gone) || gone == nil {
+		return nil, false
+	}
+	return gone, IsGameSaveScopeGoneKnown(gone.Code)
+}
+
+// IsGameSaveScopeGoneKnown reports whether a 410 code is one this client can
+// act on. Unknown codes keep the error type but must not stop synchronization.
+func IsGameSaveScopeGoneKnown(code string) bool {
+	return code == "scope_deleted" || code == "scope_retired"
+}
+
+// parseGameSaveScopeGone converts a 410 body into the typed refusal. The
+// body is bounded: this is a small JSON tombstone, not an archive, and a
+// malformed body still means the scope is gone.
+func parseGameSaveScopeGone(resp *http.Response) (*GameSaveScopeGoneError, bool) {
+	if resp == nil || resp.StatusCode != http.StatusGone {
+		return nil, false
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if err != nil {
+		return &GameSaveScopeGoneError{}, true
+	}
+	var payload struct {
+		Code      string    `json:"code"`
+		DeletedAt time.Time `json:"deletedAt"`
+		Successor struct {
+			Type   string `json:"type"`
+			GameID string `json:"gameId"`
+		} `json:"successor"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return &GameSaveScopeGoneError{}, true
+	}
+	return &GameSaveScopeGoneError{
+		Code:            payload.Code,
+		DeletedAt:       payload.DeletedAt,
+		SuccessorType:   payload.Successor.Type,
+		SuccessorGameID: payload.Successor.GameID,
+	}, true
+}
 
 // GameSaveScopeConflictError preserves the server's current head when a CAS
 // write loses a race. The caller must retain its candidate as a conflict copy,
@@ -51,6 +125,7 @@ type GameSaveScopeSnapshot struct {
 	ReceivedAt time.Time `json:"receivedAt"`
 	Conflict   bool      `json:"conflict,omitempty"`
 	ConflictOf string    `json:"conflictOf,omitempty"`
+	Locked     bool      `json:"locked,omitempty"`
 	// PromotedAt records when a retained conflict copy became the head. It is
 	// audit metadata only and never participates in ordering or selection.
 	PromotedAt time.Time `json:"promotedAt,omitzero"`
@@ -86,6 +161,9 @@ func (p gameSave) getScope(saveType, gameID string) (GameSaveScope, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return GameSaveScope{}, ErrGameSaveScopesUnsupported
+	}
+	if gone, ok := parseGameSaveScopeGone(resp); ok {
+		return GameSaveScope{}, gone
 	}
 	if err := transferOK(resp); err != nil {
 		return GameSaveScope{}, err
@@ -131,6 +209,9 @@ func (p gameSave) putScopeCandidate(saveType, gameID string, candidate GameSaveS
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&conflictBody)
 		return GameSaveScopeSnapshot{}, &GameSaveScopeConflictError{Head: conflictBody.Head}
+	}
+	if gone, ok := parseGameSaveScopeGone(resp); ok {
+		return GameSaveScopeSnapshot{}, gone
 	}
 	if err := transferOK(resp); err != nil {
 		return GameSaveScopeSnapshot{}, err
@@ -223,6 +304,9 @@ func (p gameSave) putScopeIdentity(saveType, gameID string, identity GameSaveSco
 	if resp.StatusCode == http.StatusNotFound {
 		// A service older than game grouping: nothing to record.
 		return false, nil
+	}
+	if gone, ok := parseGameSaveScopeGone(resp); ok {
+		return false, gone
 	}
 	if err := transferOK(resp); err != nil {
 		return false, err

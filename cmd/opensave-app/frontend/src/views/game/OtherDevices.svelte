@@ -10,6 +10,7 @@
   import CircleAlert from 'lucide-svelte/icons/circle-alert';
   import Cloud from 'lucide-svelte/icons/cloud';
   import History from 'lucide-svelte/icons/history';
+  import Lock from 'lucide-svelte/icons/lock';
   import CrossRestoreDialog from './CrossRestoreDialog.svelte';
 
   export let game;
@@ -144,6 +145,7 @@
               <div class="member-id">
                 <strong title={memberTitle(member)}>{memberTitle(member)}</strong>
                 <span class="badge offline">{platformLabel(member.platform) || '-'}</span>
+                {#if member.retired}<span class="badge offline">{$t('cloud.gone.memberRetired')}</span>{/if}
               </div>
               <div class="member-meta">
                 <span>{$t('game.cloud.others.last_version')}: {timestamp(member.lastVersionAt)}</span>
@@ -177,6 +179,9 @@
                           {version.deviceName || $t('game.cloud.unknown_device')}
                           {#if version.platform}<span class="device-platform">· {platformLabel(version.platform)}</span>{/if}
                           {#if version.isHead}<span class="badge online">{$t('game.cloud.native.authoritative')}</span>{/if}
+                          {#if version.locked}
+                            <Lock size={13} title={$t('cloud.locked')} aria-label={$t('cloud.locked')} />
+                          {/if}
                         </span>
                         <button class="btn small primary" on:click={() => openRestore(member, version)}>
                           {$t('game.cloud.others.restore_to_local')}
