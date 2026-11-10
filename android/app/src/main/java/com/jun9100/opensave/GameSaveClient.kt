@@ -52,6 +52,8 @@ data class GameSaveScopeSnapshot(
     val platform: String = "",
     val conflict: Boolean = false,
     val conflictOf: String = "",
+    /** The server keeps this version forever; any pruning rule must leave it alone. */
+    val locked: Boolean = false,
 )
 
 /** The authoritative state for exactly one `{type}/{gameId}` native scope. */
@@ -72,6 +74,8 @@ data class GameSaveCloudGameMember(
     val head: GameSaveScopeSnapshot?,
     val snapshotCount: Int,
     val conflictCount: Int,
+    /** The cloud merged this member into another scope; it only appears for history now. */
+    val retired: Boolean = false,
 )
 
 /** Scopes of one title, from every device, as SaveVault 云端 groups them. */
@@ -133,6 +137,57 @@ class GameSaveAuthException(val code: String, message: String) : GameSaveExcepti
 class GameSaveScopesUnsupportedException : GameSaveException(
     "当前 SaveVault 云端尚不支持原生存档范围同步",
 )
+
+/**
+ * 410 from a scope route: the cloud deleted the scope or merged it into
+ * [successorType]/[successorGameId]. Never retried: the client stops syncing
+ * this game instead of recreating the scope with a new empty root.
+ */
+class GameSaveScopeGoneException(
+    val code: String,
+    val deletedAt: String = "",
+    val successorType: String = "",
+    val successorGameId: String = "",
+    message: String,
+) : GameSaveException(message, retryable = false, httpStatus = 410) {
+    val deleted: Boolean get() = code == DELETED
+    val retired: Boolean get() = code == RETIRED
+
+    companion object {
+        const val DELETED = "scope_deleted"
+        const val RETIRED = "scope_retired"
+
+        private const val DELETED_MESSAGE = "这个游戏的云端存档已被管理员删除，本机存档不受影响，已停止云同步"
+        private const val RETIRED_MESSAGE = "这个游戏的云端存档已合并到另一个游戏，已停止云同步"
+        private const val OTHER_MESSAGE = "SaveVault 云端拒绝了这个存档范围（HTTP 410）"
+
+        /** Builds the exception with the wording of [code], shared by the 410 parser and recorded tombstones. */
+        fun of(
+            code: String,
+            deletedAt: String = "",
+            successorType: String = "",
+            successorGameId: String = "",
+        ) = GameSaveScopeGoneException(
+            code = code,
+            deletedAt = deletedAt,
+            successorType = successorType,
+            successorGameId = successorGameId,
+            message = when (code) {
+                DELETED -> DELETED_MESSAGE
+                RETIRED -> RETIRED_MESSAGE
+                else -> OTHER_MESSAGE
+            },
+        )
+
+        /** Rebuilds the stop from a recorded tombstone, so a skipped sync reads exactly like the server's 410. */
+        internal fun from(tombstone: ScopeTombstone) = of(
+            code = if (tombstone.retired) RETIRED else DELETED,
+            deletedAt = tombstone.at,
+            successorType = tombstone.successorType,
+            successorGameId = tombstone.successorGameId,
+        )
+    }
+}
 
 /** A service too old to know `/v1/pair/claim`; the shared sync key still works there. */
 class GameSavePairingUnsupportedException : GameSaveException(
@@ -221,6 +276,7 @@ class GameSaveClient(
         execute(
             request(fileEndpoint(type.id, remoteName))
                 .put(file.asRequestBody(ZIP_MEDIA_TYPE)),
+            scopeType = type.id,
         ).use { response ->
             requireSuccess(response, "上传 SaveVault 云端快照")
         }
@@ -267,7 +323,7 @@ class GameSaveClient(
      */
     fun getScope(type: GameSaveType, gameId: String): Result<GameSaveScope> = runCatching {
         validateScope(type, gameId)
-        execute(request(scopeEndpoint(type.id, gameId))).use { response ->
+        execute(request(scopeEndpoint(type.id, gameId)), scopeType = type.id).use { response ->
             if (response.code == 404) throw GameSaveScopesUnsupportedException()
             requireSuccess(response, "读取 SaveVault 云端当前存档")
             parseScope(response.body?.string().orEmpty(), type.id, gameId)
@@ -341,6 +397,7 @@ class GameSaveClient(
                                 head = member.optJSONObject("head")?.let { runCatching { parseScopeSnapshot(it) }.getOrNull() },
                                 snapshotCount = member.optInt("snapshotCount"),
                                 conflictCount = member.optInt("conflictCount"),
+                                retired = member.optBoolean("retired"),
                             ),
                         )
                     }
@@ -375,7 +432,7 @@ class GameSaveClient(
         val request = request(scopeEndpoint(type.id, gameId) + "/identity")
             .put(body)
             .header("Content-Type", "application/json")
-        execute(request).use { response ->
+        execute(request, scopeType = type.id).use { response ->
             if (response.code == 404) return@runCatching false
             requireSuccess(response, "上报 SaveVault 云端游戏信息")
             true
@@ -416,7 +473,7 @@ class GameSaveClient(
             .put(body)
             .header("Content-Type", "application/json")
         if (!conflict) request.header("If-Match", "\"$expectedHead\"")
-        execute(request).use { response ->
+        execute(request, scopeType = type.id).use { response ->
             if (response.code == 409) {
                 val head = runCatching { JSONObject(response.body?.string().orEmpty()).optString("head").trim() }
                     .getOrDefault("")
@@ -472,6 +529,7 @@ class GameSaveClient(
             platform = json.optString("platform").trim(),
             conflict = json.optBoolean("conflict"),
             conflictOf = json.optString("conflictOf").trim(),
+            locked = json.optBoolean("locked"),
         )
     }
 
@@ -485,7 +543,12 @@ class GameSaveClient(
         .header("Authorization", "Bearer ${config.syncKey}")
         .also { applyDeviceHeaders(it, device) }
 
-    private fun execute(builder: Request.Builder): Response {
+    /**
+     * [scopeType] is the type of the `{type}/{game}` scope the request addresses.
+     * A 410 is answered here, before any caller's own status checks, because a
+     * deleted or merged scope must never be retried or recreated.
+     */
+    private fun execute(builder: Request.Builder, scopeType: String? = null): Response {
         val response = httpClient.newCall(builder.build()).execute()
         try {
             if (response.header(AUTH_WARNING_HEADER) == SHARED_TOKEN_DEPRECATED) {
@@ -501,6 +564,9 @@ class GameSaveClient(
                 response.close()
                 throw GameSaveAuthException(reason, authMessage(reason))
             }
+            if (response.code == 410) {
+                throw scopeGone(response.peekBody(SCOPE_GONE_BODY_LIMIT).string(), scopeType)
+            }
             return response
         } catch (error: Throwable) {
             response.close()
@@ -515,6 +581,29 @@ class GameSaveClient(
             "${operation}失败：HTTP ${response.code}${if (body.isBlank()) "" else " - $body"}",
             response.code >= 500 || response.code == 408 || response.code == 429,
             response.code,
+        )
+    }
+
+    /**
+     * Parses a 410 body into a stop for this scope. The successor is only kept
+     * when it is a real scope of the same type; anything else stays empty so a
+     * malformed body cannot redirect the client to another game.
+     */
+    private fun scopeGone(body: String, scopeType: String?): GameSaveScopeGoneException {
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        val code = json?.optString("code")?.trim().orEmpty()
+        if (code != GameSaveScopeGoneException.DELETED && code != GameSaveScopeGoneException.RETIRED) {
+            return GameSaveScopeGoneException.of(code)
+        }
+        val successor = json?.optJSONObject("successor")
+        val successorType = successor?.optString("type")?.trim()?.lowercase().orEmpty()
+        val successorGameId = successor?.optString("gameId")?.trim().orEmpty()
+        val trusted = scopeType != null && successorType == scopeType && SCOPE_GAME_ID_PATTERN.matches(successorGameId)
+        return GameSaveScopeGoneException.of(
+            code = code,
+            deletedAt = json?.optString("deletedAt")?.trim().orEmpty(),
+            successorType = successorType.takeIf { trusted }.orEmpty(),
+            successorGameId = successorGameId.takeIf { trusted }.orEmpty(),
         )
     }
 
@@ -543,6 +632,7 @@ class GameSaveClient(
         private const val BUFFER_SIZE = 1024 * 1024
         private const val TIMEOUT_MS = 30L * 1000L
         private const val AUTH_ERROR_BODY_LIMIT = 4096L
+        private const val SCOPE_GONE_BODY_LIMIT = 4096L
         private const val AUTH_WARNING_HEADER = "X-Game-Save-Auth-Warning"
         private const val SHARED_TOKEN_DEPRECATED = "shared-token-deprecated"
         private const val TOKEN_REVOKED = "token_revoked"

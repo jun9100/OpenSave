@@ -204,6 +204,12 @@ data class SourceUiState(
     val autoBackupEnabled: Boolean = false,
     /** Other devices' save locations per libraryKey; transient, never persisted. */
     val otherDeviceSaves: Map<String, OtherDeviceSaves> = emptyMap(),
+    /** Cloud versions the server pins per libraryKey, by archive name; transient (C6). */
+    val lockedArchives: Map<String, Set<String>> = emptyMap(),
+    /** Recorded cloud stops by `{type}/{gameId}` ([ScopeTombstoneStore]); read-only mirror. */
+    val scopeTombstones: Map<String, ScopeTombstone> = emptyMap(),
+    /** libraryKeys whose tombstone the user put off with "稍后再说"; this session only. */
+    val dismissedTombstones: Set<String> = emptySet(),
     /** The other-device restore the dialog is editing; transient, never persisted. */
     val pendingOtherDeviceRestore: OtherDeviceRestoreRequest? = null,
     val pendingRestore: RestoreRequest? = null,
@@ -309,6 +315,7 @@ class SourceViewModel(
     private val operations = GameOperations(application, storage, rootStorage)
     private val reportStore = BatchReportStore.forApp(application)
     private val cloudVerdictStore = CloudVerdictStore(application)
+    private val scopeTombstoneStore = ScopeTombstoneStore(application)
     private val onboarding = OnboardingStore(application)
     private val activityStore = ActivityLogStore.forApp(application)
     private var appliedFindingsId: String? = null
@@ -332,6 +339,7 @@ class SourceViewModel(
         }
         observeBatches()
         observeActivity()
+        observeTombstones()
         // The bundled Switch names load off the main thread; rows rebuild when they arrive.
         viewModelScope.launch {
             withContext(Dispatchers.IO) { OfflineSwitchTitles.load(app) }
@@ -389,6 +397,52 @@ class SourceViewModel(
                         gameSaveAuth = gameSaveAuth.copy(blocked = auth.first, sharedWarning = auth.second),
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * The recorded cloud stops, re-read at startup and whenever a foreground
+     * operation or a worker records, acknowledges or clears one. A merged
+     * scope may lack the successor's title; /games fills it in once.
+     */
+    private fun observeTombstones() {
+        viewModelScope.launch {
+            ScopeTombstoneStore.revision.collect {
+                val tombstones = withContext(Dispatchers.IO) {
+                    runCatching { scopeTombstoneStore.all() }.getOrDefault(emptyList())
+                }
+                updateState { copy(scopeTombstones = tombstones.associateBy { "${it.type}/${it.gameId}" }) }
+                resolveSuccessorNames(tombstones)
+            }
+        }
+    }
+
+    /**
+     * Reads the successor's name for merged tombstones that do not have one
+     * yet. Best effort: an offline device keeps the id in the wording.
+     */
+    private fun resolveSuccessorNames(tombstones: List<ScopeTombstone>) {
+        val pending = tombstones.filter {
+            it.retired && it.successorName.isBlank() && it.successorGameId.isNotBlank()
+        }
+        if (pending.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val config = runCatching { gameSaveStore.load() }.getOrNull()?.takeIf { it.ready } ?: return@launch
+            val games = runCatching { gameSaveClient(config).getGames().getOrThrow() }.getOrNull() ?: return@launch
+            pending.forEach { tombstone ->
+                val member = games.asSequence()
+                    .flatMap { game -> game.members.asSequence() }
+                    .firstOrNull { it.type == tombstone.successorType && it.gameId == tombstone.successorGameId }
+                val name = member?.name?.takeIf(String::isNotBlank)
+                    ?: games.firstOrNull { game ->
+                        game.members.any { it.type == tombstone.successorType && it.gameId == tombstone.successorGameId }
+                    }?.name?.takeIf(String::isNotBlank)
+                    ?: return@forEach
+                val identity = runCatching {
+                    GameCloudIdentity(GameSaveTypes.fromId(tombstone.type), tombstone.gameId, desktopCompatible = false)
+                }.getOrNull() ?: return@forEach
+                runCatching { scopeTombstoneStore.setSuccessorName(identity, name) }
             }
         }
     }
@@ -1707,6 +1761,7 @@ class SourceViewModel(
         signatures = current.saveSignatures,
         cloudActions = GameStatusResolver.effectiveCloudActions(current.cloudUpdates, current.rememberedCloudVerdicts, current.snapshots),
         cloudEnabled = current.gameSaveEnabled,
+        tombstones = current.scopeTombstones,
     )
 
     private fun createGameBackup(entry: SourceGameEntry, includeCandidates: Boolean) {
@@ -1732,6 +1787,21 @@ class SourceViewModel(
                 }
             }
             result.onSuccess { captured ->
+                // A recorded cloud stop is a state, not an upload failure: the
+                // local snapshot was saved and no retry may recreate the scope.
+                val gone = captured.uploadException as? GameSaveScopeGoneException
+                if (gone != null) {
+                    val why = if (gone.retired) "云端存档已合并到其他游戏" else "云端存档已被删除"
+                    val action = "已备份 ${manifest.gameName}（${why}，未上传）"
+                    log(ActivityKind.BACKUP, ActivityLevel.INFO, action)
+                    state.value = state.value.finished(OpenSavePage.LIBRARY, action = action).copy(
+                        snapshots = currentSnapshots(),
+                        saveSignatures = captured.saveSignature
+                            ?.let { state.value.saveSignatures + (entry.libraryKey to it) }
+                            ?: state.value.saveSignatures,
+                    )
+                    return@onSuccess
+                }
                 val notice = listOfNotNull(captured.uploadError, captured.syncNotice).joinToString("；")
                 val uploadSuffix = notice.takeIf { it.isNotBlank() }?.let { "；$it" }.orEmpty()
                 val action = if (captured.reused) {
@@ -2071,11 +2141,20 @@ class SourceViewModel(
         updateState { copy(otherDeviceSaves = otherDeviceSaves + (key to OtherDeviceSaves.Loading)) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { operations.client(config).gameOf(identity.saveType, identity.gameId).getOrThrow() }
+                runCatching {
+                    val client = operations.client(config)
+                    val game = client.gameOf(identity.saveType, identity.gameId).getOrThrow()
+                    // Pinned versions are per scope; a service without the route or a stopped scope has none.
+                    val locked = client.getScope(identity.saveType, identity.gameId)
+                        .map { scope -> scope.snapshots.filter { it.locked }.map { it.archive }.toSet() }
+                        .getOrDefault(emptySet())
+                    game to locked
+                }
             }
             val atMillis = System.currentTimeMillis()
             val next = result.fold(
-                onSuccess = { game ->
+                onSuccess = { (game, locked) ->
+                    updateState { copy(lockedArchives = lockedArchives + (key to locked)) }
                     OtherDeviceSaves.Loaded(
                         members = game?.othersThan(identity.saveType.id, identity.gameId).orEmpty(),
                         atMillis = atMillis,
@@ -2088,6 +2167,87 @@ class SourceViewModel(
             updateState { copy(otherDeviceSaves = otherDeviceSaves + (key to next)) }
         }
     }
+
+    /**
+     * "不再同步这个游戏": keeps the tombstone but acknowledges it, so the
+     * detail card collapses. The local saves and backups stay as they are.
+     */
+    fun stopCloudSync(entry: SourceGameEntry) {
+        val identity = GameCloudNaming.identity(entry.source, entry.sourceId, entry.game)
+        viewModelScope.launch(Dispatchers.IO) { runCatching { scopeTombstoneStore.acknowledge(identity) } }
+        log(ActivityKind.UPLOAD, ActivityLevel.INFO, "${entry.game.presentation.primaryName}：已不再同步到 SaveVault 云端")
+        updateState { copy(dismissedTombstones = dismissedTombstones - entry.libraryKey) }
+    }
+
+    /** "稍后再说": hides the card for this run without changing the tombstone. */
+    fun dismissTombstone(entry: SourceGameEntry) = updateState {
+        copy(dismissedTombstones = dismissedTombstones + entry.libraryKey)
+    }
+
+    /** "处理" on a collapsed card: shows it again, still just for this run. */
+    fun expandTombstone(entry: SourceGameEntry) = updateState {
+        copy(dismissedTombstones = dismissedTombstones - entry.libraryKey)
+    }
+
+    /**
+     * "重新开启云同步": forgets the local stop, then asks the cloud whether the
+     * scope is really usable again. A second 410 is re-recorded by the sync
+     * layer and says which web-side action is missing; any other failure only
+     * reports itself, the tombstone then stays cleared.
+     */
+    fun resumeCloudSync(entry: SourceGameEntry) {
+        if (state.value.busy) return
+        val identity = GameCloudNaming.identity(entry.source, entry.sourceId, entry.game)
+        val name = entry.game.presentation.primaryName
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.LIBRARY, "正在重新开启 $name 的云同步")
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    scopeTombstoneStore.clear(identity)
+                    checkOneGame(entry).getOrThrow()
+                }
+            }
+            result.onSuccess { fresh ->
+                log(ActivityKind.CLOUD_CHECK, ActivityLevel.SUCCESS, "已重新开启 $name 的云同步")
+                state.value = state.value.finished(OpenSavePage.LIBRARY, action = "已重新开启 $name 的云同步").copy(
+                    cloudUpdates = mergeCloudUpdates(
+                        state.value.cloudUpdates.filterNot { it.entry.libraryKey == entry.libraryKey },
+                        listOfNotNull(fresh),
+                    ),
+                    dismissedTombstones = state.value.dismissedTombstones - entry.libraryKey,
+                )
+                if (fresh == null) forgetCloudVerdict(entry.libraryKey)
+            }.onFailure { error ->
+                val message = when {
+                    error is GameSaveScopeGoneException && error.retired ->
+                        "云端仍标记为已合并，需要先在网页上取消合并"
+                    error is GameSaveScopeGoneException ->
+                        "云端仍标记为已删除，需要先在 SaveVault 云端网页上解除删除标记"
+                    else -> "无法重新开启 $name 的云同步：${error.message ?: "未知错误"}"
+                }
+                log(ActivityKind.CLOUD_CHECK, ActivityLevel.WARNING, "$name：重新开启云同步失败", message)
+                state.value = state.value.finished(OpenSavePage.LIBRARY, error = message)
+                // The failed check records the stop again; show it without waiting for the next revision.
+                val recorded = withContext(Dispatchers.IO) { runCatching { scopeTombstoneStore.all() }.getOrDefault(emptyList()) }
+                updateState { copy(scopeTombstones = recorded.associateBy { "${it.type}/${it.gameId}" }) }
+            }
+        }
+    }
+
+    /** The local library row that already tracks the scope [tombstone] was merged into, if any. */
+    private fun localSuccessorEntry(tombstone: ScopeTombstone): SourceGameEntry? {
+        if (tombstone.successorGameId.isBlank()) return null
+        return GameLibrary.sourceGames(state.value.sourceScans).firstOrNull { entry ->
+            val identity = GameCloudNaming.identity(entry.source, entry.sourceId, entry.game)
+            identity.saveType.id == tombstone.successorType && identity.gameId == tombstone.successorGameId
+        }
+    }
+
+    /** The display name of the local successor scope; null when this device does not track it. */
+    fun localSuccessorName(tombstone: ScopeTombstone): String? =
+        localSuccessorEntry(tombstone)?.game?.presentation?.primaryName
+
+    fun hasLocalSuccessor(tombstone: ScopeTombstone): Boolean = localSuccessorEntry(tombstone) != null
 
     /** Downloads and verifies the other device's head, then opens the mapping dialog. */
     fun requestOtherDeviceRestore(entry: SourceGameEntry, member: GameSaveCloudGameMember) {

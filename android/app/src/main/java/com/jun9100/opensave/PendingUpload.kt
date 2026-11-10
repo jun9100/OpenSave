@@ -249,11 +249,18 @@ class PendingUploadWorker(
             GameLibrary.sourceGames(ScheduledSources.scan(applicationContext)),
         ).associateBy(SourceGameEntry::libraryKey)
         val operations = GameOperations(applicationContext)
+        val tombstones = ScopeTombstoneStore(applicationContext)
+        // A stopped scope is dropped from the queue without a request: retrying it
+        // could only produce the same 410 the tombstone already records.
+        val (_, pending) = keys.partition { key ->
+            entries[key]?.let { ScopeTombstonePolicy.shouldSkip(tombstones.get(it.cloudScopeIdentity())) } ?: false
+        }
         val verdicts = mutableMapOf<String, CloudVerdict>()
-        val results = keys.map { key -> key to retryOne(key, entries[key], operations, config, verdicts) }
+        val results = pending.map { key -> key to retryOne(key, entries[key], operations, config, verdicts) }
         val decision = PendingUploadPolicy.decide(results, runAttemptCount)
         // Keys queued by a manual failure while this attempt ran were appended as
-        // another request; [PendingUploadStore.finish] leaves them for it.
+        // another request; [PendingUploadStore.finish] leaves them for it. Stopped
+        // keys are part of [keys], so this also ends their retries.
         store.finish(keys, decision.keepKeys)
         recordVerdicts(verdicts)
         record(PendingUploadPolicy.entry(decision))

@@ -34,14 +34,20 @@ internal object OtherDeviceText {
      * time is left out instead of guessing.
      */
     fun detail(member: GameSaveCloudGameMember): String {
-        val head = member.head ?: return "云端还没有版本"
+        val head = member.head
         return buildString {
-            append(platformLabel(head.platform))
-            val time = parseInstant(head.receivedAt) ?: parseInstant(head.createdAt)
-            time?.let { append(" · ${formatShortTime(it)}") }
-            append(" · ${member.snapshotCount} 个版本")
-            if (member.conflictCount > 0) append(" · 冲突 ${member.conflictCount}")
-            if (member.link == "manual") append(" · 手动关联")
+            if (head == null) {
+                append("云端还没有版本")
+            } else {
+                append(platformLabel(head.platform))
+                val time = parseInstant(head.receivedAt) ?: parseInstant(head.createdAt)
+                time?.let { append(" · ${formatShortTime(it)}") }
+                append(" · ${member.snapshotCount} 个版本")
+                if (member.conflictCount > 0) append(" · 冲突 ${member.conflictCount}")
+                if (member.link == "manual") append(" · 手动关联")
+            }
+            // The cloud merged this scope into another game; it only shows its history now.
+            if (member.retired) append(" · 已合并")
         }
     }
 

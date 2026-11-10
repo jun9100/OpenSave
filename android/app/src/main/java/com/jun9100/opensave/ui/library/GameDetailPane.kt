@@ -15,9 +15,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SettingsBackupRestore
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -49,6 +53,7 @@ import com.jun9100.opensave.GameSaveCloudGameMember
 import com.jun9100.opensave.GameSyncStatus
 import com.jun9100.opensave.OtherDeviceSaves
 import com.jun9100.opensave.RemoteSnapshot
+import com.jun9100.opensave.ScopeTombstone
 import com.jun9100.opensave.SnapshotRecord
 import com.jun9100.opensave.SourceGameEntry
 import com.jun9100.opensave.ui.GAME_DETAIL_TAG
@@ -107,6 +112,18 @@ internal fun GameDetailPane(
     otherDevices: OtherDeviceSaves? = null,
     onLoadOtherDevices: () -> Unit = {},
     onRestoreOtherDevice: (GameSaveCloudGameMember) -> Unit = {},
+    /** Archive names the cloud pins, so the version list can mark them. */
+    lockedArchives: Set<String> = emptySet(),
+    /** The cloud's recorded stop for this game's scope (C6); null shows no card. */
+    tombstone: ScopeTombstone? = null,
+    /** The user put the card off with "稍后再说" for this run. */
+    tombstoneDismissed: Boolean = false,
+    /** Name of a local game that already tracks the merged-into scope, when there is one. */
+    localSuccessorName: String? = null,
+    onStopCloudSync: () -> Unit = {},
+    onDismissTombstone: () -> Unit = {},
+    onExpandTombstone: () -> Unit = {},
+    onResumeCloudSync: () -> Unit = {},
 ) {
     val game = entry.game
     var localTab by rememberSaveable(entry.libraryKey) { mutableStateOf(DetailTab.VERSIONS) }
@@ -145,7 +162,15 @@ internal fun GameDetailPane(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                status?.let { GameStatusBadge(it, Modifier.padding(vertical = 2.dp)) }
+                status?.let { current ->
+                    // The enum stays generic; only the detail knows the successor's name.
+                    val label = if (current == GameSyncStatus.CLOUD_MERGED && tombstone != null) {
+                        "已合并到「${TombstoneText.successorLabel(tombstone)}」"
+                    } else {
+                        null
+                    }
+                    GameStatusBadge(current, Modifier.padding(vertical = 2.dp), label = label)
+                }
                 Text(
                     "${entry.sourceLabel} · ${entry.saveType.label} · ${sourceAccessLabel(entry.sourceAccess)}",
                     style = MaterialTheme.typography.labelSmall,
@@ -166,6 +191,20 @@ internal fun GameDetailPane(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+        // Placed above the primary button and never focused on appearance: pad
+        // users still enter the detail on "备份这款游戏" and reach the card with Up.
+        tombstone?.let { stopped ->
+            TombstoneCard(
+                tombstone = stopped,
+                dismissed = tombstoneDismissed,
+                localSuccessorName = localSuccessorName,
+                busy = busy,
+                onStop = onStopCloudSync,
+                onDismiss = onDismissTombstone,
+                onExpand = onExpandTombstone,
+                onResume = onResumeCloudSync,
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -254,6 +293,7 @@ internal fun GameDetailPane(
                 remoteHistory = remoteHistory,
                 busy = busy,
                 gameSaveEnabled = gameSaveEnabled,
+                lockedArchives = lockedArchives,
                 otherDevices = otherDevices,
                 onLoadOtherDevices = onLoadOtherDevices,
                 onRestoreOtherDevice = onRestoreOtherDevice,
@@ -271,6 +311,7 @@ private fun VersionsTab(
     remoteHistory: List<RemoteSnapshot>,
     busy: Boolean,
     gameSaveEnabled: Boolean,
+    lockedArchives: Set<String>,
     otherDevices: OtherDeviceSaves?,
     onLoadOtherDevices: () -> Unit,
     onRestoreOtherDevice: (GameSaveCloudGameMember) -> Unit,
@@ -304,6 +345,7 @@ private fun VersionsTab(
                 title = snapshot.modified.ifBlank { snapshot.name },
                 detail = formatBytes(snapshot.sizeBytes),
                 enabled = !busy,
+                locked = snapshot.name in lockedArchives,
                 onRestore = { onRestoreRemote(snapshot) },
             )
         }
@@ -372,12 +414,18 @@ private fun OtherDeviceSaveRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                OtherDeviceText.deviceName(member),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (member.head?.locked == true) {
+                    Icon(Icons.Outlined.Lock, contentDescription = "已锁定", modifier = Modifier.size(14.dp))
+                }
+                Text(
+                    OtherDeviceText.deviceName(member),
+                    modifier = Modifier.padding(start = if (member.head?.locked == true) 4.dp else 0.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 OtherDeviceText.detail(member),
                 style = MaterialTheme.typography.labelSmall,
@@ -386,11 +434,110 @@ private fun OtherDeviceSaveRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // A retired member is history: restore is a read-only download, and
+        // this row offers no other action (no upload, no sync re-open).
         IconButton(
             onClick = whenIdle(busy || !enabled, onRestore),
             modifier = Modifier.handheldFocusRing(CircleShape).busyDimmed(busy || !enabled),
         ) {
             Icon(Icons.Outlined.SettingsBackupRestore, contentDescription = "用此设备的存档恢复")
+        }
+    }
+}
+
+/**
+ * The cloud-stop card of one game (C6). Its buttons are ordinary focus stops
+ * so the D-pad reaches them from the backup button; nothing here requests
+ * focus when the card appears.
+ */
+@Composable
+private fun TombstoneCard(
+    tombstone: ScopeTombstone,
+    dismissed: Boolean,
+    localSuccessorName: String?,
+    busy: Boolean,
+    onStop: () -> Unit,
+    onDismiss: () -> Unit,
+    onExpand: () -> Unit,
+    onResume: () -> Unit,
+) {
+    val text = TombstoneText.card(tombstone, dismissed, localSuccessorName)
+    val container = if (tombstone.retired) {
+        MaterialTheme.colorScheme.tertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.errorContainer
+    }
+    val content = if (tombstone.retired) {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.onErrorContainer
+    }
+    val actionFor: (TombstoneButton) -> () -> Unit = { button ->
+        when (button) {
+            TombstoneButton.STOP_DELETED, TombstoneButton.STOP_RETIRED -> onStop
+            TombstoneButton.DISMISS -> onDismiss
+            TombstoneButton.EXPAND -> onExpand
+            TombstoneButton.RESUME -> onResume
+        }
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag(TOMBSTONE_CARD_TAG),
+        colors = CardDefaults.cardColors(containerColor = container),
+    ) {
+        if (text.collapsed) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text.body.single(),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = content,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                text.buttons.forEach { button ->
+                    TextButton(
+                        onClick = whenIdle(busy, actionFor(button)),
+                        modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(busy),
+                        colors = ButtonDefaults.textButtonColors(contentColor = content),
+                    ) { Text(button.label, maxLines = 1) }
+                }
+            }
+        } else {
+            Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                Text(text.title, style = MaterialTheme.typography.titleSmall, color = content)
+                text.body.forEach { line ->
+                    Text(
+                        line,
+                        modifier = Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = content,
+                    )
+                }
+                Row(
+                    modifier = Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    text.buttons.forEach { button ->
+                        val primary = button == TombstoneButton.STOP_DELETED || button == TombstoneButton.STOP_RETIRED
+                        if (primary) {
+                            Button(
+                                onClick = whenIdle(busy, actionFor(button)),
+                                modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(busy),
+                            ) { Text(button.label, maxLines = 1) }
+                        } else {
+                            TextButton(
+                                onClick = whenIdle(busy, actionFor(button)),
+                                modifier = Modifier.handheldFocusRing(RoundedCornerShape(20.dp)).busyDimmed(busy),
+                                colors = ButtonDefaults.textButtonColors(contentColor = content),
+                            ) { Text(button.label, maxLines = 1) }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -424,14 +571,30 @@ private fun SnapshotHistoryRow(
     detail: String,
     enabled: Boolean,
     onRestore: () -> Unit,
+    locked: Boolean = false,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (locked) {
+                    Icon(Icons.Outlined.Lock, contentDescription = "已锁定", modifier = Modifier.size(14.dp))
+                }
+                Text(
+                    title,
+                    modifier = Modifier.padding(start = if (locked) 4.dp else 0.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                if (locked) "$detail · 已锁定" else detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         IconButton(
             onClick = whenIdle(!enabled, onRestore),
@@ -443,6 +606,7 @@ private fun SnapshotHistoryRow(
 }
 
 internal const val AUTO_BACKUP_SWITCH_TAG = "auto-backup-switch"
+internal const val TOMBSTONE_CARD_TAG = "tombstone-card"
 
 private const val MAX_VISIBLE_LOCATIONS_PER_GAME = 24
 private const val MAX_GAME_HISTORY_ROWS = 8

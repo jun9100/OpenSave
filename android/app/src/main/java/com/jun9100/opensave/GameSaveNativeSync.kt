@@ -172,31 +172,43 @@ internal object GameSaveNativeResolver {
  * enforces archive -> CAS -> conflict order. A network retry can therefore
  * create at most an idempotent archive or a recoverable conflict copy.
  */
-class GameSaveNativeSync(
-    context: Context,
-    private val config: GameSaveConfig,
-    private val client: GameSaveClient = GameSaveClient(
-        config,
-        GameSaveDeviceStore(context.applicationContext).identity(),
-        GameSaveAuthGuard(context.applicationContext),
-    ),
+class GameSaveNativeSync internal constructor(
+    private val client: GameSaveClient,
+    private val tombstones: ScopeTombstoneRepository,
+    private val loadState: (GameCloudIdentity) -> GameSaveHeadState?,
+    private val saveState: (GameCloudIdentity, GameSaveHeadState) -> Unit,
+    private val deviceIdentity: () -> GameSaveDeviceIdentity,
 ) {
-    private val appContext = context.applicationContext
-    private val states = GameSaveHeadStore(appContext)
-    private val device = GameSaveDeviceStore(appContext)
+    /** The production wiring; the internal constructor exists so tests can run without Android storage. */
+    constructor(
+        context: Context,
+        config: GameSaveConfig,
+        client: GameSaveClient = GameSaveClient(
+            config,
+            GameSaveDeviceStore(context.applicationContext).identity(),
+            GameSaveAuthGuard(context.applicationContext),
+        ),
+    ) : this(
+        client = client,
+        tombstones = ScopeTombstoneStore(context.applicationContext),
+        loadState = GameSaveHeadStore(context.applicationContext)::load,
+        saveState = GameSaveHeadStore(context.applicationContext)::save,
+        deviceIdentity = GameSaveDeviceStore(context.applicationContext)::identity,
+    )
 
     fun check(identity: GameCloudIdentity, currentManifestHash: String): Result<GameSaveNativeDecision> = runCatching {
+        throwIfStopped(identity)
         val scope = client.getScope(identity.saveType, identity.gameId).getOrThrow()
-        val state = states.load(identity)
-        val decision = GameSaveNativeResolver.decide(identity, device.identity(), state, currentManifestHash, scope)
+        val state = loadState(identity)
+        val decision = GameSaveNativeResolver.decide(identity, deviceIdentity(), state, currentManifestHash, scope)
         val candidate = decision.candidate
         if (decision.action == GameSaveRemoteAction.UP_TO_DATE && candidate != null && state != null &&
-            candidate.snapshot.id == GameSaveNativeProtocol.remoteSnapshotIdOrNull(state.snapshotId, device.identity().id)
+            candidate.snapshot.id == GameSaveNativeProtocol.remoteSnapshotIdOrNull(state.snapshotId, deviceIdentity().id)
         ) {
-            states.save(identity, state.copy(fileName = candidate.remote.name, nativeHead = candidate.snapshot.id))
+            saveState(identity, state.copy(fileName = candidate.remote.name, nativeHead = candidate.snapshot.id))
         }
         decision
-    }
+    }.onScopeGone(identity)
 
     fun publishSnapshot(
         identity: GameCloudIdentity,
@@ -212,7 +224,8 @@ class GameSaveNativeSync(
      */
     private fun reportFacts(identity: GameCloudIdentity, facts: GameCloudFacts?) {
         if (facts == null || facts.isEmpty) return
-        client.putScopeIdentity(identity.saveType, identity.gameId, facts)
+        // Best effort, but a 410 here means the same stop as on the publish path.
+        client.putScopeIdentity(identity.saveType, identity.gameId, facts).onScopeGone(identity)
     }
 
     private fun publishSnapshotOnly(
@@ -220,19 +233,20 @@ class GameSaveNativeSync(
         record: SnapshotRecord,
         archiveFile: File,
     ): Result<GameSaveNativePublishResult> = runCatching {
+        throwIfStopped(identity)
         require(record.cloudGameId == identity.gameId && record.saveType == identity.saveType.id) {
             "本地快照与游戏同步范围不匹配"
         }
         require(archiveFile.isFile) { "本地快照不存在" }
         val localSnapshotId = GameSaveNativeProtocol.localSnapshotId(record.remoteName)
             ?: error("本地快照名称不是可同步的 SaveVault 快照")
-        val identityDevice = device.identity()
+        val identityDevice = deviceIdentity()
         val remoteSnapshotId = GameSaveNativeProtocol.remoteSnapshotId(localSnapshotId, identityDevice.id)
         val remoteArchiveName = GameSaveNativeProtocol.archiveName(identity, localSnapshotId, identityDevice.id)
         val digest = Hashing.sha256(archiveFile).lowercase()
         require(record.sha256.isBlank() || digest == record.sha256.lowercase()) { "本地快照摘要校验失败" }
         val scope = client.getScope(identity.saveType, identity.gameId).getOrThrow()
-        val previous = states.load(identity)
+        val previous = loadState(identity)
         val provisional = localState(
             identity = identity,
             record = record,
@@ -247,7 +261,7 @@ class GameSaveNativeSync(
             require(head.archive == remoteArchiveName && head.contentDigest.equals(digest, ignoreCase = true)) {
                 "云端当前版本与本机版本不一致"
             }
-            states.save(identity, provisional.copy(nativeHead = head.id))
+            saveState(identity, provisional.copy(nativeHead = head.id))
             return@runCatching GameSaveNativePublishResult.Confirmed(head)
         }
         client.upload(archiveFile, identity.saveType, remoteArchiveName).getOrThrow()
@@ -258,7 +272,7 @@ class GameSaveNativeSync(
         if (scope.head != null && previous?.nativeHead != scope.head.id) {
             client.putScopeConflict(identity.saveType, identity.gameId, candidate(remoteSnapshotId, remoteArchiveName, previous?.nativeHead.orEmpty(), digest, record))
                 .getOrThrow()
-            states.save(identity, provisional)
+            saveState(identity, provisional)
             return@runCatching GameSaveNativePublishResult.Conflict(scope.head)
         }
 
@@ -266,15 +280,15 @@ class GameSaveNativeSync(
         val candidate = candidate(remoteSnapshotId, remoteArchiveName, parent, digest, record)
         try {
             val stored = client.putScopeSnapshot(identity.saveType, identity.gameId, candidate, parent).getOrThrow()
-            states.save(identity, provisional.copy(nativeHead = stored.id))
+            saveState(identity, provisional.copy(nativeHead = stored.id))
             GameSaveNativePublishResult.Confirmed(stored)
         } catch (error: GameSaveScopeConflictException) {
             client.putScopeConflict(identity.saveType, identity.gameId, candidate).getOrThrow()
-            states.save(identity, provisional)
+            saveState(identity, provisional)
             val currentHead = client.getScope(identity.saveType, identity.gameId).getOrThrow().head
             GameSaveNativePublishResult.Conflict(currentHead)
         }
-    }
+    }.onScopeGone(identity)
 
     /**
      * "保留本机并发布": makes [record] the new head on top of [expectedHead], the
@@ -289,13 +303,14 @@ class GameSaveNativeSync(
         archiveFile: File,
         expectedHead: String,
     ): Result<GameSaveNativePublishResult> = runCatching {
+        throwIfStopped(identity)
         require(record.cloudGameId == identity.gameId && record.saveType == identity.saveType.id) {
             "本地快照与游戏同步范围不匹配"
         }
         require(archiveFile.isFile) { "本地快照不存在" }
         val localSnapshotId = GameSaveNativeProtocol.localSnapshotId(record.remoteName)
             ?: error("本地快照名称不是可同步的 SaveVault 快照")
-        val identityDevice = device.identity()
+        val identityDevice = deviceIdentity()
         val remoteSnapshotId = GameSaveNativeProtocol.remoteSnapshotId(localSnapshotId, identityDevice.id)
         val remoteArchiveName = GameSaveNativeProtocol.archiveName(identity, localSnapshotId, identityDevice.id)
         val digest = Hashing.sha256(archiveFile).lowercase()
@@ -307,8 +322,8 @@ class GameSaveNativeSync(
         val candidate = candidate(remoteSnapshotId, remoteArchiveName, parent, digest, record)
         try {
             val stored = client.putScopeSnapshot(identity.saveType, identity.gameId, candidate, parent).getOrThrow()
-            val previous = states.load(identity)
-            states.save(
+            val previous = loadState(identity)
+            saveState(
                 identity,
                 localState(identity, record, archiveFile, localSnapshotId, remoteArchiveName, previous, nativeHead = stored.id),
             )
@@ -316,7 +331,7 @@ class GameSaveNativeSync(
         } catch (error: GameSaveScopeConflictException) {
             GameSaveNativePublishResult.Conflict(client.getScope(identity.saveType, identity.gameId).getOrThrow().head)
         }
-    }
+    }.onScopeGone(identity)
 
     /** Records a selected remote head locally without publishing a new head ZIP or CAS write. */
     fun markRemoteRestore(
@@ -325,6 +340,7 @@ class GameSaveNativeSync(
         manifestHash: String,
         archiveFile: File,
     ): Result<Unit> = runCatching {
+        throwIfStopped(identity)
         val parsed = GameSaveNativeProtocol.archiveName(candidate.remote.name)
             ?: error("远端原生快照名称无效")
         require(parsed.gameId == identity.gameId && parsed.branch == "main" && parsed.snapshotId == candidate.snapshot.id) {
@@ -334,8 +350,8 @@ class GameSaveNativeSync(
             "远端原生快照摘要校验失败"
         }
         val contentAt = runCatching { GameSaveSnapshotClock.contentModifiedAtMillis(archiveFile) }.getOrDefault(0L)
-        val previous = states.load(identity)
-        states.save(
+        val previous = loadState(identity)
+        saveState(
             identity,
             GameSaveHeadState(
                 snapshotId = candidate.snapshot.id,
@@ -348,6 +364,26 @@ class GameSaveNativeSync(
                 announcedAtMillis = previous?.announcedAtMillis ?: 0L,
             ),
         )
+    }.onScopeGone(identity)
+
+    /**
+     * A tombstoned scope must not receive any request, not even a read: the
+     * server deleted it or merged it into another scope.
+     */
+    private fun throwIfStopped(identity: GameCloudIdentity) {
+        tombstones.get(identity)?.let { throw GameSaveScopeGoneException.from(it) }
+    }
+
+    /**
+     * Records a deleted or merged scope and forgets the confirmed head. The
+     * local saves and snapshots stay; dropping `nativeHead` is what stops the
+     * next sync from treating the scope as one this device confirmed.
+     */
+    private fun <T> Result<T>.onScopeGone(identity: GameCloudIdentity): Result<T> = onFailure { error ->
+        if (error is GameSaveScopeGoneException && (error.deleted || error.retired)) {
+            tombstones.record(identity, error)
+            loadState(identity)?.let { saveState(identity, it.copy(nativeHead = "")) }
+        }
     }
 
     private fun localState(

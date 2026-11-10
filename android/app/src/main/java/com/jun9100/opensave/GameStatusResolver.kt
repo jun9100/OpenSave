@@ -25,6 +25,12 @@ enum class GameSyncStatus(
     /** A cloud check found a newer save that can be restored safely. */
     CLOUD_NEWER("云端较新", "云端较新", "▼"),
 
+    /** The cloud deleted this save scope; the local saves are untouched and syncing stopped. */
+    CLOUD_DELETED("云端已删除", "云端已删除", "✕"),
+
+    /** The cloud merged this save scope into another game; syncing stopped. */
+    CLOUD_MERGED("已合并到其他游戏", "已合并", "⇢"),
+
     /** A cloud check found a version that needs a decision, or local saves changed since a newer cloud one was seen. */
     CONFLICT("冲突需确认", "冲突", "⚠"),
     ;
@@ -41,13 +47,22 @@ object GameStatusResolver {
      * null while unknown; a change is only claimed when both it and the one
      * stored on [latest] are known. [cloudAction] is the last cloud check's
      * verdict for the game (none when it was up to date or never checked).
+     * [tombstone] is the cloud's recorded stop for the game's scope: it wins
+     * over every cloud verdict, but nothing backed up here is still "never
+     * backed up".
      */
     fun resolve(
         latest: SnapshotRecord?,
         currentSignature: String?,
         cloudAction: GameSaveRemoteAction?,
         cloudEnabled: Boolean,
+        tombstone: ScopeTombstone? = null,
     ): GameSyncStatus {
+        // A stopped scope is the cloud's current state, not a stale verdict or a pending upload.
+        if (tombstone != null) {
+            if (latest == null) return GameSyncStatus.NEVER_BACKED_UP
+            return if (tombstone.retired) GameSyncStatus.CLOUD_MERGED else GameSyncStatus.CLOUD_DELETED
+        }
         val localChanged = latest != null &&
             latest.saveSignature.isNotBlank() &&
             !currentSignature.isNullOrBlank() &&
@@ -73,7 +88,8 @@ object GameStatusResolver {
     /**
      * Statuses of every [entries] row by library key. [signatures] and
      * [cloudActions] are keyed by library key as well; safety copies taken
-     * before a restore are not backups and are ignored.
+     * before a restore are not backups and are ignored. [tombstones] are
+     * keyed like [ScopeTombstoneStore] (`{type}/{gameId}`).
      */
     fun resolveAll(
         entries: List<SourceGameEntry>,
@@ -81,6 +97,7 @@ object GameStatusResolver {
         signatures: Map<String, String>,
         cloudActions: Map<String, GameSaveRemoteAction>,
         cloudEnabled: Boolean,
+        tombstones: Map<String, ScopeTombstone> = emptyMap(),
     ): Map<String, GameSyncStatus> {
         val latestByKey = snapshots
             .asSequence()
@@ -89,7 +106,14 @@ object GameStatusResolver {
             .mapValues { (_, records) -> records.maxBy(SnapshotRecord::createdAtMillis) }
         return entries.associate { entry ->
             val key = entry.libraryKey
-            key to resolve(latestByKey[key], signatures[key], cloudActions[key], cloudEnabled)
+            val identity = GameCloudNaming.identity(entry.source, entry.sourceId, entry.game)
+            key to resolve(
+                latestByKey[key],
+                signatures[key],
+                cloudActions[key],
+                cloudEnabled,
+                tombstones[ScopeTombstoneCodec.key(identity.saveType.id, identity.gameId)],
+            )
         }
     }
 

@@ -101,4 +101,20 @@ class AutoBackupTest {
         )
         assertEquals(com.jun9100.opensave.activity.ActivityLevel.ERROR, AutoBackupPolicy.failedEntry("超时", retrying = true).level)
     }
+
+    @Test
+    fun stoppedCloudScopesAreCountedWithoutBecomingFailures() {
+        val stopped = AutoBackupPolicy.runEntry(
+            AutoBackupTally(games = 3, uploaded = 1, unchanged = 1, cloudStopped = 1),
+            atMillis = 1,
+        )
+        assertEquals("自动备份：已上传 1 款，无变化 1 款；1 款游戏的云端存档已被删除或合并，已跳过", stopped.text)
+        assertTrue(stopped.detail.isBlank())
+
+        val onlyStopped = AutoBackupPolicy.runEntry(AutoBackupTally(games = 2, cloudStopped = 2), atMillis = 2)
+        assertEquals("自动备份：没有处理任何游戏；2 款游戏的云端存档已被删除或合并，已跳过", onlyStopped.text)
+
+        val none = AutoBackupPolicy.runEntry(AutoBackupTally(games = 1, uploaded = 1), atMillis = 3)
+        assertEquals("自动备份：已上传 1 款", none.text)
+    }
 }
