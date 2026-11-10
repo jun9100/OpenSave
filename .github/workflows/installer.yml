@@ -72,8 +72,10 @@ jobs:
           $marker = Join-Path $data 'installer-test-marker.txt'
           $publicDesktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
           $commonPrograms = [Environment]::GetFolderPath('CommonPrograms')
+          $script:passed = 0
           function Check($ok, $what) {
             if (-not $ok) { throw "FAILED: $what" }
+            $script:passed++
             Write-Host "ok - $what"
           }
           function RunValue($name) {
@@ -93,7 +95,9 @@ jobs:
           Check (Test-Path "$uninstallRoot\OpenSaveOpenSave") 'OpenSave uninstall entry present'
 
           # Start with Windows as 2.4.5 writes it, plus the stray value a 2.5
-          # or 2.6 installer added on a machine that has both.
+          # or 2.6 installer added on a machine that has both. A fresh runner
+          # profile has no Run key at all; a real one always does.
+          New-Item -Path $runKey -Force | Out-Null
           New-ItemProperty -Path $runKey -Name 'OpenSave' -Value "`"$oldDir\OpenSave.exe`" --start-hidden" -Force | Out-Null
           New-ItemProperty -Path $runKey -Name 'SaveVault' -Value "`"$newExe`" --start-hidden" -Force | Out-Null
 
@@ -129,3 +133,8 @@ jobs:
           Check (-not (Test-Path "$uninstallRoot\SaveVaultSaveVault")) 'SaveVault uninstall entry removed'
           Check ((Get-Content $marker) -eq 'keep me') 'data directory kept by a silent uninstall'
           Check ($null -eq (RunValue 'OpenSave')) 'Run value removed on uninstall'
+
+          # Every check above ran: a script that stops early must not pass.
+          $expected = 19
+          if ($script:passed -ne $expected) { throw "FAILED: $($script:passed) checks ran, expected $expected" }
+          Write-Host "all $expected checks passed"
