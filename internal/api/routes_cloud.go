@@ -619,24 +619,55 @@ func (s *Server) handleCloudDelete(w http.ResponseWriter, r *http.Request) {
 // handleCloudDeleteGame removes every cloud snapshot belonging to one
 // game — used when untracking so orphaned files don't pile up in the
 // provider forever. Local snapshots are untouched.
+//
+// It is offered right after the untrack, when the game row is already gone,
+// so an untracked game is accepted by its untrack tombstone, which kept the
+// save type and whether the scope had been tombstoned on the server. An id
+// that is neither tracked nor untracked here stays a 404.
 func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 	gameID := chi.URLParam(r, "gameId")
-	game, err := s.Daemon.Store.GetGame(gameID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
 	cfg, err := s.Daemon.Store.GetCloudConfig()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	saveType, untrackedScopeGone := "", false
+	if game, err := s.Daemon.Store.GetGame(gameID); err == nil {
+		saveType = game.SaveType
+	} else if !errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else {
+		state, untracked, stateErr := s.Daemon.Store.GetUntrackedCloudState(gameID)
+		if stateErr != nil {
+			writeError(w, http.StatusInternalServerError, stateErr.Error())
+			return
+		}
+		if !untracked {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		// A typed provider keeps pc, switch and emulator saves apart. Without
+		// the type, guessing pc could remove another game's copies that share
+		// this id under a different type, so refuse rather than guess.
+		if !state.SaveTypeKnown && cloud.IsTypedStorageProvider(cfg.Provider) {
+			writeError(w, http.StatusConflict,
+				"this game was untracked before its save type was recorded; its cloud copies are left as they are")
+			return
+		}
+		saveType, untrackedScopeGone = state.SaveType, state.ScopeGone
+	}
 	if cfg.Provider == cloud.GameSaveProvider {
 		// A deleted or merged scope's archives are the server's to manage: a
 		// merged one is still readable data. Refuse when this device recorded
-		// the tombstone, and ask the scope as well in case it has not seen it
+		// the tombstone (the untrack carries that record over to its own
+		// tombstone), and ask the scope as well in case it has not seen it
 		// yet. A 404 is the older service with no scopes; keep the old path.
 		const refused = "this game's cloud save was deleted or merged on the server; its cloud copies are left as they are"
+		if untrackedScopeGone {
+			writeError(w, http.StatusConflict, refused)
+			return
+		}
 		if _, gone, goneErr := s.Daemon.Store.GetCloudScopeGone(gameID); goneErr != nil {
 			writeError(w, http.StatusInternalServerError, goneErr.Error())
 			return
@@ -644,7 +675,7 @@ func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, refused)
 			return
 		}
-		_, scopeErr := s.Daemon.Cloud.GetGameSaveScope(game.SaveType, gameID)
+		_, scopeErr := s.Daemon.Cloud.GetGameSaveScope(saveType, gameID)
 		var gone *cloud.GameSaveScopeGoneError
 		if errors.As(scopeErr, &gone) {
 			writeError(w, http.StatusConflict, refused)
@@ -677,7 +708,7 @@ func (s *Server) handleCloudDeleteGame(w http.ResponseWriter, r *http.Request) {
 	}
 	deleted, failed := 0, 0
 	for _, f := range files {
-		if !cloud.MatchesSaveType(cfg.Provider, f.ID, game.SaveType) {
+		if !cloud.MatchesSaveType(cfg.Provider, f.ID, saveType) {
 			continue
 		}
 		if g, dev, _, ok := cloud.ParseHeadFileName(f.Name); ok {
