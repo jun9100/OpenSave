@@ -1698,6 +1698,7 @@
   "duplicates.verdict.keep": "保留",
   "duplicates.verdict.review": "请确认",
   "duplicates.stats": "{n} 个文件 · 最后写入 {when}",
+  "duplicates.groupCount": "{n} 份",
   "duplicates.never": "从未",
   "duplicates.reason.covers": "它的文件夹包含了 {names} 的文件夹，而后者已单独跟踪",
   "duplicates.reason.insideOf": "位于 {name} 的文件夹里面 —— 这是更具体的一份",

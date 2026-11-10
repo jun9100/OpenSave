@@ -7,7 +7,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { t } from '../lib/i18n.js';
   import { api } from '../lib/api.js';
-  import { duplicateGroups, judgeGroup } from '../lib/duplicates.js';
+  import { duplicateGroups, groupTitle, judgeGroup } from '../lib/duplicates.js';
   import { startBulk } from '../lib/bulk.js';
   import { timeAgo } from '../lib/timeago.js';
   import Modal from './ui/Modal.svelte';
@@ -90,7 +90,12 @@
       <p class="intro">{$t('duplicates.intro')}</p>
       {#if failed}<p class="error">{failed}</p>{/if}
       {#each groups as group, gi}
-        <section class="group">
+        <section class="group" aria-labelledby="dup-group-{gi}">
+          <header class="group-head" id="dup-group-{gi}">
+            <span class="group-index">{gi + 1}</span>
+            <strong class="group-names">{groupTitle(group).join(' · ')}</strong>
+            <span class="group-count">{$t('duplicates.groupCount', { n: group.length })}</span>
+          </header>
           {#each group as r (r.game.id)}
             <label class="member {r.verdict}">
               <input type="checkbox" checked={picked.has(r.game.id)} on:change={() => toggle(r.game.id)} />
@@ -150,6 +155,29 @@
     border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
+  }
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 14px;
+    background: var(--bg-hover);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.84rem;
+  }
+  .group-index {
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .group-names {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .group-count {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--text-faint);
+    font-size: 0.78rem;
   }
   .member {
     display: flex;

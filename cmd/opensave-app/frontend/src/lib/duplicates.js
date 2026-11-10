@@ -57,6 +57,21 @@ export function duplicateGroups(games) {
   return [...groups.values()].filter((members) => members.length > 1);
 }
 
+/**
+ * What to call one group in the list: the names of the games in it, each
+ * once, in the group's order. A group joined by one folder holding others
+ * (a repack directory, say) carries several games, and the dialog scrolls,
+ * so each group needs a heading to be found by.
+ */
+export function groupTitle(members) {
+  const names = [];
+  for (const m of members ?? []) {
+    const name = String(m?.game?.name ?? m?.name ?? '').trim();
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
 // A Steam App ID folder at the top of a save folder (repacks and Steam
 // emulators keep one per game): digits, 3 to 8 of them.
 const APP_ID_DIR = /^\d{3,8}$/;
