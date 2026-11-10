@@ -17,6 +17,25 @@
 
 ---
 
+## 已确认的决定（2026-11-10）
+
+用户已逐条确认，下文各节按这些决定改写：
+
+| # | 事项 | 决定 | 影响的章节 |
+|---|---|---|---|
+| 1 | 首发市场 | **国内外同时**：海外上 Google Play；国内上华为、小米、vivo 等商店 | 十一（国内商店待办） |
+| 2 | 开发者账号 | **个人账号**，先完成 12 人、14 天的封闭测试 | 十 |
+| 3 | SaveVault 自己的版权署名 | **先留空**，开源许可页用占位符 `Copyright (c) 2026 <SAVEVAULT_COPYRIGHT_HOLDER>` | 1.1 |
+| 4 | Root | **Play 版去掉**（`play` 构建变体里界面和代码路径都不可达）；GitHub 版和国内商店版保留 | 三第 9 行、6.4 |
+| 5 | 签名 | **Play 另用新密钥**，由 Play 生成和保管；GitHub 版、国内商店版继续用现有的 SaveVault 密钥。两边签名不同，不能互相覆盖安装 | 6.2 |
+| 6 | titledb | **所有版本继续内置**；用户已知晓风险，风险说明保留在 2.1 | 2.1、2.2 |
+| 7 | http 自托管 | **允许**，在 App 内醒目提示“未加密，只建议在家庭局域网使用” | 三第 8 行、四 |
+| 8 | 免费与收费 | **免费版只做本地备份，不提供我们托管的云端**；托管云端是**单一付费档的订阅**，Play 版走 Play 结算，国内版走各商店的结算 | 八、十一 |
+
+**理解待确认**：决定 7 允许连接自托管服务器，决定 8 写的是“免费版不提供云端”。本文理解为：免费功能包括本地备份和连接用户自己的 game-save 服务器（自托管）；收费的只有我们托管的 SaveVault 云端。如果自托管也要收费，第八节和数据安全表单都要改，请协调会话向用户确认。
+
+---
+
 ## 结论摘要
 
 最要紧的五件事：
@@ -27,10 +46,10 @@
    - `PRIVACY.md` 写的是 PC 端，没有覆盖 Android；
    - App 内没有“开源许可 / 隐私政策”入口；
    - MIT 和 Apache-2.0 都要求随二进制附上许可声明。
-4. **内置 titledb 和第三方封面来源**（审核风险，titledb 怎么处理要你决定）：
+4. **内置 titledb 和第三方封面来源**（审核风险；已决定所有版本继续内置 titledb，tinfoil 去掉）：
    - 内置的 `switch-titles.tsv`（2.6 MB，24,252 条）是从任天堂 eShop 抓取的数据；
    - 封面会直连任天堂 CDN，以及和盗版生态关系密切的 `tinfoil.media`。
-5. **Root 功能**（审核风险，是否保留要你决定）：Root 模式会读取其他应用的私有目录 `/data/user/0/<pkg>`，Play 审核对这类行为敏感，至少要在首次使用时充分披露。
+5. **Root 功能**（审核风险；已决定 Play 版去掉，GitHub 版和国内商店版保留）：Root 模式会读取其他应用的私有目录 `/data/user/0/<pkg>`，Play 审核对这类行为敏感。
 
 整改清单见文末。
 
@@ -45,7 +64,7 @@
 | 现状 | 仓库根 `LICENSE` 是 MIT，版权行为 `Copyright (c) 2026 Siva Prakash (original OpenSave)`、`Copyright (c) 2026 OpenSave contributors (Go rewrite)`（`LICENSE:3-4`）。Android 客户端 `android/` 是在这个分支里新写的（最早一次提交 `ac5136b feat(android): add Chinese save manager foundation`），整个仓库按 MIT 发布。 |
 | MIT 的要求 | 在“软件的所有副本或主要部分”里保留版权声明和许可声明。APK 是二进制副本，所以 App 里或随附的文档里要有这段 MIT 全文和版权行。MIT 允许商业销售、允许闭源再分发，只要求保留声明。 |
 | 风险 | **阻止上架**（许可义务；漏了也不一定被 Play 拒，但属于违反许可）。 |
-| 建议 | 1）在 App 内“设置 › 关于 › 开源许可”页列出 SaveVault 自己的 MIT 声明，含上面两行版权和 `Copyright (c) 2026 jun9100 (SaveVault)`（第三行需要你确认署名）；2）商店页的“应用说明”或网站上写明以 MIT 开源，附仓库链接。 |
+| 建议 | 1）在 App 内“设置 › 关于 › 开源许可”页列出 SaveVault 自己的 MIT 声明，含上面两行版权，以及占位的第三行 `Copyright (c) 2026 <SAVEVAULT_COPYRIGHT_HOLDER>`（已决定先留空，发布前替换）；2）商店页的“应用说明”或网站上写明以 MIT 开源，附仓库链接。 |
 | 改动量 | S（和 1.3 一起做） |
 
 ### 1.2 Gradle 依赖的许可
@@ -81,7 +100,7 @@
 | 风险 | **审核风险**（偏高）。单个游戏名属于事实信息，问题在于整批打包从 eShop 抓来的数据库，再配合 eShop 图标地址一起发布。 |
 | 去掉后的影响 | 不在硬编码 15 个常见 TitleID（`GameCatalog.kt:201-218`）里的 Switch 游戏，会显示成“未命名游戏”（`GameCatalog.kt:39-40`、`:169-175`）；不再请求 eShop 封面；C1 身份上报不再带名称，但 TitleID 照常上报。**识别、备份、恢复、同步都不受影响**。`SwitchTitleNameSourcesTest.kt:79-80` 要相应改。逐点分析见 `survey.md` 第 1 节。 |
 | 替代方案 | 1）**从云端 C5 获取**（推荐长期方案）：客户端只发 TitleID，服务端返回名称和封面。数据源和合规由服务端统一处理（可以人工维护，也可以用有授权的数据源），自托管用户也能用。改动量 XL，需要 C5。2）**只用本机能识别的信息**（推荐 Play 首发）：Root 模式下已经能从模拟器配置里学到 ROM 目录（`SourceViewModel.kt:1380-1400`），可以扩展成读模拟器自己的游戏列表缓存；无 Root 时显示 TitleID，并允许用户改名（已有“重命名”功能）。改动量 M。3）**用户自行导入**：设置里放“导入游戏名称表（TSV）”，App 不内置。改动量 S–M，对普通用户门槛高。 |
-| 建议 | **Play 版不内置 titledb**；GitHub 版可以继续内置（用 product flavor 区分，见 6.4）。**需要你决定**。 |
+| 决定 | **已确认：所有版本（Play、GitHub、国内商店）继续内置**，用户已知晓上述风险。为了降低风险：1）商店截图和描述里不展示由 titledb 得到的游戏名和 eShop 封面；2）App 内“开源许可”页注明游戏名称数据来自社区整理的 titledb，权利归各自所有者；3）收到权利方投诉时，按上面的替代方案 2 或 3 尽快改版，所以替代方案的设计保留在这里备用。 |
 | 改动量 | Play 版去掉：S；本机识别补强：M；C5：XL |
 
 ### 2.2 封面来源
@@ -90,13 +109,13 @@
 |---|---|---|---|---|
 | Steam CDN | `cdn.cloudflare.steamstatic.com/steam/apps/{appId}/header.jpg` | `GameCatalog.kt:45-56`、`CoverRepository.kt:92-104` | 审核风险（低）：游戏宣传图有版权，只在 App 内展示用户自己的游戏库，属常见做法 | 保留；隐私政策写明会向 Steam 请求 |
 | Steam 商店搜索、名称元数据 | `store.steampowered.com/api/storesearch`、`/api/appdetails` | `CoverRepository.kt:111-133`、`SteamMetadataRepository.kt:17-72` | 建议：会把游戏名或 AppID 发给 Steam | 隐私政策披露；长期改走 C5 |
-| 任天堂 eShop CDN | `img-eshop.cdn.nintendo.net/i/{iconHash}.jpg` | `GameCatalog.kt:48-54` | 审核风险（中）：直接引用任天堂 CDN 上的图，图标哈希来自 titledb | 跟随 2.1 的决定，Play 版去掉 |
-| tinfoil.media | `tinfoil.media/ti/{titleId}/0/0/` | `GameCatalog.kt:49-54` | **审核风险（高）**：Tinfoil 是常用于安装未授权游戏的第三方商店，向它的服务器发请求会被认为和盗版生态有关联 | **Play 版必须去掉**；建议 GitHub 版也去掉 |
+| 任天堂 eShop CDN | `img-eshop.cdn.nintendo.net/i/{iconHash}.jpg` | `GameCatalog.kt:48-54` | 审核风险（中）：直接引用任天堂 CDN 上的图，图标哈希来自 titledb | 跟随 2.1 的决定，所有版本保留；风险已知 |
+| tinfoil.media | `tinfoil.media/ti/{titleId}/0/0/` | `GameCatalog.kt:49-54` | **审核风险（高）**：Tinfoil 是常用于安装未授权游戏的第三方商店，向它的服务器发请求会被认为和盗版生态有关联 | **所有版本去掉**（开工中） |
 | 本机素材 | PSP 的 `ICON0.PNG`、已安装应用图标、用户自选图片 | `CoverRepository.kt:54-72`、`:180-187` | 无 | 保留 |
 
 App 里**没有内置或预先下载任何游戏封面、主机或商标图片**：`res/` 只有 SaveVault 自己的矢量图标，`assets/` 里只有那份 TSV（`survey.md` 第 2 节）。封面都是在界面显示时按需下载，缓存在 `filesDir/covers/`。
 
-改动量：去掉 tinfoil、按 flavor 关掉 eShop，S。
+改动量：去掉 tinfoil，S。
 
 ### 2.3 商标用语（App 内与商店素材）
 
@@ -123,8 +142,8 @@ App 里**没有内置或预先下载任何游戏封面、主机或商标图片**
 | 5 | 存储访问 | — | 只用 SAF（`ACTION_OPEN_DOCUMENT_TREE`，`SafStorage.kt`）。**没有** `MANAGE_EXTERNAL_STORAGE`、`READ/WRITE_EXTERNAL_STORAGE`、`requestLegacyExternalStorage`（清单里没有这些声明）。README 提到“Android 10 及以下可一次授权整个内部存储”，指的是在 SAF 选择器里选根目录，不是申请权限 | 无 | — |
 | 6 | 深链接 `savevault://pair` | `:66-72` | `VIEW`/`BROWSABLE`，自定义 scheme，不是需要验证域名的 App Link。解析后**一定先显示服务器主机名，确认后才发请求**（C3，`PairingDialogs.kt`） | 无；自定义 scheme 可能被其他应用抢注，但只会打开确认页，不会自动发送 | 建议以后加 `https://` 形式的 App Link（需要自有域名）。可选 |
 | 7 | `allowBackup="false"`，备份规则排除全部内容 | `:46-49`；`res/xml/backup_rules.xml`、`data_extraction_rules.xml` | 令牌、存档都不会进系统备份 | 无 | — |
-| 8 | 网络安全配置 | `:53`；`res/xml/network_security_config.xml:2-8` | 全局禁止明文（`usesCleartextTraffic="false"`），只对 `192.168.12.4`、`127.0.0.1`、`localhost` 开了例外。**`192.168.12.4` 是开发者家里 NAS 的内网地址** | **阻止上架**（功能上和隐私上都有问题）：Play 版的其他自托管用户用 http 填内网地址都连不上；把个人内网地址打进商店包也不合适 | **需要你决定**：A）Play 版只允许 https（收费云端肯定是 https；自托管用户要配反向代理和证书，门槛高）；B）允许明文，但在 App 内对 `http://` 地址给出醒目提示，例如“未加密，只建议在家庭局域网使用”，数据安全表单如实回答“传输中不一定加密”；C）只允许私有网段的明文：网络安全配置不支持网段写法，要在代码里拦截，配置里仍要全局允许。推荐 **B**：自托管是免费功能，用户自己担风险，提示清楚即可。无论选哪种，都要先删掉 `192.168.12.4`。S |
-| 9 | Root（`su`） | `RootStorage.kt:19-42`、`:65-68`；`Onboarding.kt:47-51`、`:68-82` | 用 `ProcessBuilder("su", "-mm", "-c", …)` 执行命令，`-mm` 是 Magisk 的全局挂载命名空间；`id -u` 返回 0 才算成功。首次向导完成前不会调用 `su`，用户选择“使用 Root”后才第一次调用。Root 模式会读写 `/data/user/0/<包名>`、`Android/data/<包名>` 下其他应用的存档（`SourceSelection.kt:42-72`、`InstalledGameCatalog.kt:76-90`），也会读模拟器的 `shared_prefs`（`SourceViewModel.kt:1380-1400`）。危险路径都有拦截（`RootPathPolicy.kt:7-33`）。向导里的说明是“有 Root 时还能读取 Android/data 等受保护的目录（例如 Switch 模拟器的存档）。选择后 Magisk 会弹出授权……”（`strings.xml:22`） | **审核风险（中）**：Play 的设备与网络滥用政策禁止“未经授权访问或干扰设备上的其他应用”，以及“绕过 Android 沙箱保护”来获取其他应用的用户活动或身份（[设备与网络滥用](https://support.google.com/googleplay/android-developer/answer/16559646)）。我们需要用户自己有 Root、主动选择并在 Magisk 里授权，目的是备份用户自己的存档，所以不属于“未经授权”，但审核人员可能不会细看 | **需要你决定是否保留**。A）Play 版保留：首次使用时单独弹一页披露，写明会读取哪些应用的哪些目录、只用于备份存档、不上传其他数据，需要用户勾选同意；商店说明写“可选的 Root 模式”；B）Play 版关掉 Root（flavor），GitHub 版保留。推荐 **A**，掌机用户很依赖 Root 模式；如果审核被拒，再退到 B。A：S–M；B：S |
+| 8 | 网络安全配置 | `:53`；`res/xml/network_security_config.xml:2-8` | 全局禁止明文（`usesCleartextTraffic="false"`），只对 `192.168.12.4`、`127.0.0.1`、`localhost` 开了例外。**`192.168.12.4` 是开发者家里 NAS 的内网地址** | **阻止上架**（功能上和隐私上都有问题）：Play 版的其他自托管用户用 http 填内网地址都连不上；把个人内网地址打进商店包也不合适 | **已确认：允许 http 并提示**。网络安全配置改成全局允许明文、删掉 `192.168.12.4`；用户填 `http://` 地址时，在云端编辑框、配对确认框、导入确认框和设置页显示“未加密，只建议在家庭局域网使用”。已经连着 http NAS 的安装在升级后照常可用。数据安全表单如实回答“自托管时可能不加密”（第四节）。S |
+| 9 | Root（`su`） | `RootStorage.kt:19-42`、`:65-68`；`Onboarding.kt:47-51`、`:68-82` | 用 `ProcessBuilder("su", "-mm", "-c", …)` 执行命令，`-mm` 是 Magisk 的全局挂载命名空间；`id -u` 返回 0 才算成功。首次向导完成前不会调用 `su`，用户选择“使用 Root”后才第一次调用。Root 模式会读写 `/data/user/0/<包名>`、`Android/data/<包名>` 下其他应用的存档（`SourceSelection.kt:42-72`、`InstalledGameCatalog.kt:76-90`），也会读模拟器的 `shared_prefs`（`SourceViewModel.kt:1380-1400`）。危险路径都有拦截（`RootPathPolicy.kt:7-33`）。向导里的说明是“有 Root 时还能读取 Android/data 等受保护的目录（例如 Switch 模拟器的存档）。选择后 Magisk 会弹出授权……”（`strings.xml:22`） | **审核风险（中）**：Play 的设备与网络滥用政策禁止“未经授权访问或干扰设备上的其他应用”，以及“绕过 Android 沙箱保护”来获取其他应用的用户活动或身份（[设备与网络滥用](https://support.google.com/googleplay/android-developer/answer/16559646)）。我们需要用户自己有 Root、主动选择并在 Magisk 里授权，目的是备份用户自己的存档，所以不属于“未经授权”，但审核人员可能不会细看 | **已确认：Play 版去掉 Root**：新增 `play` 构建变体，Root 的界面入口、向导选项、`su` 调用路径在 `play` 里都不可达（编译期排除，不只是隐藏）；`github` 变体（GitHub 版和国内商店版）保留。GitHub 版、国内版仍建议在首次选择 Root 时单独披露会读取哪些目录。S–M |
 
 另外两项：
 
@@ -157,7 +176,7 @@ Play 的定义：数据离开设备就算“收集”（包括第三方 SDK 发�
 
 安全实践问题：
 
-- **传输中是否加密**：收费云端是 https，可以答“是”。但如果第 3 节第 8 行选了 B（允许 http），自托管时可能不加密，需要如实回答，或者在表单说明里写明“用户自行配置的 http 服务器除外”。在表单定稿前要先决定这一点。
+- **传输中是否加密**：我们托管的云端是 https。已决定允许 http 自托管，所以自托管时可能不加密：表单如实回答，并在说明里写明“用户自行配置的 http 服务器不加密，App 内会提示”。
 - **能否请求删除数据**：C7 上线后要有删除入口，见第五节。自托管时数据在用户自己手里。
 - **隐私政策**：必须提供网址，并且内容要覆盖上面每一项。现有的 `PRIVACY.md` 是 PC 端的，写着“没有账户、没有遥测、不经第三方存储”，没有提到 Android 的 game-save 上传、eShop/tinfoil 取图，C7 上线后“没有账户”这句也不再成立。**阻止上架**；改动量 S（写文档）加 S（App 内加入口）。
 
@@ -183,23 +202,27 @@ Play 的定义：数据离开设备就算“收集”（包括第三方 SDK 发�
 - 发布密钥放在 `~/.savevault/`。构建脚本按顺序读环境变量 `SAVEVAULT_KEYSTORE_PROPERTIES` 指向的文件，或者 `~/.savevault/keystore.properties`（`android/app/build.gradle.kts:9-17`、`:36-45`）。本次审查没有读取密钥内容。
 - GitHub 上已发布的 [android-v0.5.0](https://github.com/jun9100/OpenSave/releases/tag/android-v0.5.0)、[android-v0.6.0](https://github.com/jun9100/OpenSave/releases/tag/android-v0.6.0) 都用这把密钥签名：CN=SaveVault, O=jun9100，证书 SHA-256 `a2:8a:5f:ad:…:1e:53:ca`。
 
-### 6.2 推荐方案：把现有密钥作为 Play 的应用签名密钥
+### 6.2 已确认方案：Play 用 Google 生成的新密钥
 
 - Play App Signing 分两把钥匙：
   - **应用签名密钥**：Google 保管，用它给用户实际下载的 APK 签名；
-  - **上传密钥**：你保管，只用来证明上传的 AAB 来自你；丢了可以请 Google 重置。
-- 新应用默认由 Google 生成应用签名密钥；在发布到开放测试或正式版之前，可以改成上传自己的密钥：用 PEPK 工具加密后上传（[Play App Signing](https://support.google.com/googleplay/android-developer/answer/9842756)）。
-- **推荐上传现有的 SaveVault 密钥作为应用签名密钥**：这样 Play 下发的 APK 和 GitHub 上的 APK 签名一致，用户可以在两个渠道之间直接覆盖升级。如果让 Google 生成，GitHub 版和 Play 版的签名就不同，用户换渠道时只能卸载重装，本机快照、目录授权、云端配置都会丢。
-- **上传密钥另外新建一把**，和应用签名密钥分开，放在 `~/.savevault/upload.*`，不提交、不打印。上传密钥泄露了只影响上传，可以重置；应用签名密钥交给 Google 之后，本地那份要离线备份好。
-- 代价：要选择不用 Google 新默认的“抗量子混合签名”（因为要上传自己的密钥）。**需要你决定。**
-- 改动量：S（Play Console 操作 + 新建上传密钥）。
+  - **上传密钥**：你保管，只用来证明上传的 AAB 来自你；丢了可以请 Google 重置（[Play App Signing](https://support.google.com/googleplay/android-developer/answer/9842756)）。
+- **已确认**：Play 版的应用签名密钥由 Play 生成和保管（新应用的默认方式），另外新建一把上传密钥。GitHub 版和国内商店版继续用现有的 SaveVault 密钥（6.1）。
+- 上传密钥：本地新建，配置位置用环境变量 `SAVEVAULT_UPLOAD_KEYSTORE_PROPERTIES` 或 `~/.savevault/upload.properties`；不提交、不打印，丢了可以在 Play Console 申请重置。
+- **对用户的影响**：Play 版和 GitHub 版/国内版签名不同，**不能互相覆盖安装**。从一个渠道换到另一个渠道，只能先卸载再装，卸载会清掉本机快照、目录授权和云端配置；已经上传到云端的版本不受影响，重新连接后可以恢复。两个渠道的更新各走各的，互不影响。
+- **提示文案**（放进 GitHub Release 说明、Play 商店的完整说明末尾、App 内“关于”页）：
+
+  > SaveVault 的 Google Play 版与 GitHub / 国内应用商店版签名不同，不能直接互相覆盖安装。如需更换安装渠道：请先在 App 内备份并上传存档（或导出本机快照），卸载旧版本，再安装新渠道的版本，然后重新授权存档目录、重新连接云端。卸载会清除本机的快照和设置，云端已上传的版本不受影响。
+
+  如果用户直接安装另一个渠道的包，系统会报“与已安装的应用签名不一致”或“应用未安装”；可以在 App 的帮助里放一条同样内容的 FAQ。
+- 开发者验证：Play App Signing 的应用会被自动认领；GitHub 版那把密钥需要在 Play Console / Android Developer Console 里给同一包名再登记一把签名密钥（一个包名可以登记多把，见第十节）。
+- 改动量：S（Play Console 操作，新建上传密钥）。
 
 ### 6.3 versionCode 策略
 
 - Play 要求 versionCode 严格递增，用过的不能再用。现在 GitHub 已经用到 24。
-- **推荐 GitHub 版和 Play 版共用一个递增序列**，同一个版本号对应同一份代码。
-- 如果两个渠道的包内容不同（比如 Play 版去掉 titledb、tinfoil，或关掉 Root，见 6.4），推荐用 `versionCode = 版本序号 × 10 + 渠道号`（GitHub = 1，Play = 2）区分。这样同一个版本里 Play 版的号更大，用户从 GitHub 版换到 Play 版时能正常升级。
-- 无论哪种，`CHANGELOG` 和 Release 都按 `versionName` 写。
+- 因为两边签名不同，本来就不能跨渠道升级，所以 versionCode **不需要用渠道号区分**。推荐两个变体共用一个递增序列：同一次发版的 `github`、`play` 用同一个 `versionCode`/`versionName`，`CHANGELOG` 写一份；`play` 版的说明注明“不含 Root 模式”。
+- 某个渠道单独出修复版时，也从同一个序列里取下一个号，不回退。
 - 改动量：S。
 
 ### 6.4 AAB 与构建脚本
@@ -207,7 +230,7 @@ Play 的定义：数据离开设备就算“收集”（包括第三方 SDK 发�
 - **必须用 AAB**：新应用从 2021 年 8 月起必须以 Android App Bundle 发布（[App Bundle](https://developer.android.com/guide/app-bundle)）。现在只有 `assembleRelease`（APK），没有 `bundle {}` 配置（`survey.md` 第 8 节）。
 - 构建脚本要改的地方：
   1. 用 `./gradlew bundleRelease` 产出 `app-release.aab`，用上传密钥签名；签名配置要能区分“上传密钥”（Play）和“应用签名密钥”（GitHub APK）。
-  2. 如果两个渠道内容不同，加 `productFlavors { github {}; play {} }`：`play` 不打包 `switch-titles.tsv`，`BuildConfig` 里关掉 tinfoil、eShop 封面，也可以关掉 Root。
+  2. 加 `productFlavors { github {}; play {} }`（已确认）：`play` 去掉 Root（源码集分开，`play` 里没有 `RootStorage` 的调用路径），titledb 和 eShop 封面两边都保留；`play` 用上传密钥签名，`github` 用现有的 SaveVault 密钥。`deviceTest` 构建类型在两个变体下都保留。
   3. CI（`.github/workflows/ci.yml:54-69`，现在只跑单测）加 `bundlePlayRelease` 的编译检查；正式签名仍在本机做，不把密钥放进 CI。
   4. 可选：开启 R8（现在 `isMinifyEnabled = false`，`build.gradle.kts:56`），包更小，但要补混淆规则并重新测一遍。
 - 改动量：M。
@@ -251,7 +274,7 @@ Play 的定义：数据离开设备就算“收集”（包括第三方 SDK 发�
 ### 8.1 为什么“App 免费、云存储订阅收费”
 
 1. Play 付款政策把“云软件和服务，例如数据存储服务”明确列为必须使用 Play 结算的数字服务（[付款政策](https://support.google.com/googleplay/android-developer/answer/9858738)）。所以云存储订阅在 App 内必须用 Play 结算；App 内也**不能**通过链接、按钮或说明引导用户去网页付款，参加了替代结算或外部链接计划的地区除外。
-2. App 本身的功能是本机备份、自托管同步、存档管理，都免费，这样不涉及“付费解锁功能”。收费的只有我们提供的存储服务，计费维度和 C7 第五节一致。
+2. **已确认**：免费版只做本地备份（加上连接用户自己的服务器，见上面“理解待确认”）；我们托管的云端是**单一付费档**的订阅。没有“付费解锁 App 功能”，收费的只有存储服务，计费维度和 C7 第五节一致。单一档意味着 Play 里只建一个订阅商品，可以配月付、年付两个基础方案；国内各商店各建一个对应商品。
 3. 自托管用户不付任何钱，App 里也没有“为自托管付费”的地方，免费的核心功能和收费的服务分得很清楚，审核时容易解释。
 
 ### 8.2 流程
@@ -322,9 +345,54 @@ Cloud Pub/Sub ← 实时开发者通知（RTDN）
 | 项 | 内容 | 来源 |
 |---|---|---|
 | 个人开发者账号的测试要求 | 2023-11-13 之后创建的个人账号，申请正式发布前要先做封闭测试：**至少 12 名测试者连续选择加入 14 天** | [测试要求](https://support.google.com/googleplay/android-developer/answer/14151465) |
-| 组织账号 | 计划收费运营的话，建议用组织账号（需要 D-U-N-S 编号）。可以免掉上面的测试要求，开发者信息也更正式。**需要你决定** | 同上 |
+| 账号类型 | **已确认：个人账号**。要先完成上面的封闭测试：至少 12 名测试者连续 14 天；封闭测试期间就能测订阅（许可测试账号）。以后如需改为组织账号，需要 D-U-N-S 编号，办理最长约 28 天 | 同上 |
 | Android 开发者验证 | 2026-09-30 起，在巴西、印度尼西亚、新加坡、泰国的认证设备上，从参与计划的商店安装的应用要由已验证的开发者注册；侧载暂不受影响，2027 年起全球推行。Play Console 可以统一管理在 Play 内外分发的应用的验证；用了 Play App Signing 的应用会自动认领；一个包名可以登记多把签名密钥。所以 GitHub 版也能在 Play Console 里一并注册；如果按 6.2 让两个渠道用同一把签名密钥，管理最简单 | [开发者验证](https://developer.android.com/developer-verification)、[FAQ](https://developer.android.com/developer-verification/guides/faq)、[Play 政策截止日期](https://support.google.com/googleplay/android-developer/answer/12253906) |
 | 包名 | `com.jun9100.opensave` 和 GitHub 版保持一致，便于覆盖升级；显示名是 SaveVault。上架前建议查一下 “SaveVault” 是否和已有商标冲突 | — |
+
+---
+
+## 十一、国内商店（待办）
+
+已确认国内外同时首发：国内上华为应用市场、小米应用商店、vivo 应用商店，OPPO 软件商店、荣耀应用市场也建议一起准备。国内版用 `github` 构建变体（保留 Root、用现有的 SaveVault 密钥签名），以后接国内结算时再加 `cn` 变体。
+
+**下面多数要求来自公开的开发者文章和法规，各商店的细则要登录开发者后台才能看到，所以标了“待核实”的都要在注册开发者账号后逐项确认。**
+
+### 11.1 各商店都要的（法规层面）
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| APP 备案（工信部） | 2023 年起，在中国大陆提供服务的 App 要先做 ICP/APP 备案，商店上架时核验备案号；应用服务器在境内时，商店还会核对主办单位与开发者账号实名信息是否一致。备案主体可以是个人，但个人备案通常不适合经营性服务 | 待核实：我们托管的云端服务器放在哪里（境内需要备案；如果是“经营性互联网信息服务”，可能还需要增值电信业务许可） |
+| 网信办分发平台规定 | 《移动互联网应用程序信息服务管理规定》（2022-08-01 起施行）要求分发平台对开发者做身份核验，并按类别备案 App | 由商店执行，我们配合提交身份信息 |
+| 个人信息保护 | 《个人信息保护法》，以及工信部对 App 收集个人信息的专项整治要求：**首次启动先弹隐私政策，用户同意之前不收集任何个人信息、不初始化联网 SDK**；隐私政策列出个人信息收集清单和第三方共享清单；每个权限都要说明用途；**App 内必须能注销账户**。这几条是国内商店驳回最多的原因 | 待办：现在没有首次启动的隐私弹窗。国内版要加，并让“同意前不发任何网络请求”（取封面、云端都算）。C7 上线时要有 App 内注销 |
+| 软件著作权（软著） | 华为、小米、vivo、OPPO 普遍要求或强烈建议提交软著；软著上的软件名称要和上架名称一致，著作权人要和开发者账号主体一致；个人开发者还要提交承诺函 | 待办：以“SaveVault”名义申请软著。著作权人要和开发者账号主体一致，所以要先定国内账号是个人还是企业 |
+| 隐私政策的一致性 | 隐私政策里的开发者名称、应用名称要和后台提交的信息一致 | 跟 `docs/PRIVACY_ANDROID.md` 一起做国内版 |
+
+### 11.2 开发者主体与结算
+
+| 商店 | 个人开发者 | 应用内结算 | 状态 |
+|---|---|---|---|
+| 华为应用市场（AppGallery Connect） | 早年的开发者讨论称华为不接受个人开发者上架，现行规则不明 | HMS IAP；非游戏应用能否直接用支付宝、微信支付，要看审核指南 | 待核实：[AppGallery Connect 审核指南](https://developer.huawei.com/consumer/cn/doc/app/50104)、[应用内支付服务](https://developer.huawei.com/consumer/cn/hms/huawei-iap/) |
+| 小米应用商店（小米开放平台） | 各商店要求不统一，部分要求软著；备案、资质只能在后台人工填写 | 小米支付；非游戏应用的规则待核实 | 待核实：[小米开放平台](https://dev.mi.com/) |
+| vivo 应用商店 | 上架材料包括软著、隐私政策链接、联系人信息 | vivo 支付；非游戏应用的规则待核实 | 待核实：[vivo 开放平台](https://dev.vivo.com.cn/) |
+| OPPO / 荣耀 | 同上 | 同上 | 待核实：[OPPO 开放平台](https://open.oppomobile.com/)、[荣耀开发者服务平台](https://developer.honor.com/) |
+
+**结论与建议**：
+
+1. **收费服务大概率需要企业主体**：订阅收款、发票、软著主体一致性，以及托管云端可能要办的增值电信业务许可，都更适合企业主体。国内可以先用个人账号上架免费的本地备份功能（如果商店允许），托管云端在企业主体办好之后再上。**需要用户决定国内用个人还是企业主体**，这条和 Play 的个人账号不冲突。
+2. **结算方式**：国内非游戏类工具 App 通常可以接入支付宝、微信支付，不强制使用商店结算；但各商店规则不同，而且在变。已确认“国内走各商店的结算”，所以按每家的 IAP 各接一遍，服务端统一走 C7 的计费接口（`PUT /ops/api/accounts/{id}/plan`），每家一个校验适配器，和 Play 的 RTDN 并列。改动量：每家 L，服务端 XL。
+3. **Root**：国内版保留 Root。国内商店对“需要 Root”的应用也有审核风险，个别商店可能要求在说明里标注，或者直接不收；被拒时，该商店改用不含 Root 的 `play` 变体代码路径（不带 Google 结算）。
+4. **titledb 和商标**：国内商店对“模拟器”“Switch”等字样同样敏感。商店名称和截图的做法同 2.3、9.2。
+
+### 11.3 国内版待办清单
+
+| # | 事项 | 改动量 | 需要决定 |
+|---|---|---|---|
+| C1 | 决定国内开发者主体（个人 / 企业），据此申请软著、办 APP 备案 | 流程（软著一般 1–2 个月） | **是** |
+| C2 | 首次启动隐私政策弹窗：同意前不发任何网络请求；拒绝时只能浏览本地功能或退出 | M | — |
+| C3 | 国内版隐私政策：个人信息收集清单、第三方共享清单（Steam、任天堂 CDN 等封面来源）、权限用途、注销方式 | S | — |
+| C4 | 托管云端在境内部署时：ICP 备案，评估是否需要增值电信业务许可（请律师确认） | 流程 | **是** |
+| C5 | 各商店 IAP 接入加服务端校验（等 C7） | 每家 L，服务端 XL | — |
+| C6 | 注册各商店开发者账号后，逐项核实 11.2 里标“待核实”的条目，并回填本文 | S | — |
 
 ---
 
@@ -335,18 +403,18 @@ Cloud Pub/Sub ← 实时开发者通知（RTDN）
 | # | 事项 | 章节 | 改动量 | 需要决定 |
 |---|---|---|---|---|
 | 1 | targetSdk/compileSdk 升到 36：AGP ≥ 8.9.1，Gradle ≥ 8.11.1，按 Android 16 行为变更回归 | 7.1 | M | — |
-| 2 | 网络安全配置删掉 `192.168.12.4`，确定 http 策略（推荐：允许 http，并醒目提示“未加密”） | 3 第 8 行 | S | **是** |
+| 2 | 网络安全配置删掉 `192.168.12.4`，允许 http，并醒目提示“未加密”（开工中） | 3 第 8 行 | S | 已定 |
 | 3 | 隐私政策：新写一份覆盖 Android 的（上传什么、发给谁、封面请求、保留和删除），挂到网页上，App 内加入口 | 4、1.3 | S + S | — |
-| 4 | App 内“开源许可”页：SaveVault 的 MIT 声明、104 个依赖、Apache-2.0 全文，构建时生成，不依赖 GMS | 1.1–1.3 | M | 署名行 |
-| 5 | 去掉 tinfoil.media 封面来源 | 2.2 | S | — |
-| 6 | titledb 和 eShop 封面：Play 版不内置（flavor），无 Root 时显示 TitleID 并允许改名 | 2.1、2.2 | S–M | **是** |
-| 7 | Root：决定 Play 版是否保留；保留就加单独的披露和同意页 | 3 第 9 行 | S–M | **是** |
+| 4 | App 内“开源许可”页：SaveVault 的 MIT 声明（署名用占位符）、104 个依赖、Apache-2.0 全文，构建时生成，不依赖 GMS | 1.1–1.3 | M | 已定（占位） |
+| 5 | 去掉 tinfoil.media 封面来源（所有版本，开工中） | 2.2 | S | — |
+| 6 | titledb 和 eShop 封面：所有版本保留；商店截图里不展示它们；“开源许可”页注明数据来源 | 2.1、2.2 | S | 已定 |
+| 7 | Root：`play` 变体去掉 Root（界面和代码路径都不可达），`github` 变体保留 | 3 第 9 行、6.4 | S–M | 已定 |
 | 8 | 前台服务声明（dataSync）：文案加录屏；实测 6 小时上限的超时处理 | 3 第 2 行 | S + S–M | — |
-| 9 | 签名：把现有密钥作为应用签名密钥上传（PEPK），新建上传密钥 | 6.2 | S | **是** |
-| 10 | AAB 构建：`bundleRelease`，必要时加 `github`/`play` flavor 和 versionCode 规则 | 6.3、6.4 | M | 跟 6、7 的决定走 |
-| 11 | 数据安全表单按第四节填写，和隐私政策逐项一致 | 4 | S | 跟 2 的决定走 |
+| 9 | 签名：Play 用 Google 生成的应用签名密钥，新建上传密钥；写好“两个渠道不能互相覆盖安装”的提示文案 | 6.2 | S | 已定 |
+| 10 | AAB 构建：`github`/`play` 变体，`bundlePlayRelease` 出 AAB，两个变体共用 versionCode 序列 | 6.3、6.4 | M | 已定 |
+| 11 | 数据安全表单按第四节填写，和隐私政策逐项一致 | 4 | S | 已定 |
 | 12 | 商店素材：标题和图标不含商标，截图用演示数据，写无关联声明，分类选“工具” | 2.3、9.2 | S | — |
-| 13 | 开发者账号：个人账号要先完成 12 人 × 14 天的封闭测试；或者改用组织账号 | 10 | 流程 | **是**（含首发市场） |
+| 13 | 个人开发者账号：先完成 12 人 × 14 天的封闭测试 | 10 | 流程 | 已定 |
 
 ### 上架后尽快
 
@@ -375,12 +443,11 @@ Cloud Pub/Sub ← 实时开发者通知（RTDN）
 | 24 | 开启 R8 缩包 | 6.4 | M |
 | 25 | PC 端：破解目录预设不默认开启，README 里不列名字（由 PC 会话决定） | 9.1 | S |
 
-### 需要你决定的事
+### 决定状态
 
-1. **首发市场**：影响隐私合规（GDPR、国内个保法）、C7 登录方式、开发者验证，以及是否需要备案。另外，Play 在中国大陆不可用；国内用户需要另找渠道。
-2. **Play 版是否保留 Root 功能**：推荐保留，加披露和同意页；被拒再关掉。
-3. **签名方案**：推荐把现有密钥上传作为应用签名密钥，让 Play 版和 GitHub 版签名一致。
-4. **titledb 的处理**：推荐 Play 版不内置，GitHub 版保留；长期改由 C5 提供。
-5. **http 自托管策略**：推荐允许，并提示“未加密”。
-6. **开发者账号类型**：个人（需要封闭测试）还是组织。
-7. **开源署名**：SaveVault 自己的版权行怎么写。
+- **已确认**的 8 项见文首“已确认的决定”。
+- **还需要确认**：
+  1. 免费版是否包括连接自托管服务器：本文按“包括”写，见文首“理解待确认”；
+  2. 国内开发者主体用个人还是企业（11.3 C1）；
+  3. 托管云端是否部署在境内，以及相应的备案和许可（11.3 C4）；
+  4. 发布前替换开源许可页里的版权占位符。
