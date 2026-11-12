@@ -73,8 +73,23 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      # ubuntu-latest 自带 Android SDK(ci.yml 的 android-unit 就是直接用的它);
+      # 不用 android-actions/setup-android,因为它会去 sdkmanager 里装早已下线的
+      # 老 `tools` 包,新版 runner 上必然 Failed to find package 'tools' 直接挂掉。
+      # 这里只补本工程真正需要的 platform + build-tools,已存在时是空操作。
       - name: Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER=$(ls "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1)
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::runner 上没有 cmdline-tools/sdkmanager,无法补装 SDK"
+            exit 1
+          fi
+          echo "sdkmanager=$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       # ---- debug:任何分支/PR,产出可直接安装的 APK ----
       - name: Assemble debug APK
@@ -134,7 +149,7 @@ jobs:
           APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
           echo "APK=$APK"
           if ! unzip -l "$APK" >/dev/null 2>&1; then echo "::error::APK 不可读"; exit 1; fi
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          APKSIGNER=$(ls "${SDK_ROOT:?}"/build-tools/*/apksigner | sort -V | tail -1)
           "$APKSIGNER" verify --print-certs "$APK"
           # 与已有资产命名保持一致:SaveVault-Android-<ver>.apk + SHA256SUMS-android.txt
           mkdir -p dist
