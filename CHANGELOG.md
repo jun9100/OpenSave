@@ -8,13 +8,14 @@ All notable changes to OpenSave are documented here. This project adheres to
 ### 新增
 
 - **免 Root 读取 `Android/data`。** 授予「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`）后，Eden、Yuzu、Winlator 一类模拟器与容器的存档可以直接扫描、备份、恢复，不需要 root 也不需要 `su`。系统从 Android 11 起不允许在文件选择器里选中 `Android/data` 子树，这是唯一一条免 root 的合法通道。有 Root 时仍然优先走 Root（能读其它应用的私有目录）；两条通道写出的快照格式一致，可以互相恢复。
-- **云端优先下发：本机没有存档也能从云端补齐。** 备份一直以"本机已有存档"为锚点——新设备、或者刚往模拟器里加了游戏还没玩过，本机一个字节都没有，云端有版本也拉不下来。现在多了一条反向路径：拿云端 `switch-<TITLE_ID>` / `title:<TITLE_ID>` / `psp:<GAME_ID>` 这类跨设备稳定的 id（云端按身份分组后游戏键会变成 `switch/title:…`、`emulator-ppsspp/psp:…`，此时下载走该游戏下真正带 head 的作用域成员），按本机 Eden `nand/user/save/0000000000000000/<TITLE_ID>`、PPSSPP `PSP/SAVEDATA/<GAME_ID>` 推目标路径，目标目录不存在就建出来再写。入口是「设置 · 高级」里的「从云端补齐本机缺失的存档」；开启「自动化 · 自动备份」后，扫描结束会自动跑一次（每个进程一次）。
+- **云端优先下发：本机没有存档也能从云端补齐。** 备份一直以"本机已有存档"为锚点——新设备、或者刚往模拟器里加了游戏还没玩过，本机一个字节都没有，云端有版本也拉不下来。现在多了一条反向路径：拿云端 `switch-<TITLE_ID>` / `title:<TITLE_ID>` / `psp:<GAME_ID>` 这类跨设备稳定的 id（云端按身份分组后游戏键会变成 `switch/title:…`、`emulator-ppsspp/psp:…`，此时下载走该游戏下真正带 head 的作用域成员），按本机 Eden `nand/user/save/0000000000000000/<TITLE_ID>`、PPSSPP `PSP/SAVEDATA/<GAME_ID>` 推目标路径，目标目录不存在就建出来再写。入口是「设置 · 高级」里的「从云端补齐本机缺失的存档」；开启「自动化 · 自动备份」后，扫描结束会自动跑一次（每个进程一次）。**下发前先确认本机真的装了这个游戏**：Eden 从 `config/config.ini` 的 `Paths\gamedirs` 找游戏目录、按文件名里的 TitleID 核对，文件名不带 id 的镜像（`SUPER MARIO ODYSSEY [1.3.0].xci`）靠 `log/eden_log.txt` 兜住；PPSSPP 认 `iso`/`cso`/`chd`/`pbp` 文件名与 `SYSTEM/ppsspp.ini` 的最近游玩列表。拿不出证据的游戏一律跳过并在结果里报数量——模拟器按目录扫存档，凭空建一个目录等于替它造出一个没装过的游戏。
 - **`AllFilesStorage` / `RootStorage` 支持新建恢复目标。** `restoreGameLocations(..., createMissing = true)` 允许目标存档目录原本不存在：没有旧内容可丢，因此不写安全快照；写入失败时把新建的空目录清掉。
 - **补上 Eden Nightly 的预设来源。** `dev.eden.eden_emulator.nightly` 是独立包名的测试分支，存档布局与稳定版一致，现在也会出现在「来源」页。
 - **「来源」页多了一个授权入口。** 未检测到 Root 时显示「开启『所有文件访问』」，点进系统设置开关；授权后返回应用会自动重算可用性，并立刻重扫一次，`Android/data` 里的内置来源从「需要 Root」移到「可用」。
 
 ### 变更
 
+- **云端下发只补本机装过的游戏。** 之前它把云端有 head 的每一款都写进模拟器的存档根，于是没装过的游戏也会在 Eden 里冒出条目（Broforce、IGS 这类）。现在先核对游戏文件与日志，确认不了就不下发，并在提示里写明跳过了几个。
 - **路径型来源的存取后端可选。** 新增 `PathStorage` 接口与 `PathAccess` 路由：`su` 可用时走原来的 `RootStorage`，否则走新增的 `AllFilesStorage`。`RootStorage` 自身行为未变，`SourceSelection.Root` 的来源 id 与历史记录不受影响。
 - **「需要 Root」分组不再拦住免 Root 设备。** 已授予「所有文件访问」时，路径型来源不再折叠进「需要 Root」，可以照常勾选、扫描。
 

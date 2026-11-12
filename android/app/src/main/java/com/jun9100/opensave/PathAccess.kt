@@ -82,6 +82,9 @@ class PathAccess(context: Context) : PathStorage {
         maxBytes: Int,
     ): ByteArray? = runCatching { backend().readSmallFile(directory, fileName, maxBytes) }.getOrNull()
 
+    override suspend fun listNames(rawPath: String, maxDepth: Int, limit: Int): Result<List<String>> =
+        runCatching { backend().listNames(rawPath, maxDepth, limit).getOrThrow() }
+
     override suspend fun saveSignatures(
         rawRootPath: String,
         relativePaths: List<String>,

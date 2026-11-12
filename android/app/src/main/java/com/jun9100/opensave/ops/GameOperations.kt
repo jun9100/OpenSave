@@ -167,6 +167,19 @@ internal class GameOperations(
     suspend fun pathExists(path: String): Boolean =
         rootStorage.pathExists(path).getOrElse { false }
 
+    /**
+     * 读一份不超过 [maxBytes] 的文本（模拟器的配置、日志），读不到时给 null。
+     *
+     * 云端下发要靠这些文件判断"本机装没装这个游戏"：Eden 的 `config/config.ini`
+     * 告诉你游戏目录在哪，`log/eden_log.txt` 记着跑过的标题 id。
+     */
+    suspend fun readText(directory: String, fileName: String, maxBytes: Int): String? =
+        rootStorage.readSmallFile(directory, fileName, maxBytes)?.toString(Charsets.UTF_8)
+
+    /** 目录里的文件名与目录名，用来按文件名核对标题 id；读不到时给空列表。 */
+    suspend fun listNames(path: String, maxDepth: Int, limit: Int): List<String> =
+        rootStorage.listNames(path, maxDepth, limit).getOrElse { emptyList() }
+
     fun canWrite(source: SourceSelection): Boolean = when (source) {
         is SourceSelection.Saf -> storage.hasWritePermission(source.uri)
         is SourceSelection.Root -> true

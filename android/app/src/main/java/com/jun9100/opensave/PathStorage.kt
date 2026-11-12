@@ -33,6 +33,14 @@ interface PathStorage {
     /** [directory] 下 [fileName] 的字节；缺失或超过 [maxBytes] 时为 null。 */
     suspend fun readSmallFile(directory: String, fileName: String, maxBytes: Int): ByteArray?
 
+    /**
+     * [rawPath] 之下最多 [maxDepth] 层里的文件名与目录名（不含路径），最多 [limit] 条。
+     *
+     * 只用来判断"模拟器认不认这个游戏"——云端下发前要拿文件名核对标题 id，见
+     * [InstallEvidence]。读不到就返回空列表：没有证据时下发会跳过，而不是猜。
+     */
+    suspend fun listNames(rawPath: String, maxDepth: Int, limit: Int): Result<List<String>>
+
     /** 每个相对路径的 [SaveSignature]；位置不存在时为 null。 */
     suspend fun saveSignatures(
         rawRootPath: String,

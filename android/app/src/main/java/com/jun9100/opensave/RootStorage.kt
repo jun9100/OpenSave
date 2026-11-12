@@ -132,6 +132,29 @@ class RootStorage(private val context: Context) : PathStorage {
         }.getOrNull()
     }
 
+    /**
+     * 列举目录里的名字。`find … | head -n` 让 toybox 在取够条数后自己断掉管道，
+     * 再套一层 `timeout`：游戏目录动辄几十 GB，真遇上符号链接环或挂载点卡死时，
+     * 这条命令不能把 App 的一个线程永远钉在这里。
+     */
+    override suspend fun listNames(rawPath: String, maxDepth: Int, limit: Int): Result<List<String>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val path = RootPathPolicy.canonicalizeForScan(rawPath)
+                checkRootAccess().getOrThrow()
+                val quoted = RootCommand.shellQuote(path)
+                val result = RootCommand.execute(
+                    "timeout $LIST_TIMEOUT find $quoted -mindepth 1 -maxdepth $maxDepth -print 2>/dev/null | head -n $limit",
+                )
+                result.output.lineSequence()
+                    .asSequence()
+                    .filter { it.isNotBlank() }
+                    .map { it.substringAfterLast('/') }
+                    .filter { it.isNotBlank() }
+                    .toList()
+            }
+        }
+
         override suspend fun saveSignatures(rawRootPath: String, relativePaths: List<String>): Result<Map<String, SaveSignature?>> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -402,5 +425,7 @@ class RootStorage(private val context: Context) : PathStorage {
         const val WORKSPACE_DIRECTORY = "source-workspace"
         const val MAX_SCAN_DIRECTORIES = 50_000
         const val FIND_STATUS_MARKER = "__OPEN_SAVE_FIND_STATUS__="
+        /** 列举游戏目录时的墙钟上限（秒）。 */
+        const val LIST_TIMEOUT = 20
     }
 }
