@@ -26,6 +26,7 @@ import com.jun9100.opensave.ops.KeepLocal
 import com.jun9100.opensave.ops.ready
 import com.jun9100.opensave.ui.library.OtherDeviceText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -207,6 +208,8 @@ data class SourceUiState(
     val autoBackupEnabled: Boolean = false,
     /** Other devices' save locations per libraryKey; transient, never persisted. */
     val otherDeviceSaves: Map<String, OtherDeviceSaves> = emptyMap(),
+    /** 云端下发（云端有、本机没有存档的游戏）的进度；transient。 */
+    val cloudPull: CloudPullStatus = CloudPullStatus.Idle,
     /** Cloud versions the server pins per libraryKey, by archive name; transient (C6). */
     val lockedArchives: Map<String, Set<String>> = emptyMap(),
     /** Recorded cloud stops by `{type}/{gameId}` ([ScopeTombstoneStore]); read-only mirror. */
@@ -316,6 +319,9 @@ class SourceViewModel(
     private val autoBackupScheduler = AutoBackupScheduler(application)
     private val autoBackupExclusions = AutoBackupExclusions(application)
     private val operations = GameOperations(application, storage, rootStorage)
+
+    /** 本轮进程是否已经自动跑过云端下发；防止下发后的重新扫描再触发一轮。 */
+    private var cloudPullRequested = false
     private val reportStore = BatchReportStore.forApp(application)
     private val cloudVerdictStore = CloudVerdictStore(application)
     private val scopeTombstoneStore = ScopeTombstoneStore(application)
@@ -1397,6 +1403,7 @@ class SourceViewModel(
             readSaveSignatures(games)
             copyPspIcons(scans)
             if (rootAvailable && rootAllowed) learnSwitchTitles()
+            maybePullCloudGames()
         }
     }
 
@@ -1898,6 +1905,137 @@ class SourceViewModel(
             }.onFailure { error ->
                 state.value = state.value.finished(OpenSavePage.SETTINGS, error = "列举云端快照失败：${error.message}")
             }
+        }
+    }
+
+    /**
+     * 云端下发：云端有、本机这个存档根下还没有的游戏，直接把云端的 head 拉下来，
+     * 目标目录不存在就建出来。新设备、或者刚加进模拟器还没玩过的游戏没有扫描条目，
+     * 靠这条路径补齐——正常备份/恢复都以"本机已有存档"为锚点，够不着它们。
+     */
+    fun pullCloudGames() {
+        if (state.value.busy) return
+        val config = savedGameSaveConfig()
+        if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) {
+            updateState {
+                copy(messages = messages.withError(OpenSavePage.SETTINGS, "请先填写并保存 SaveVault 云端地址和同步密钥"))
+            }
+            return
+        }
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在读取云端游戏")
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val client = gameSaveClient(config)
+                    val clouds = client.getGames().getOrThrow().orEmpty().mapNotNull { game ->
+                        // 真正能下载的是一个 member 的作用域；游戏键只用来读 title/psp 身份。
+                        val member = game.members.firstOrNull { !it.retired && it.head != null }
+                            ?: return@mapNotNull null
+                        val type = runCatching { GameSaveTypes.fromId(member.type) }.getOrNull()
+                            ?: return@mapNotNull null
+                        if (member.gameId.isBlank()) return@mapNotNull null
+                        CloudPullGame(
+                            scopeType = type,
+                            scopeGameId = member.gameId,
+                            identityId = game.key.substringAfter('/', game.key),
+                            displayName = game.name,
+                        )
+                    }
+                    val roots = cloudPullRoots()
+                    // 路径是否存在要先同步问完：CloudPull.candidates 的判定函数不允许挂起。
+                    val existing = mutableSetOf<String>()
+                    clouds.forEach { game ->
+                        val id = CloudPull.titleIdOf(game.identityId)
+                            ?: CloudPull.pspIdOf(game.identityId)
+                            ?: return@forEach
+                        roots.forEach { root ->
+                            val relative = CloudPull.relativePath(root.family, id) ?: return@forEach
+                            if (operations.pathExists("${root.path}/$relative")) {
+                                existing += "${root.path}\u0000$relative"
+                            }
+                        }
+                    }
+                    val candidates = CloudPull.candidates(roots, clouds) { root, relative ->
+                        "${root}\u0000$relative" in existing
+                    }
+                    var restored = 0
+                    val failures = mutableListOf<String>()
+                    candidates.forEachIndexed { index, candidate ->
+                        state.value = state.value.started(
+                            OpenSavePage.SETTINGS,
+                            "正在下发 ${candidate.game.displayName}（${index + 1}/${candidates.size}）",
+                        )
+                        val scope = client.getScope(candidate.game.scopeType, candidate.game.scopeGameId).getOrThrow()
+                        val head = scope.head ?: return@forEachIndexed
+                        val member = GameSaveCloudGameMember(
+                            type = candidate.game.scopeType.id,
+                            gameId = candidate.game.scopeGameId,
+                            link = "",
+                            name = candidate.game.displayName,
+                            head = head,
+                            snapshotCount = scope.snapshots.size,
+                            conflictCount = scope.conflicts.size,
+                        )
+                        val archive = runCatching { operations.downloadOtherDeviceHead(member, config) }
+                            .onFailure { failures += "${candidate.game.displayName}：${it.message}" }
+                            .getOrNull() ?: return@forEachIndexed
+                        operations.restoreCloudPullLocked(candidate, archive)
+                            .onSuccess { restored += 1 }
+                            .onFailure { failures += "${candidate.game.displayName}：${it.message}" }
+                    }
+                    Triple(candidates.size, restored, failures)
+                }
+            }
+            result.onSuccess { (total, restored, failures) ->
+                state.value = state.value
+                    .finished(
+                        OpenSavePage.SETTINGS,
+                        action = when {
+                            total == 0 -> "云端没有需要下发到本机的存档"
+                            failures.isEmpty() -> "已从云端下发 $restored 个存档"
+                            else -> "已下发 $restored/$total 个存档：" +
+                                failures.take(3).joinToString("；")
+                        },
+                    )
+                    .copy(cloudPull = CloudPullStatus.Finished(restored, failures.size, ""))
+                if (restored > 0) scanSource()
+            }.onFailure { error ->
+                state.value = state.value.finished(
+                    OpenSavePage.SETTINGS,
+                    error = "云端下发失败：${error.message}",
+                )
+            }
+        }
+    }
+
+    /**
+     * 扫完自动补一次：新设备第一次配置好云端、或者刚往模拟器里加了游戏，本机没有
+     * 存档而云端有时，这次扫描之后就把它们拉下来。开启「自动化 · 自动备份」才算
+     * 启用；每个进程只跑一次，避免下发后的重新扫描再来一轮。
+     */
+    private fun maybePullCloudGames() {
+        if (cloudPullRequested) return
+        if (!state.value.autoBackupEnabled) return
+        if (state.value.busy) return
+        val config = savedGameSaveConfig()
+        if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) return
+        cloudPullRequested = true
+        pullCloudGames()
+    }
+
+    /** 本机所有可用的模拟器存档根：已扫描的 Root 来源 + 真实存在的预设目录。 */
+    private suspend fun cloudPullRoots(): List<LocalSaveRoot> {
+        val presetLabels = RootSourcePresets.all.associate { it.path to it.label }
+        val scanned = state.value.sourceScans.mapNotNull { it.source as? SourceSelection.Root }
+            .map { it.path }
+        return withContext(Dispatchers.IO) {
+            (scanned + RootSourcePresets.all.map { it.path })
+                .distinct()
+                .mapNotNull { path ->
+                    val family = CloudPull.familyOf(path) ?: return@mapNotNull null
+                    if (!operations.pathExists(path)) return@mapNotNull null
+                    LocalSaveRoot(presetLabels[path] ?: path, path, family)
+                }
         }
     }
 

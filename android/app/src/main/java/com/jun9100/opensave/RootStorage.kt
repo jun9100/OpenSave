@@ -199,12 +199,22 @@ class RootStorage(private val context: Context) : PathStorage {
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,
         extractedRoot: File,
+        createMissing: Boolean,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val root = RootPathPolicy.canonicalizeForScan(rawRootPath)
             checkRootAccess().getOrThrow()
             require(locations.isNotEmpty()) { "游戏快照没有存档位置" }
             val rootPrefix = root.trimEnd('/') + "/"
+            if (createMissing) {
+                // 云端下发：目标存档目录可能还不存在，先按相对路径建出来。
+                locations.forEach { location ->
+                    val relative = GameSnapshotManifest.safeRelativePath(location.relativePath)
+                    val target = File(root, relative).canonicalFile
+                    require(target.path.startsWith(rootPrefix)) { "恢复目标超出已扫描目录" }
+                    RootCommand.requireSuccess("mkdir -p -- ${RootCommand.shellQuote(target.path)}")
+                }
+            }
             val token = UUID.randomUUID().toString()
             val operations = locations.mapIndexed { index, location ->
                 val relative = GameSnapshotManifest.safeRelativePath(location.relativePath)

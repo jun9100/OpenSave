@@ -45,10 +45,15 @@ interface PathStorage {
         destinationRoot: File,
     ): Result<Unit>
 
+    /**
+     * [createMissing] 允许目标存档目录原本不存在——云端下发到一台从未存过档的设备时，
+     * `nand/user/save/<uid>/<TITLE_ID>` 和 `PSP/SAVEDATA/<GAME_ID>` 都还没有被模拟器建出来。
+     */
     suspend fun restoreGameLocations(
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,
         extractedRoot: File,
+        createMissing: Boolean = false,
     ): Result<Unit>
 
     suspend fun importPath(rawPath: String): Result<CopyReport>

@@ -100,8 +100,9 @@ class PathAccess(context: Context) : PathStorage {
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,
         extractedRoot: File,
+        createMissing: Boolean,
     ): Result<Unit> = runCatching {
-        backend().restoreGameLocations(rawRootPath, locations, extractedRoot).getOrThrow()
+        backend().restoreGameLocations(rawRootPath, locations, extractedRoot, createMissing).getOrThrow()
     }
 
     override suspend fun importPath(rawPath: String): Result<CopyReport> =

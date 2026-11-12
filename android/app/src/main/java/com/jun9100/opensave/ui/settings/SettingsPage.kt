@@ -403,4 +403,12 @@ private fun WholeSourceSnapshotSection(state: SourceUiState, viewModel: SourceVi
         Icon(Icons.Outlined.Refresh, contentDescription = null)
         Text("列举云端整来源快照", modifier = Modifier.padding(start = 8.dp))
     }
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(
+        onClick = whenIdle(state.busy, viewModel::pullCloudGames),
+        modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
+    ) {
+        Icon(Icons.Outlined.CloudDownload, contentDescription = null)
+        Text("从云端补齐本机缺失的存档", modifier = Modifier.padding(start = 8.dp))
+    }
 }

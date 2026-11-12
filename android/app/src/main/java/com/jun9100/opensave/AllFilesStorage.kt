@@ -206,6 +206,7 @@ class AllFilesStorage(
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,
         extractedRoot: File,
+        createMissing: Boolean,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             checkAllFilesAccess().getOrThrow()
@@ -218,7 +219,8 @@ class AllFilesStorage(
 
             val operations = locations.mapIndexed { index, location ->
                 val target = AllFilesPathPolicy.requireInside(root, location.relativePath)
-                require(target.isDirectory) { "恢复目标不存在：${target.path}" }
+                // 云端下发到一台还没有这款游戏存档的设备时，目标目录由这里建出来。
+                require(createMissing || target.isDirectory) { "恢复目标不存在：${target.path}" }
                 val archivePath = PathPolicy.requireSafeDocumentName(location.archivePath)
                 val staged = File(extractedRoot, archivePath).canonicalFile
                 require(staged.path.startsWith(extractedPrefix) && staged.isDirectory) {
@@ -251,6 +253,8 @@ class AllFilesStorage(
                     copyTree(operation.staged, operation.prepared)
                 }
                 for (operation in operations) {
+                    // 新建的目标目录没有旧内容，跳过暂存，恢复失败时直接把空目录删掉。
+                    if (!operation.target.exists()) continue
                     if (!operation.target.renameTo(operation.backup)) {
                         error("无法暂存原存档：${operation.target.path}")
                     }
