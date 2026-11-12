@@ -192,8 +192,17 @@ class ScanSnapshotStore(private val directory: File) {
 
     private val file: File get() = File(directory, "snapshot.json")
 
+    companion object {
+        /** 正常快照几 KB；超过这个数说明文件不对，直接当没有。 */
+        const val MAX_SNAPSHOT_BYTES = 4L shl 20
+    }
+
     fun load(): LibraryScanSnapshot? {
-        val text = runCatching { if (file.isFile) file.readText() else null }.getOrNull() ?: return null
+        // 这行在主线程上跑（启动就要画），所以先看大小：几十 KB 是一次毫秒级读，
+        // 但一份被写坏/塞满的大文件不能把启动拖住。
+        val text = runCatching {
+            if (!file.isFile || file.length() > MAX_SNAPSHOT_BYTES) null else file.readText()
+        }.getOrNull() ?: return null
         return ScanSnapshotCodec.decode(text)
     }
 
