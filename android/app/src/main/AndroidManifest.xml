@@ -3,6 +3,22 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <!--
+      免 root 读取 /storage/emulated/0/Android/data/<pkg>：Eden、Yuzu、Winlator
+      一类模拟器与容器的存档都在那里，而 SAF 从 Android 11 起禁止用户选中该子树。
+      持有时 FUSE 不再做 scoped-storage 过滤，与 MT 管理器同一条通道。
+      未授予时不影响任何其他功能，路径型来源会显示"需要 Root"。
+    -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <!-- API 30 以下仍是旧存储模型，靠这两个运行时权限读公共目录。 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <!--
       Network batches (上传待传, 检查云端更新, 安全恢复云端较新) run as an
       expedited WorkManager job in a dataSync foreground service, so a
       long upload is not cut off at the background time limit. Without the

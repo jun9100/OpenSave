@@ -3,6 +3,7 @@ package com.jun9100.opensave.ops
 import android.content.Context
 import com.jun9100.opensave.AutoBackupFingerprint
 import com.jun9100.opensave.AutoBackupPolicy
+import com.jun9100.opensave.CloudPullCandidate
 import com.jun9100.opensave.ContentHash
 import com.jun9100.opensave.CrossDeviceArchiveFormat
 import com.jun9100.opensave.CrossDevicePlan
@@ -30,10 +31,10 @@ import com.jun9100.opensave.GameSaveScopesUnsupportedException
 import com.jun9100.opensave.GameSnapshotLocation
 import com.jun9100.opensave.GameSnapshotManifest
 import com.jun9100.opensave.Hashing
+import com.jun9100.opensave.PathAccess
 import com.jun9100.opensave.PathPolicy
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.RestoreRequest
-import com.jun9100.opensave.RootStorage
 import com.jun9100.opensave.SafStorage
 import com.jun9100.opensave.SaveSignatureReader
 import com.jun9100.opensave.ScopeTombstoneStore
@@ -126,7 +127,7 @@ internal sealed interface KeepLocal {
 internal class GameOperations(
     context: Context,
     private val storage: SafStorage = SafStorage(context.applicationContext),
-    private val rootStorage: RootStorage = RootStorage(context.applicationContext),
+    private val rootStorage: PathAccess = PathAccess(context.applicationContext),
 ) {
     private val app = context.applicationContext
     private val snapshotEngine = SnapshotEngine()
@@ -161,6 +162,10 @@ internal class GameOperations(
         }
         return cached
     }
+
+    /** 路径是否存在；云端下发用它判断本机是不是已经有这款游戏的存档目录。 */
+    suspend fun pathExists(path: String): Boolean =
+        rootStorage.pathExists(path).getOrElse { false }
 
     fun canWrite(source: SourceSelection): Boolean = when (source) {
         is SourceSelection.Saf -> storage.hasWritePermission(source.uri)
@@ -761,6 +766,66 @@ internal class GameOperations(
                 }.getOrThrow()
                 // The restored version is only a content source. The next local
                 // backup publishes it normally as a child of this device's head.
+            }
+        } finally {
+            workingRoot.deleteRecursively()
+        }
+    }
+
+    /**
+     * 云端优先下发：把云端的 head 归档写进本机还不存在的存档目录。
+     *
+     * 与 [restoreOtherDeviceLocked] 的区别是本机既没有这款游戏的扫描结果，也没有
+     * 目标目录——`nand/user/save/<uid>/<TITLE_ID>`、`PSP/SAVEDATA/<GAME_ID>` 都要
+     * 由存储后端的 `createMissing` 建出来，因此没有"恢复前安全快照"这一步：
+     * 没有旧内容可以丢。
+     *
+     * 恢复下来的版本只是内容来源；下一次正常备份会把它作为本设备的新版本发布。
+     */
+    suspend fun restoreCloudPullLocked(
+        candidate: CloudPullCandidate,
+        archive: File,
+    ): Result<Unit> = runCatching {
+        require(archive.isFile) { "云端存档文件不存在" }
+        val workingRoot = File(app.filesDir, ".cloud-pull-${UUID.randomUUID()}")
+        val extractedRoot = File(workingRoot, "archive")
+        val stagedRoot = File(workingRoot, "staged")
+        require(workingRoot.mkdirs()) { "无法创建云端下发暂存目录" }
+        try {
+            snapshotEngine.restoreSnapshot(archive, extractedRoot).getOrThrow()
+            val extractedArchive = CrossDeviceRestorePolicy.readArchive(extractedRoot)
+            require(extractedArchive.parts.size == 1) { "云端存档包含多个位置，暂不支持自动下发" }
+
+            // PC 端上传的归档是"解包根即内容"，先把它挪开，避免 rename 到自己里面。
+            val contentRoot = if (extractedArchive.format == CrossDeviceArchiveFormat.PC) {
+                val portable = File(workingRoot, "archive-content")
+                require(extractedRoot.renameTo(portable)) { "无法准备云端存档内容" }
+                portable
+            } else {
+                extractedRoot
+            }
+            val part = extractedArchive.parts.single()
+            val sourceFolder = if (part.archivePath.isEmpty()) contentRoot else File(contentRoot, part.archivePath)
+            require(sourceFolder.isDirectory) { "云端存档不完整" }
+            require(stagedRoot.mkdirs()) { "无法创建云端下发暂存目录" }
+            require(sourceFolder.renameTo(File(stagedRoot, "location-0000"))) {
+                "无法准备云端存档内容"
+            }
+
+            val location = GameSnapshotLocation(
+                kind = candidate.kind,
+                relativePath = GameSnapshotManifest.safeRelativePath(candidate.relativePath),
+                archivePath = "location-0000",
+                candidate = false,
+            )
+            val rootSource = SourceSelection.Root(candidate.root.path)
+            withContext(NonCancellable) {
+                rootStorage.restoreGameLocations(
+                    rootSource.path,
+                    listOf(location),
+                    stagedRoot,
+                    createMissing = true,
+                ).getOrThrow()
             }
         } finally {
             workingRoot.deleteRecursively()

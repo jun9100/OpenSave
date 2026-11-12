@@ -11,6 +11,7 @@ internal fun sourceAccessLabel(access: SourceAccessStatus): String = when (acces
     SourceAccessCapability.APP -> if (access.writable) "应用可访问 · 可读写" else "应用可访问 · 只读"
     SourceAccessCapability.SAF -> if (access.writable) "SAF 已授权 · 可读写" else "SAF 已授权 · 只读，可备份"
     SourceAccessCapability.ROOT -> "仅 Root 可访问 · 可读写"
+    SourceAccessCapability.ALL_FILES -> "「所有文件访问」已开启 · 可读写"
     SourceAccessCapability.UNAVAILABLE -> buildString {
         append("不可访问 · ")
         append(
@@ -18,6 +19,7 @@ internal fun sourceAccessLabel(access: SourceAccessStatus): String = when (acces
                 SourceAccessCapability.APP -> "应用访问"
                 SourceAccessCapability.SAF -> "需要 SAF 授权"
                 SourceAccessCapability.ROOT -> "需要 Root"
+                SourceAccessCapability.ALL_FILES -> "需要「所有文件访问」"
                 SourceAccessCapability.UNAVAILABLE -> "来源检查"
             },
         )

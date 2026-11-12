@@ -24,8 +24,9 @@ android {
         applicationId = "com.jun9100.opensave"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "0.6.0"
+        // CI 从 tag 传入（-PversionCode / -PversionName）；本地不传时用下面的默认值。
+        versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 24
+        versionName = providers.gradleProperty("versionName").orNull ?: "0.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -47,6 +47,17 @@ object RootSourcePresets {
         RootSourcePreset("Eden Switch · 私有目录", "/data/user/0/dev.eden.eden_emulator/files", packageName = "dev.eden.eden_emulator"),
         RootSourcePreset("Eden Switch · Android/data", "/storage/emulated/0/Android/data/dev.eden.eden_emulator/files", packageName = "dev.eden.eden_emulator"),
         RootSourcePreset("Eden Switch · 公共目录 eden", "/storage/emulated/0/eden"),
+        // Eden Nightly 是独立包名的测试分支，存档布局与稳定版一致。
+        RootSourcePreset(
+            "Eden Nightly · 私有目录",
+            "/data/user/0/dev.eden.eden_emulator.nightly/files",
+            packageName = "dev.eden.eden_emulator.nightly",
+        ),
+        RootSourcePreset(
+            "Eden Nightly · Android/data",
+            "/storage/emulated/0/Android/data/dev.eden.eden_emulator.nightly/files",
+            packageName = "dev.eden.eden_emulator.nightly",
+        ),
         // Switch 2 forks of Eden: same nand/user/save layout, their own package.
         RootSourcePreset("Eglantine Switch 2 · 私有目录", "/data/user/0/dev.eglantine.eglantine/files", packageName = "dev.eglantine.eglantine"),
         RootSourcePreset("Eglantine Switch 2 · Android/data", "/storage/emulated/0/Android/data/dev.eglantine.eglantine/files", packageName = "dev.eglantine.eglantine"),

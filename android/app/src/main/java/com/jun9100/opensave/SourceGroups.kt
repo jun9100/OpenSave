@@ -34,6 +34,8 @@ object SourceGroups {
         rootChecked: Boolean,
         rootAvailable: Boolean,
         draft: SourceDraft = SourceDraft(),
+        /** 「所有文件访问」已授予：路径型来源免 root 可用。 */
+        allFilesGranted: Boolean = false,
         /** Installed packages among the presets' apps; null when not known, which folds nothing. */
         installedPackages: Set<String>? = null,
     ): List<SourceRow> {
@@ -43,11 +45,18 @@ object SourceGroups {
             val notInstalled = installedPackages != null && (option.source as? SourceSelection.Root)
                 ?.let { RootSourcePresets.find(it.path)?.packageName }
                 ?.let { it !in installedPackages } == true
-            val unreachable = notInstalled || SourceOptionPolicy.unreachable(option, scan?.access, rootChecked, rootAvailable)
+            val unreachable = notInstalled || SourceOptionPolicy.unreachable(
+                option,
+                scan?.access,
+                rootChecked,
+                rootAvailable,
+                allFilesGranted,
+            )
             val group = when {
                 option.source is SourceSelection.Saf -> SourceGroup.AUTHORIZED
                 notInstalled -> SourceGroup.NOT_INSTALLED
-                option.requiredAccess == SourceAccessCapability.ROOT && rootChecked && !rootAvailable -> SourceGroup.NEEDS_ROOT
+                option.requiredAccess == SourceAccessCapability.ROOT &&
+                    rootChecked && !rootAvailable && !allFilesGranted -> SourceGroup.NEEDS_ROOT
                 unreachable -> SourceGroup.MISSING
                 else -> SourceGroup.AVAILABLE
             }

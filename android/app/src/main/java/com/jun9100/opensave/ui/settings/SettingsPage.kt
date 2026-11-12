@@ -345,7 +345,7 @@ private fun WholeSourceSnapshotSection(state: SourceUiState, viewModel: SourceVi
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(10.dp))
-    val rootTarget = state.rootAvailable || state.storageMode == StorageMode.ROOT
+    val rootTarget = state.rootAvailable || state.allFilesGranted || state.storageMode == StorageMode.ROOT
     if (rootTarget) {
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             SegmentedButton(
@@ -402,5 +402,13 @@ private fun WholeSourceSnapshotSection(state: SourceUiState, viewModel: SourceVi
     ) {
         Icon(Icons.Outlined.Refresh, contentDescription = null)
         Text("列举云端整来源快照", modifier = Modifier.padding(start = 8.dp))
+    }
+    Spacer(Modifier.height(8.dp))
+    OutlinedButton(
+        onClick = whenIdle(state.busy, viewModel::pullCloudGames),
+        modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
+    ) {
+        Icon(Icons.Outlined.CloudDownload, contentDescription = null)
+        Text("从云端补齐本机缺失的存档", modifier = Modifier.padding(start = 8.dp))
     }
 }
