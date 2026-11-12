@@ -183,6 +183,18 @@ class ScanSnapshotTest {
     }
 
     @Test
+    fun `a directory holding game images is recognised by the image extension`() {
+        // 名字救不了：`switch2-games/Fire Emblem꞉ Fortune's Weave` 有 23,077 个目录、
+        // 名字毫无特征，是解包出来的游戏本体；旁边躺着 28.9 GB 的 `.nup`。
+        for (name in listOf("game.nup", "Xenoblade.nsp", "a.XCI", "disc.iso", "x.cso", "y.chd", "z.rvz")) {
+            assertTrue("应该认出：$name", AllFilesPathPolicy.holdsGameImage(name))
+        }
+        for (name in listOf("SAVEDATA", "0000000000000000", "save.dat", "profile", ".nomedia", "noext", "trailing.")) {
+            assertFalse("不该认出：$name", AllFilesPathPolicy.holdsGameImage(name))
+        }
+    }
+
+    @Test
     fun `rom trees media and caches are skipped but save layouts are not`() {
         for (name in listOf("04007EF01F8AE000-work", "DCIM", "Pictures", "cache", "code_cache", ".thumbnails", "obb")) {
             assertTrue("应该跳过：$name", AllFilesPathPolicy.skipWholeDeviceSubtree(name))
