@@ -68,8 +68,25 @@ internal data class CloudPullCandidate(
 sealed interface CloudPullStatus {
     data object Idle : CloudPullStatus
     data class Running(val done: Int, val total: Int, val label: String) : CloudPullStatus
-    data class Finished(val restored: Int, val failed: Int, val message: String) : CloudPullStatus
+    data class Finished(
+        val restored: Int,
+        val failed: Int,
+        val message: String,
+        /** 云端有存档、但本机拿不出"这个游戏装过"的证据，于是没下发的数量。 */
+        val skipped: Int = 0,
+    ) : CloudPullStatus
 }
+
+/**
+ * 一次下发计划：真正要拉的位置，以及因为"本机没有这个游戏"被挡下的游戏名。
+ *
+ * 被挡下的不算失败，也不该悄悄消失——界面要把数量说清楚，否则用户只会看到
+ * "云端明明有，为什么没补下来"。
+ */
+internal data class CloudPullPlan(
+    val candidates: List<CloudPullCandidate> = emptyList(),
+    val skippedNotInstalled: List<String> = emptyList(),
+)
 
 internal object CloudPull {
     /** Switch 存档副本在 `nand/user/save` 下的固定用户目录（Yuzu 系的 0000000000000000）。 */
@@ -128,12 +145,18 @@ internal object CloudPull {
      *
      * [exists] 判断"这个根下这个相对路径已经有存档了吗"，已有就跳过——已有存档的
      * 游戏走正常的云端比较/恢复流程，不该被下发覆盖。
+     *
+     * [proved] 判断"本机能证明这个游戏确实装过吗"，见 [InstallEvidence]。没有证据
+     * 的一律不下发：往模拟器的存档根里凭空建一个目录，等于替它造出一个游戏。
      */
-    fun candidates(
+    fun plan(
         roots: List<LocalSaveRoot>,
         games: List<CloudPullGame>,
         exists: (String, String) -> Boolean,
-    ): List<CloudPullCandidate> = buildList {
+        proved: (SaveRootFamily, String) -> Boolean,
+    ): CloudPullPlan {
+        val skipped = mutableListOf<String>()
+        val accepted = mutableListOf<CloudPullCandidate>()
         val seen = mutableSetOf<String>()
         for (game in games) {
             val id = titleIdOf(game.identityId) ?: pspIdOf(game.identityId) ?: continue
@@ -142,22 +165,35 @@ internal object CloudPull {
                 val key = "${root.path}\u0000$relative"
                 if (!seen.add(key)) continue
                 if (exists(root.path, relative)) continue
-                add(
-                    CloudPullCandidate(
-                        root = root,
-                        game = game,
-                        relativePath = relative,
-                        kind = root.family.kind,
-                        gameKey = gameKeyOf(root.family, id),
-                    ),
+                if (!proved(root.family, id)) {
+                    if (skipped.none { it == game.displayName }) skipped += game.displayName
+                    continue
+                }
+                accepted += CloudPullCandidate(
+                    root = root,
+                    game = game,
+                    relativePath = relative,
+                    kind = root.family.kind,
+                    gameKey = gameKeyOf(root.family, id),
                 )
             }
         }
-    }.sortedWith(
-        compareBy<CloudPullCandidate> { it.game.displayName.lowercase(Locale.ROOT) }
-            .thenBy { it.root.path }
-            .thenBy { it.relativePath },
-    )
+        return CloudPullPlan(
+            candidates = accepted.sortedWith(
+                compareBy<CloudPullCandidate> { it.game.displayName.lowercase(Locale.ROOT) }
+                    .thenBy { it.root.path }
+                    .thenBy { it.relativePath },
+            ),
+            skippedNotInstalled = skipped.sorted(),
+        )
+    }
+
+    /** 与 [plan] 相同但不做安装判定；保留给只关心路径拼接的调用方和单测。 */
+    fun candidates(
+        roots: List<LocalSaveRoot>,
+        games: List<CloudPullGame>,
+        exists: (String, String) -> Boolean,
+    ): List<CloudPullCandidate> = plan(roots, games, exists) { _, _ -> true }.candidates
 
     /** 与扫描器产出的 `DetectedSave.gameKey` 对齐，恢复后归到同一款游戏。 */
     fun gameKeyOf(family: SaveRootFamily, id: String): String {

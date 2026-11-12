@@ -1955,9 +1955,24 @@ class SourceViewModel(
                             }
                         }
                     }
-                    val candidates = CloudPull.candidates(roots, clouds) { root, relative ->
-                        "${root}\u0000$relative" in existing
-                    }
+                    // 云端有存档不代表这台机器装了这个游戏：Eden 按目录扫存档，
+                    // 凭空建一个 <TITLE_ID> 目录就等于替它造出一个游戏。先取证据。
+                    val evidence = installEvidence(roots)
+                    val plan = CloudPull.plan(
+                        roots = roots,
+                        games = clouds,
+                        exists = { root, relative -> "${root}\u0000$relative" in existing },
+                        proved = { family, id ->
+                            when (family) {
+                                SaveRootFamily.YUZU_SWITCH,
+                                SaveRootFamily.RYUJINX_SWITCH,
+                                -> evidence.provesSwitch(id)
+
+                                SaveRootFamily.PPSSPP -> evidence.provesPsp(id)
+                            }
+                        },
+                    )
+                    val candidates = plan.candidates
                     var restored = 0
                     val failures = mutableListOf<String>()
                     candidates.forEachIndexed { index, candidate ->
@@ -1983,22 +1998,41 @@ class SourceViewModel(
                             .onSuccess { restored += 1 }
                             .onFailure { failures += "${candidate.game.displayName}：${it.message}" }
                     }
-                    Triple(candidates.size, restored, failures)
+                    CloudPullOutcome(
+                        total = candidates.size,
+                        restored = restored,
+                        skipped = plan.skippedNotInstalled.size,
+                        failures = failures,
+                    )
                 }
             }
-            result.onSuccess { (total, restored, failures) ->
+            result.onSuccess { outcome ->
                 state.value = state.value
                     .finished(
                         OpenSavePage.SETTINGS,
                         action = when {
-                            total == 0 -> "云端没有需要下发到本机的存档"
-                            failures.isEmpty() -> "已从云端下发 $restored 个存档"
-                            else -> "已下发 $restored/$total 个存档：" +
-                                failures.take(3).joinToString("；")
+                            outcome.total == 0 && outcome.skipped > 0 ->
+                                "云端有 ${outcome.skipped} 个本机没装的游戏，未下发；装好后重新扫描即可补上"
+
+                            outcome.total == 0 -> "云端没有需要下发到本机的存档"
+
+                            outcome.failures.isEmpty() ->
+                                "已从云端下发 ${outcome.restored} 个存档" + skippedNote(outcome.skipped)
+
+                            else -> "已下发 ${outcome.restored}/${outcome.total} 个存档" +
+                                skippedNote(outcome.skipped) + "：" +
+                                outcome.failures.take(3).joinToString("；")
                         },
                     )
-                    .copy(cloudPull = CloudPullStatus.Finished(restored, failures.size, ""))
-                if (restored > 0) scanSource()
+                    .copy(
+                        cloudPull = CloudPullStatus.Finished(
+                            restored = outcome.restored,
+                            failed = outcome.failures.size,
+                            message = "",
+                            skipped = outcome.skipped,
+                        ),
+                    )
+                if (outcome.restored > 0) scanSource()
             }.onFailure { error ->
                 state.value = state.value.finished(
                     OpenSavePage.SETTINGS,
@@ -2021,6 +2055,64 @@ class SourceViewModel(
         if (config.serviceUrl.isBlank() || config.syncKey.isBlank()) return
         cloudPullRequested = true
         pullCloudGames()
+    }
+
+    private fun skippedNote(skipped: Int): String =
+        if (skipped <= 0) "" else "（跳过 $skipped 个本机没装的游戏）"
+
+    /**
+     * 收集"本机装过哪些游戏"的证据。
+     *
+     * 只读模拟器自己会写的东西：Eden 的 `config/config.ini` 指出游戏目录，
+     * 日志里跑过的游戏留下标题 id；PPSSPP 的镜像文件名带着游戏 id。
+     * 一份证据都拿不到时会话照旧能跑，只是下发全部落空——这比凭空造游戏安全。
+     */
+    private suspend fun installEvidence(roots: List<LocalSaveRoot>): InstallEvidence {
+        val switchNames = mutableListOf<String>()
+        val switchText = StringBuilder()
+        val pspNames = mutableListOf<String>()
+        val pspText = StringBuilder()
+        for (root in roots) {
+            when (root.family) {
+                SaveRootFamily.YUZU_SWITCH -> {
+                    val config = operations.readText("${root.path}/config", "config.ini", MAX_CONFIG_BYTES)
+                    if (config != null) {
+                        for (dir in InstalledGames.gameDirsFromEdenConfig(config)) {
+                            switchNames += operations.listNames(dir, GAME_DIR_DEPTH, GAME_DIR_LIMIT)
+                        }
+                    }
+                    switchText.append(operations.readText("${root.path}/log", "eden_log.txt", MAX_LOG_BYTES).orEmpty())
+                    switchText.append(
+                        operations.readText("${root.path}/log", "eden_log.txt.old.txt", MAX_LOG_BYTES).orEmpty(),
+                    )
+                }
+
+                SaveRootFamily.RYUJINX_SWITCH -> {
+                    val config = operations.readText(root.path, "Config.json", MAX_CONFIG_BYTES)
+                    if (config != null) {
+                        for (dir in InstalledGames.gameDirsFromRyujinxConfig(config)) {
+                            switchNames += operations.listNames(dir, GAME_DIR_DEPTH, GAME_DIR_LIMIT)
+                        }
+                    }
+                }
+
+                SaveRootFamily.PPSSPP -> {
+                    // SAVEDATA 自己不能当证据：一旦下发成功，那个目录名就带着游戏 id，
+                    // 下次它会把"刚被创建出来的东西"反过来证明成"本来就装着"。
+                    for (child in operations.listNames(root.path, 1, GAME_DIR_LIMIT)) {
+                        if (pspNonGameDirectories.any { it.equals(child, ignoreCase = true) }) continue
+                        pspNames += operations.listNames("${root.path}/$child", GAME_DIR_DEPTH, GAME_DIR_LIMIT)
+                    }
+                    pspText.append(operations.readText("${root.path}/SYSTEM", "ppsspp.ini", MAX_CONFIG_BYTES).orEmpty())
+                }
+            }
+        }
+        return InstallEvidence(
+            switchNames = switchNames,
+            switchText = switchText.toString(),
+            pspNames = pspNames,
+            pspText = pspText.toString(),
+        )
     }
 
     /** 本机所有可用的模拟器存档根：已扫描的 Root 来源 + 真实存在的预设目录。 */
@@ -2917,5 +3009,35 @@ class SourceViewModel(
         const val KEY_SELECTION = "ui.librarySelection"
         const val KEY_SELECTION_MODE = "ui.selectionMode"
         const val KEY_STATUS_FILTER = "ui.libraryStatusFilter"
+
+        /** 模拟器配置 / 日志 / 游戏目录列举的上限。游戏目录只读名字，所以可以比日志大一点。 */
+        const val MAX_CONFIG_BYTES = 1 shl 20
+        const val MAX_LOG_BYTES = 4 shl 20
+        const val GAME_DIR_DEPTH = 3
+        const val GAME_DIR_LIMIT = 4_000
+
+        /** PPSSPP 根目录下这些子目录不是游戏来源，绝不参与"装没装"的判定。 */
+        val pspNonGameDirectories = setOf(
+            "SAVEDATA",
+            "SYSTEM",
+            "PPSSPP_STATE",
+            "TEXTURES",
+            "CHEATS",
+            "SCREENSHOT",
+            "EXTRAS",
+        )
     }
 }
+
+/**
+ * 一次云端下发的结果。
+ *
+ * [skipped] 是"云端有存档、但本机没有装这个游戏"的数量：不算失败，也不能悄悄丢掉，
+ * 用户在设置页要看到它，否则只会觉得云端明明有东西却没补下来。
+ */
+private data class CloudPullOutcome(
+    val total: Int,
+    val restored: Int,
+    val skipped: Int,
+    val failures: List<String>,
+)

@@ -126,6 +126,36 @@ class CloudPullTest {
     }
 
     @Test
+    fun `a cloud save is not pushed down for a game this device never installed`() {
+        val games = listOf(
+            CloudPullGame(GameSaveTypes.PC, "scope:switch-010060A00B53C000", "scope:switch-010060A00B53C000", "Broforce"),
+            CloudPullGame(GameSaveTypes.PC, "scope:switch-0100BA001821A000", "scope:switch-0100BA001821A000", "IGS"),
+            CloudPullGame(GameSaveTypes.PC, "scope:switch-01008D7016438000", "scope:switch-01008D7016438000", "十三机兵"),
+        )
+        val installed = setOf("01008D7016438000")
+        val plan = CloudPull.plan(listOf(eden), games, { _, _ -> false }) { _, id -> id in installed }
+
+        assertEquals(1, plan.candidates.size)
+        assertEquals("十三机兵", plan.candidates.single().game.displayName)
+        // 被挡下的游戏要说出来，否则用户只会觉得"云端明明有却没补"。
+        assertEquals(listOf("Broforce", "IGS"), plan.skippedNotInstalled)
+    }
+
+    @Test
+    fun `a psp save is only pulled when the evidence covers that family`() {
+        val game = CloudPullGame(GameSaveTypes.PPSSPP, "scope:ppsspp-ULUS10041", "psp:ULUS10041", "Lumines")
+        val switchOnly = CloudPull.plan(listOf(eden, psp), listOf(game), { _, _ -> false }) { family, _ ->
+            family != SaveRootFamily.PPSSPP
+        }
+        assertEquals(emptyList<CloudPullCandidate>(), switchOnly.candidates)
+        assertEquals(listOf("Lumines"), switchOnly.skippedNotInstalled)
+
+        val proved = CloudPull.plan(listOf(eden, psp), listOf(game), { _, _ -> false }) { _, _ -> true }
+        assertEquals(1, proved.candidates.size)
+        assertEquals(emptyList<String>(), proved.skippedNotInstalled)
+    }
+
+    @Test
     fun `candidates are ordered by name then path`() {
         val games = listOf(
             CloudPullGame(GameSaveTypes.SWITCH, "a", "title:0000000000000002", "B"),

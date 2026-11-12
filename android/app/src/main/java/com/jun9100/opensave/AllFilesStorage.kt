@@ -150,6 +150,26 @@ class AllFilesStorage(
         }.getOrNull()
     }
 
+    override suspend fun listNames(rawPath: String, maxDepth: Int, limit: Int): Result<List<String>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkAllFilesAccess().getOrThrow()
+                val root = File(AllFilesPathPolicy.canonicalize(rawPath))
+                if (!root.isDirectory) return@runCatching emptyList()
+                val names = mutableListOf<String>()
+                fun walk(directory: File, depth: Int) {
+                    val children = directory.listFiles() ?: return
+                    for (child in children) {
+                        if (names.size >= limit) return
+                        names += child.name
+                        if (child.isDirectory && depth < maxDepth) walk(child, depth + 1)
+                    }
+                }
+                walk(root, 1)
+                names
+            }
+        }
+
     override suspend fun saveSignatures(
         rawRootPath: String,
         relativePaths: List<String>,
