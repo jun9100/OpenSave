@@ -45,6 +45,26 @@ object AllFilesPathPolicy {
      * `switch2-games/<TITLE_ID>-work/` 这种解压出来的游戏树里。逐个 `stat`
      * 一遍要 15.9 秒，而存档一个都不会在那里。
      */
+    /**
+     * 装着游戏镜像的目录一律不下潜。
+     *
+     * 名字完全靠不住：这台机器上 `switch2-games/Fire Emblem꞉ Fortune's Weave`
+     * 一个 23,077 个目录、毫无特征的文件夹，就是解包出来的游戏本体，而它旁边
+     * 躺着 28.9 GB 的 `.nup`。按"这个目录里有镜像文件"来判断才稳：这种目录
+     * 是放游戏的地方，存档从来不在里面。
+     */
+    fun holdsGameImage(name: String): Boolean {
+        val dot = name.lastIndexOf('.')
+        if (dot <= 0 || dot == name.lastIndex) return false
+        return name.substring(dot + 1).lowercase() in GAME_IMAGE_EXTENSIONS
+    }
+
+    private val GAME_IMAGE_EXTENSIONS = setOf(
+        "nsp", "xci", "nup", "nca", "xcz", "wad",
+        "iso", "cso", "chd", "rvz", "wbfs", "gcm", "gcz", "wia",
+        "3ds", "cia", "cci", "nds", "gba", "gbc", "n64", "z64", "v64",
+    )
+
     fun skipWholeDeviceSubtree(name: String): Boolean {
         val lower = name.lowercase()
         if (lower in SKIPPED_WHOLE_DEVICE_NAMES) return true
@@ -165,9 +185,10 @@ class AllFilesStorage(
                     unreadableDirectoryCount++
                     continue
                 }
+                val holdsGameImage = wholeDevice && children.any { !it.isDirectory && AllFilesPathPolicy.holdsGameImage(it.name) }
                 for (child in children) {
                     if (!child.isDirectory || Files.isSymbolicLink(child.toPath())) continue
-                    if (wholeDevice && AllFilesPathPolicy.skipWholeDeviceSubtree(child.name)) continue
+                    if (wholeDevice && (holdsGameImage || AllFilesPathPolicy.skipWholeDeviceSubtree(child.name))) continue
                     pending.addLast(child)
                 }
             }
