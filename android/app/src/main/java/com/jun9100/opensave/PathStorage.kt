@@ -41,6 +41,14 @@ interface PathStorage {
      */
     suspend fun listNames(rawPath: String, maxDepth: Int, limit: Int): Result<List<String>>
 
+    /**
+     * [rawPath] 之下前 [maxDepth] 层里每个目录的相对路径与最后修改时间（毫秒），
+     * 按路径排序。用来判断"这个来源这一轮还用不用重新扫"，见 [ScanSnapshot]。
+     *
+     * 读不到就走空：空指纹永不与缓存的指纹相等，于是退化成"每次都扫"。
+     */
+    suspend fun dirStamps(rawPath: String, maxDepth: Int): Result<List<String>>
+
     /** 每个相对路径的 [SaveSignature]；位置不存在时为 null。 */
     suspend fun saveSignatures(
         rawRootPath: String,

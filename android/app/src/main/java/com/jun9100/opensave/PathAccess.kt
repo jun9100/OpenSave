@@ -76,6 +76,9 @@ class PathAccess(context: Context) : PathStorage {
         androidGames: Map<String, AndroidGameMetadata>,
     ): Result<SaveScanReport> = runCatching { backend().scanPath(rawPath, androidGames).getOrThrow() }
 
+    override suspend fun dirStamps(rawPath: String, maxDepth: Int): Result<List<String>> =
+        backend().dirStamps(rawPath, maxDepth)
+
     override suspend fun readSmallFile(
         directory: String,
         fileName: String,

@@ -186,6 +186,32 @@ class RootStorage(private val context: Context) : PathStorage {
             }
         }
 
+    /**
+     * 目录指纹：路径 + mtime，前 [maxDepth] 层。
+     *
+     * 走 `find -type d` 一次列出，再让 shell 把时间戳贴上去；toybox 没有
+     * `-printf` 的机型退化成 `-exec stat`。两种输出都只有一层"时间 + 路径"，
+     * 在 Kotlin 侧按第一个空格切开，避免文件名里的空格干扰。
+     */
+    override suspend fun dirStamps(rawPath: String, maxDepth: Int): Result<List<String>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val path = RootPathPolicy.canonicalizeForScan(rawPath)
+                checkRootAccess().getOrThrow()
+                val quoted = RootCommand.shellQuote(path)
+                val result = RootCommand.execute(
+                    "if find / -maxdepth 0 -printf '' >/dev/null 2>&1; then " +
+                        "find $quoted -mindepth 1 -maxdepth $maxDepth -type d -printf '%T@ %p\\n' 2>/dev/null; " +
+                        "else find $quoted -mindepth 1 -maxdepth $maxDepth -type d -exec stat -c '%Y %n' {} + 2>/dev/null; fi",
+                )
+                result.output.lineSequence()
+                    .mapNotNull(DirStamps::parseLine)
+                    .sorted()
+                    .toList()
+            }
+        }
+
+
     override suspend fun copyGameLocations(
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,
