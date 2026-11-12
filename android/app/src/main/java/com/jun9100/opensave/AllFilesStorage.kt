@@ -34,6 +34,66 @@ object AllFilesPathPolicy {
         return canonical
     }
 
+    /** 「共享存储 · 全盘补漏」扫的就是这个根，也只有它需要剪枝。 */
+    fun isSharedStorageRoot(path: String): Boolean = path.trimEnd('/') == PRIMARY_ROOT
+
+    /**
+     * 全盘扫描时整棵跳过的目录。
+     *
+     * 这些名字下面不会有存档，而在 256 GB 的共享存储里它们动辄占掉几十万条目：
+     * 实测这台机器 `/storage/emulated/0` 有 370,107 个条目，其中 350,512 个在
+     * `switch2-games/<TITLE_ID>-work/` 这种解压出来的游戏树里。逐个 `stat`
+     * 一遍要 15.9 秒，而存档一个都不会在那里。
+     */
+    /**
+     * 装着游戏镜像的目录一律不下潜。
+     *
+     * 名字完全靠不住：这台机器上 `switch2-games/Fire Emblem꞉ Fortune's Weave`
+     * 一个 23,077 个目录、毫无特征的文件夹，就是解包出来的游戏本体，而它旁边
+     * 躺着 28.9 GB 的 `.nup`。按"这个目录里有镜像文件"来判断才稳：这种目录
+     * 是放游戏的地方，存档从来不在里面。
+     */
+    fun holdsGameImage(name: String): Boolean {
+        val dot = name.lastIndexOf('.')
+        if (dot <= 0 || dot == name.lastIndex) return false
+        return name.substring(dot + 1).lowercase() in GAME_IMAGE_EXTENSIONS
+    }
+
+    private val GAME_IMAGE_EXTENSIONS = setOf(
+        "nsp", "xci", "nup", "nca", "xcz", "wad",
+        "iso", "cso", "chd", "rvz", "wbfs", "gcm", "gcz", "wia",
+        "3ds", "cia", "cci", "nds", "gba", "gbc", "n64", "z64", "v64",
+    )
+
+    fun skipWholeDeviceSubtree(name: String): Boolean {
+        val lower = name.lowercase()
+        if (lower in SKIPPED_WHOLE_DEVICE_NAMES) return true
+        // Eden / yuzu 把 NSP 解压成 `<TITLE_ID>-work`，里面是哈希命名的内容文件。
+        return lower.endsWith("-work")
+    }
+
+    private val SKIPPED_WHOLE_DEVICE_NAMES = setOf(
+        // 媒体库与系统噪音
+        "dcim",
+        "pictures",
+        "movies",
+        "music",
+        "podcasts",
+        "ringtones",
+        "alarms",
+        "notifications",
+        "recordings",
+        "lost.dir",
+        ".thumbnails",
+        ".trashed",
+        // 缓存
+        "cache",
+        "code_cache",
+        ".cache",
+        // 游戏资源包，存档不在里面
+        "obb",
+    )
+
     /** [relativePath] 拼到 [root] 之后仍在 [root] 之内；越界时抛异常。 */
     fun requireInside(root: String, relativePath: String): File {
         val rootPrefix = root.trimEnd('/') + "/"
@@ -107,11 +167,15 @@ class AllFilesStorage(
             val directories = ArrayList<String>(1024)
             var unreadableDirectoryCount = 0
             var truncated = false
+            // 共享存储整棵扫时用队列（BFS）：条目预算先铺满浅层，再往深处走，
+            // 于是被截断时丢的是"最深的角落"而不是"某个大盘符的整棵树"。
+            val wholeDevice = AllFilesPathPolicy.isSharedStorageRoot(path)
+            val budget = if (wholeDevice) WHOLE_DEVICE_DIRECTORY_BUDGET else MAX_SCAN_DIRECTORIES
             val pending = ArrayDeque<File>()
             pending.addLast(root)
             while (pending.isNotEmpty()) {
-                val directory = pending.removeLast()
-                if (directories.size >= MAX_SCAN_DIRECTORIES) {
+                val directory = pending.removeFirst()
+                if (directories.size >= budget) {
                     truncated = true
                     break
                 }
@@ -121,8 +185,11 @@ class AllFilesStorage(
                     unreadableDirectoryCount++
                     continue
                 }
+                val holdsGameImage = wholeDevice && children.any { !it.isDirectory && AllFilesPathPolicy.holdsGameImage(it.name) }
                 for (child in children) {
-                    if (child.isDirectory && !Files.isSymbolicLink(child.toPath())) pending.addLast(child)
+                    if (!child.isDirectory || Files.isSymbolicLink(child.toPath())) continue
+                    if (wholeDevice && (holdsGameImage || AllFilesPathPolicy.skipWholeDeviceSubtree(child.name))) continue
+                    pending.addLast(child)
                 }
             }
 
@@ -136,6 +203,31 @@ class AllFilesStorage(
             )
         }
     }
+
+    override suspend fun dirStamps(rawPath: String, maxDepth: Int): Result<List<String>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkAllFilesAccess().getOrThrow()
+                val path = AllFilesPathPolicy.canonicalize(rawPath)
+                val root = File(path)
+                require(root.isDirectory) { "目录不存在或不可读：$path" }
+                val stamps = ArrayList<String>(256)
+                val pending = ArrayDeque<Pair<File, Int>>()
+                pending.addLast(root to 0)
+                while (pending.isNotEmpty()) {
+                    val (directory, depth) = pending.removeFirst()
+                    if (depth >= maxDepth) continue
+                    val children = directory.listFiles() ?: continue
+                    for (child in children) {
+                        if (!child.isDirectory || Files.isSymbolicLink(child.toPath())) continue
+                        stamps.add("${child.path}\t${child.lastModified()}")
+                        pending.addLast(child to depth + 1)
+                    }
+                }
+                stamps.sort()
+                stamps
+            }
+        }
 
     override suspend fun readSmallFile(
         directory: String,
@@ -379,6 +471,12 @@ class AllFilesStorage(
     private companion object {
         const val WORKSPACE_DIRECTORY = "source-workspace"
         const val MAX_SCAN_DIRECTORIES = 50_000
+
+        /**
+         * 「全盘补漏」的目录预算。剩下的来源都是几十个目录，只有这一个会走满整个
+         * 共享存储；剪枝之后正常设备在几千以内，预算只是防止极端布局把一核钉死。
+         */
+        const val WHOLE_DEVICE_DIRECTORY_BUDGET = 20_000
     }
 }
 

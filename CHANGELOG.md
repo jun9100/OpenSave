@@ -11,10 +11,14 @@ All notable changes to OpenSave are documented here. This project adheres to
 - **云端优先下发：本机没有存档也能从云端补齐。** 备份一直以"本机已有存档"为锚点——新设备、或者刚往模拟器里加了游戏还没玩过，本机一个字节都没有，云端有版本也拉不下来。现在多了一条反向路径：拿云端 `switch-<TITLE_ID>` / `title:<TITLE_ID>` / `psp:<GAME_ID>` 这类跨设备稳定的 id（云端按身份分组后游戏键会变成 `switch/title:…`、`emulator-ppsspp/psp:…`，此时下载走该游戏下真正带 head 的作用域成员），按本机 Eden `nand/user/save/0000000000000000/<TITLE_ID>`、PPSSPP `PSP/SAVEDATA/<GAME_ID>` 推目标路径，目标目录不存在就建出来再写。入口是「设置 · 高级」里的「从云端补齐本机缺失的存档」；开启「自动化 · 自动备份」后，扫描结束会自动跑一次（每个进程一次）。**下发前先确认本机真的装了这个游戏**：Eden 从 `config/config.ini` 的 `Paths\gamedirs` 找游戏目录、按文件名里的 TitleID 核对，文件名不带 id 的镜像（`SUPER MARIO ODYSSEY [1.3.0].xci`）靠 `log/eden_log.txt` 兜住；PPSSPP 认 `iso`/`cso`/`chd`/`pbp` 文件名与 `SYSTEM/ppsspp.ini` 的最近游玩列表。拿不出证据的游戏一律跳过并在结果里报数量——模拟器按目录扫存档，凭空建一个目录等于替它造出一个没装过的游戏。
 - **`AllFilesStorage` / `RootStorage` 支持新建恢复目标。** `restoreGameLocations(..., createMissing = true)` 允许目标存档目录原本不存在：没有旧内容可丢，因此不写安全快照；写入失败时把新建的空目录清掉。
 - **补上 Eden Nightly 的预设来源。** `dev.eden.eden_emulator.nightly` 是独立包名的测试分支，存档布局与稳定版一致，现在也会出现在「来源」页。
+- **冷启动先摆上次的扫描结果。** 以前进程一起来就是从零扫一遍，扫完之前列表是空的；勾了「共享存储 · 全盘补漏」的设备要干等十几秒。现在扫描结果连同每个来源的指纹一起存到 `files/scan/snapshot.json`，启动先用它渲染，扫描在后台继续，扫完替换。
 - **「来源」页多了一个授权入口。** 未检测到 Root 时显示「开启『所有文件访问』」，点进系统设置开关；授权后返回应用会自动重算可用性，并立刻重扫一次，`Android/data` 里的内置来源从「需要 Root」移到「可用」。
 
 ### 变更
 
+- **装游戏镜像的目录不再下潜。** 只按名字剪枝不够：`switch2-games/Fire Emblem꞉ Fortune's Weave` 是个毫无特征的文件夹，里面 23,077 个目录、解包出来的游戏本体，而它旁边躺着 28.9 GB 的 `.nup`。现在先看一个目录里有没有 `nsp/xci/nup/iso/cso/chd/rvz/…` 这类镜像文件，有就整棵跳过——放游戏的地方不放存档。
+- **「共享存储 · 全盘补漏」不再逐条 stat 整块盘。** 它原来把共享存储里每个目录都 `listFiles()` + `isDirectory()` 一遍：实测 370,107 个条目里 350,512 个在 `switch2-games/<TITLE_ID>-work/` 这种解压出来的游戏树内，一个存档都没有，却要 15.9 秒。现在改成广度优先 + 按名字剪枝（媒体库、缓存、`obb`、`*-work` 游戏树），并给了 2 万个目录的预算；截断时丢的是最深的角落，浅层一定先铺满。
+- **没变过的来源直接跳过重扫。** 路径型来源会算一份「前 3 层目录 + mtime」的指纹，和上次一致就复用上次结果；SAF 授权目录与「全盘补漏」例外——前者拿不到便宜的 mtime，后者深层可能冒出新存档，宁可扫。
 - **云端下发只补本机装过的游戏。** 之前它把云端有 head 的每一款都写进模拟器的存档根，于是没装过的游戏也会在 Eden 里冒出条目（Broforce、IGS 这类）。现在先核对游戏文件与日志，确认不了就不下发，并在提示里写明跳过了几个。
 - **路径型来源的存取后端可选。** 新增 `PathStorage` 接口与 `PathAccess` 路由：`su` 可用时走原来的 `RootStorage`，否则走新增的 `AllFilesStorage`。`RootStorage` 自身行为未变，`SourceSelection.Root` 的来源 id 与历史记录不受影响。
 - **「需要 Root」分组不再拦住免 Root 设备。** 已授予「所有文件访问」时，路径型来源不再折叠进「需要 Root」，可以照常勾选、扫描。
