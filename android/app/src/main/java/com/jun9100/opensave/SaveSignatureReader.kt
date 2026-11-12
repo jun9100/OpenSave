@@ -8,7 +8,7 @@ package com.jun9100.opensave
  */
 class SaveSignatureReader(
     private val storage: SafStorage,
-    private val rootStorage: RootStorage,
+    private val pathStorage: PathStorage,
 ) {
     /** Encoded signatures by [SourceGameEntry.libraryKey]; unknown games are left out. */
     suspend fun read(entries: List<SourceGameEntry>): Map<String, String> = buildMap {
@@ -32,7 +32,7 @@ class SaveSignatureReader(
         if (paths.isEmpty()) return emptyMap()
         val byPath = when (source) {
             is SourceSelection.Saf -> storage.saveSignatures(source.uri, paths)
-            is SourceSelection.Root -> rootStorage.saveSignatures(source.path, paths).getOrNull() ?: return emptyMap()
+            is SourceSelection.Root -> pathStorage.saveSignatures(source.path, paths).getOrNull() ?: return emptyMap()
         }
         return locations.mapNotNull { (key, gamePaths) ->
             SaveSignature.ofLocations(gamePaths.map { byPath[it] })?.let { key to it.encode() }

@@ -53,21 +53,21 @@ internal object RootCommand {
     fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 }
 
-class RootStorage(private val context: Context) {
+class RootStorage(private val context: Context) : PathStorage {
     private val selectionStore = SourceSelectionStore(context)
 
     fun persistedRootPath(): String? = selectionStore.rootPath()
 
     fun persistRootPath(path: String): Result<String> = selectionStore.saveRootPath(path)
 
-    fun workspaceDirectory(): File = File(context.filesDir, WORKSPACE_DIRECTORY)
+    override fun workspaceDirectory(): File = File(context.filesDir, WORKSPACE_DIRECTORY)
 
     fun checkRootAccess(): Result<Unit> = runCatching {
         val output = RootCommand.requireSuccess("id -u")
         require(output.trim() == "0") { "su did not grant uid 0" }
     }
 
-    suspend fun pathExists(rawPath: String): Result<Boolean> = withContext(Dispatchers.IO) {
+    override suspend fun pathExists(rawPath: String): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
             val path = RootPathPolicy.canonicalizeForScan(rawPath)
             checkRootAccess().getOrThrow()
@@ -79,9 +79,9 @@ class RootStorage(private val context: Context) {
         }
     }
 
-    suspend fun scanPath(
+    override suspend fun scanPath(
         rawPath: String,
-        androidGames: Map<String, AndroidGameMetadata> = emptyMap(),
+        androidGames: Map<String, AndroidGameMetadata>,
     ): Result<SaveScanReport> = withContext(Dispatchers.IO) {
         runCatching {
             val path = RootPathPolicy.canonicalizeForScan(rawPath)
@@ -123,7 +123,7 @@ class RootStorage(private val context: Context) {
      * `find -exec stat -c '%s %Y'` where toybox find has no -printf (plan §5.2).
      */
     /** The bytes of [fileName] in [directory] (an absolute path), or null when missing or larger than [maxBytes]. */
-    suspend fun readSmallFile(directory: String, fileName: String, maxBytes: Int): ByteArray? = withContext(Dispatchers.IO) {
+    override suspend fun readSmallFile(directory: String, fileName: String, maxBytes: Int): ByteArray? = withContext(Dispatchers.IO) {
         runCatching {
             val path = RootCommand.shellQuote(directory.trimEnd('/') + "/" + fileName)
             val result = RootCommand.execute("[ -f $path ] && [ \$(stat -c %s $path) -le $maxBytes ] && base64 -w 0 $path")
@@ -132,7 +132,7 @@ class RootStorage(private val context: Context) {
         }.getOrNull()
     }
 
-        suspend fun saveSignatures(rawRootPath: String, relativePaths: List<String>): Result<Map<String, SaveSignature?>> =
+        override suspend fun saveSignatures(rawRootPath: String, relativePaths: List<String>): Result<Map<String, SaveSignature?>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val root = RootPathPolicy.canonicalizeForScan(rawRootPath)
@@ -163,7 +163,7 @@ class RootStorage(private val context: Context) {
             }
         }
 
-    suspend fun copyGameLocations(
+    override suspend fun copyGameLocations(
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,
         destinationRoot: File,
@@ -195,7 +195,7 @@ class RootStorage(private val context: Context) {
         }
     }
 
-    suspend fun restoreGameLocations(
+    override suspend fun restoreGameLocations(
         rawRootPath: String,
         locations: List<GameSnapshotLocation>,
         extractedRoot: File,
@@ -286,7 +286,7 @@ class RootStorage(private val context: Context) {
         }
     }
 
-    suspend fun importPath(rawPath: String): Result<CopyReport> = withContext(Dispatchers.IO) {
+    override suspend fun importPath(rawPath: String): Result<CopyReport> = withContext(Dispatchers.IO) {
         runCatching {
             val path = RootPathPolicy.canonicalize(rawPath)
             checkRootAccess().getOrThrow()
@@ -304,7 +304,7 @@ class RootStorage(private val context: Context) {
         }
     }
 
-    suspend fun restoreWorkspace(rawPath: String): Result<CopyReport> = withContext(Dispatchers.IO) {
+    override suspend fun restoreWorkspace(rawPath: String): Result<CopyReport> = withContext(Dispatchers.IO) {
         runCatching {
             val path = RootPathPolicy.canonicalize(rawPath)
             checkRootAccess().getOrThrow()

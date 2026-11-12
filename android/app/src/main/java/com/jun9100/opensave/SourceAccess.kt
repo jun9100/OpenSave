@@ -8,6 +8,8 @@ enum class SourceAccessCapability {
     APP,
     SAF,
     ROOT,
+    /** 路径型来源，由「所有文件访问」免 root 读取。 */
+    ALL_FILES,
     UNAVAILABLE,
 }
 
@@ -40,6 +42,17 @@ data class SourceAccessStatus(
             writable = true,
         )
 
+        /**
+         * 同一条路径由「所有文件访问」读取。可读可写，但不能 `chown`：
+         * 写回的文件归属本 App，目标 App 靠组权限访问。
+         */
+        fun allFilesAccessible() = SourceAccessStatus(
+            capability = SourceAccessCapability.ALL_FILES,
+            requiredCapability = SourceAccessCapability.ALL_FILES,
+            readable = true,
+            writable = true,
+        )
+
         fun unavailable(requiredCapability: SourceAccessCapability, reason: String) =
             SourceAccessStatus(
                 capability = SourceAccessCapability.UNAVAILABLE,
@@ -55,6 +68,7 @@ data class SourceAccessStatus(
                 SourceAccessCapability.APP -> "等待应用访问检查"
                 SourceAccessCapability.SAF -> "等待系统目录授权"
                 SourceAccessCapability.ROOT -> "等待 Root 权限检查"
+                SourceAccessCapability.ALL_FILES -> "等待「所有文件访问」授权"
                 SourceAccessCapability.UNAVAILABLE -> "等待来源检查"
             },
         )
@@ -77,9 +91,17 @@ object SourceOptionPolicy {
         scannedAccess: SourceAccessStatus?,
         rootChecked: Boolean,
         rootAvailable: Boolean,
+        /**
+         * 「所有文件访问」已授予。有它时路径型来源不需要 su，
+         * 所以 root 缺席不再等于不可达。
+         */
+        allFilesGranted: Boolean = false,
     ): Boolean = when {
         scannedAccess != null -> !scannedAccess.readable
-        else -> option.requiredAccess == SourceAccessCapability.ROOT && rootChecked && !rootAvailable
+        else -> option.requiredAccess == SourceAccessCapability.ROOT &&
+            rootChecked &&
+            !rootAvailable &&
+            !allFilesGranted
     }
 
     /** Whether the row shows a check mark. */

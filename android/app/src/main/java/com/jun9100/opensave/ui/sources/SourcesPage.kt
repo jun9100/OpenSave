@@ -3,7 +3,10 @@ package com.jun9100.opensave.ui.sources
 import com.jun9100.opensave.PendingAndroidApp
 import com.jun9100.opensave.GameLibrary
 import com.jun9100.opensave.LibraryView
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +39,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +49,9 @@ import com.jun9100.opensave.RootSourcePresets
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,8 +107,24 @@ internal fun SourcesPage(
     val recommendations = rememberFolderRecommendations(state.authorizedTrees)
     val installedApps = rememberInstalledSourceApps()
     val landscape = LocalAdaptiveLayout.current.isLandscape
-    val rows = remember(state.sourceOptions, state.sourceScans, state.rootChecked, state.rootAvailable, state.sourceDraft, installedApps) {
-        SourceGroups.rows(state.sourceOptions, state.sourceScans, state.rootChecked, state.rootAvailable, state.sourceDraft, installedApps)
+    val rows = remember(
+        state.sourceOptions,
+        state.sourceScans,
+        state.rootChecked,
+        state.rootAvailable,
+        state.allFilesGranted,
+        state.sourceDraft,
+        installedApps,
+    ) {
+        SourceGroups.rows(
+            options = state.sourceOptions,
+            scans = state.sourceScans,
+            rootChecked = state.rootChecked,
+            rootAvailable = state.rootAvailable,
+            draft = state.sourceDraft,
+            installedPackages = installedApps,
+            allFilesGranted = state.allFilesGranted,
+        )
     }
     val groups = remember(rows) { SourceGroups.grouped(rows) }
     val pendingApps = remember(state.sourceScans) { LibraryView.unconfirmedApps(GameLibrary.sourceGames(state.sourceScans)) }
@@ -112,6 +135,29 @@ internal fun SourcesPage(
     val selectedGroup = groups.firstOrNull { it.first.name == selectedGroupName } ?: groups.first()
     val stage: (SourceDraft) -> Unit = viewModel::updateSourceDraft
     val canAddRoot = state.rootAvailable
+    val context = LocalContext.current
+    // 从系统设置返回时重新读授权状态：刚开启「所有文件访问」的话立刻重扫一次。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshAllFilesAccess()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val onGrantAllFiles: () -> Unit = {
+        val opened = runCatching {
+            viewModel.allFilesAccessIntent()?.let(context::startActivity)
+        }.isSuccess
+        if (!opened) {
+            // 少数机型没有「所有文件访问」直达页，退回应用详情页让用户自己进设置。
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
+                )
+            }
+        }
+    }
     // Landscape: A on a group moves into its rows on the right.
     val scope = rememberCoroutineScope()
     val firstRowFocus = remember { FocusRequester() }
@@ -141,13 +187,17 @@ internal fun SourcesPage(
                 state = state,
                 pending = pending,
                 canAddRoot = canAddRoot,
+                canRequestAllFiles = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
                 onPickFolder = onPickFolder,
                 onAddRootPath = { addingRootPath = true },
+                onGrantAllFiles = onGrantAllFiles,
                 onApply = viewModel::applySourceDraft,
                 focusRequester = firstControl,
             )
             // Without Root these are the only way in; with Root the built-in sources already cover them.
-            if (!state.rootAvailable) RecommendedFoldersCard(recommendations, state.busy, onPickFolderAt)
+            if (!state.rootAvailable && !state.allFilesGranted) {
+                RecommendedFoldersCard(recommendations, state.busy, onPickFolderAt)
+            }
             if (landscape) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -247,8 +297,10 @@ private fun SourceActionsCard(
     state: SourceUiState,
     pending: Int,
     canAddRoot: Boolean,
+    canRequestAllFiles: Boolean,
     onPickFolder: () -> Unit,
     onAddRootPath: () -> Unit,
+    onGrantAllFiles: () -> Unit,
     onApply: () -> Unit,
     focusRequester: FocusRequester,
 ) {
@@ -259,11 +311,17 @@ private fun SourceActionsCard(
                 when {
                     !state.rootChecked -> "正在检测 Root 权限…"
                     state.rootAvailable -> "Root 可用 · 内置来源可直接扫描，也可添加授权目录"
-                    !state.rootAllowed -> "只用授权目录 · 要使用 Root，请在 设置 → 关于 → 首次使用向导 中选择"
+                    state.allFilesGranted -> "「所有文件访问」已开启 · Android/data 里的内置来源可免 Root 扫描"
+                    !state.rootAllowed -> "只用授权目录 · 要使用 Root，请在 设置 → 关于 → 首次使用向导 中选择；" +
+                        "或开启「所有文件访问」免 Root 读取 Android/data"
                     else -> "未检测到 Root · 通过系统授权读取你选择的目录"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (state.rootAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (state.rootAvailable || state.allFilesGranted) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
             Button(
                 onClick = whenIdle(state.busy, onPickFolder),
@@ -279,6 +337,22 @@ private fun SourceActionsCard(
                 ) {
                     Icon(Icons.Outlined.Terminal, contentDescription = null)
                     Text("添加 Root 路径", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+            if (canRequestAllFiles && !state.rootAvailable && !state.allFilesGranted) {
+                OutlinedButton(
+                    onClick = whenIdle(state.busy, onGrantAllFiles),
+                    modifier = Modifier.fillMaxWidth().settingButtonFocus().busyDimmed(state.busy),
+                ) {
+                    Icon(Icons.Outlined.Terminal, contentDescription = null)
+                    Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                        Text("开启「所有文件访问」")
+                        Text(
+                            "免 Root 读取 Android/data：Eden、Yuzu、Winlator 等模拟器存档",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             // Never hidden or disabled: a control that vanishes under A would drop D-pad focus (plan R4).
@@ -597,6 +671,7 @@ private fun plannedAccessStatus(
     } else {
         SourceAccessStatus.pending(SourceAccessCapability.ROOT)
     }
+    SourceAccessCapability.ALL_FILES -> SourceAccessStatus.pending(SourceAccessCapability.ALL_FILES)
     SourceAccessCapability.UNAVAILABLE -> SourceAccessStatus.pending(SourceAccessCapability.UNAVAILABLE)
 }
 

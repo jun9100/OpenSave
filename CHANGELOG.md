@@ -3,6 +3,23 @@
 All notable changes to OpenSave are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [未发布]
+
+### 新增
+
+- **免 Root 读取 `Android/data`。** 授予「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`）后，Eden、Yuzu、Winlator 一类模拟器与容器的存档可以直接扫描、备份、恢复，不需要 root 也不需要 `su`。系统从 Android 11 起不允许在文件选择器里选中 `Android/data` 子树，这是唯一一条免 root 的合法通道。有 Root 时仍然优先走 Root（能读其它应用的私有目录）；两条通道写出的快照格式一致，可以互相恢复。
+- **「来源」页多了一个授权入口。** 未检测到 Root 时显示「开启『所有文件访问』」，点进系统设置开关；授权后返回应用会自动重算可用性，并立刻重扫一次，`Android/data` 里的内置来源从「需要 Root」移到「可用」。
+
+### 变更
+
+- **路径型来源的存取后端可选。** 新增 `PathStorage` 接口与 `PathAccess` 路由：`su` 可用时走原来的 `RootStorage`，否则走新增的 `AllFilesStorage`。`RootStorage` 自身行为未变，`SourceSelection.Root` 的来源 id 与历史记录不受影响。
+- **「需要 Root」分组不再拦住免 Root 设备。** 已授予「所有文件访问」时，路径型来源不再折叠进「需要 Root」，可以照常勾选、扫描。
+
+Without root: granting "All files access" lets SaveVault read, back up and restore saves under
+`Android/data` for emulators such as Eden, Yuzu and Winlator, which the system file picker cannot
+select since Android 11. Root is still preferred when available, and snapshots are identical on
+both paths.
+
 ## [2.6.0] — 2026-11-09
 
 需要 SaveVault 云端（game-save）v1.7.0 或更新版本才能使用配对和跨设备恢复；连接旧版云端时，这两项会给出提示，其他功能照常。

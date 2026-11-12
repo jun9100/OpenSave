@@ -230,7 +230,7 @@ class AutoBackupWorker(
         }
 
         val storage = SafStorage(applicationContext)
-        val rootStorage = RootStorage(applicationContext)
+        val rootStorage = PathAccess(applicationContext)
         val installedGameCatalog = InstalledGameCatalog(applicationContext)
         val repository = SnapshotRepository.forApp(applicationContext)
         val client = GameSaveClient(
@@ -368,7 +368,7 @@ class AutoBackupWorker(
     /** Includes every selected source OpenSave can read; a missing preset is simply skipped. */
     private suspend fun backupSources(
         storage: SafStorage,
-        rootStorage: RootStorage,
+        rootStorage: PathAccess,
         installedGameCatalog: InstalledGameCatalog,
     ): List<SaveSourceOption> = ScheduledSources.readableSources(
         applicationContext,
@@ -402,7 +402,7 @@ class AutoBackupWorker(
     private suspend fun scanSource(
         source: SourceSelection,
         storage: SafStorage,
-        rootStorage: RootStorage,
+        rootStorage: PathStorage,
         androidGames: Map<String, AndroidGameMetadata>,
     ): kotlin.Result<SaveScanReport> = when (source) {
         is SourceSelection.Saf -> storage.scanTree(source.uri, androidGames)
@@ -415,7 +415,7 @@ class AutoBackupWorker(
         game: DetectedGame,
         repository: SnapshotRepository,
         storage: SafStorage,
-        rootStorage: RootStorage,
+        rootStorage: PathStorage,
         config: GameSaveConfig,
         client: GameSaveClient,
         remoteSnapshots: List<RemoteSnapshot>,
@@ -576,7 +576,7 @@ class AutoBackupWorker(
         workspace: File,
         localFingerprint: AutoBackupFingerprint,
         repository: SnapshotRepository,
-        rootStorage: RootStorage,
+        rootStorage: PathStorage,
         config: GameSaveConfig,
         client: GameSaveClient,
         identity: GameCloudIdentity,

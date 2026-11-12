@@ -11,7 +11,7 @@ internal object ScheduledSources {
     suspend fun readableSources(
         context: Context,
         storage: SafStorage,
-        rootStorage: RootStorage,
+        rootStorage: PathAccess,
         installedGameCatalog: InstalledGameCatalog,
         /** Called with the reason when Root is expected but su did not grant uid 0. */
         onRootUnavailable: ((String) -> Unit)? = null,
@@ -70,7 +70,7 @@ internal object ScheduledSources {
     suspend fun scan(context: Context): List<SourceScanResult> {
         val appContext = context.applicationContext
         val storage = SafStorage(appContext)
-        val rootStorage = RootStorage(appContext)
+        val rootStorage = PathAccess(appContext)
         val catalog = InstalledGameCatalog(appContext)
         val androidGames = catalog.allApps()
         return readableSources(appContext, storage, rootStorage, catalog).mapNotNull { option ->

@@ -30,10 +30,10 @@ import com.jun9100.opensave.GameSaveScopesUnsupportedException
 import com.jun9100.opensave.GameSnapshotLocation
 import com.jun9100.opensave.GameSnapshotManifest
 import com.jun9100.opensave.Hashing
+import com.jun9100.opensave.PathAccess
 import com.jun9100.opensave.PathPolicy
 import com.jun9100.opensave.RemoteSnapshot
 import com.jun9100.opensave.RestoreRequest
-import com.jun9100.opensave.RootStorage
 import com.jun9100.opensave.SafStorage
 import com.jun9100.opensave.SaveSignatureReader
 import com.jun9100.opensave.ScopeTombstoneStore
@@ -126,7 +126,7 @@ internal sealed interface KeepLocal {
 internal class GameOperations(
     context: Context,
     private val storage: SafStorage = SafStorage(context.applicationContext),
-    private val rootStorage: RootStorage = RootStorage(context.applicationContext),
+    private val rootStorage: PathAccess = PathAccess(context.applicationContext),
 ) {
     private val app = context.applicationContext
     private val snapshotEngine = SnapshotEngine()

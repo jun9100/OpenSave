@@ -1,6 +1,7 @@
 package com.jun9100.opensave
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -178,6 +179,8 @@ data class SourceUiState(
     val rootPath: String = "",
     val rootAvailable: Boolean = false,
     val rootChecked: Boolean = false,
+    /** 「所有文件访问」已授予：路径型来源免 root 可读（Android 11+）。 */
+    val allFilesGranted: Boolean = false,
     val busy: Boolean = false,
     /** What the running operation is doing; shown on every page while [busy]. */
     val progress: String? = null,
@@ -299,7 +302,7 @@ class SourceViewModel(
 ) : AndroidViewModel(application) {
     private val app = application
     private val storage = SafStorage(application)
-    private val rootStorage = RootStorage(application)
+    private val rootStorage = PathAccess(application)
     private val selectionStore = SourceSelectionStore(application)
     private val installedGameCatalog = InstalledGameCatalog(application)
     private val snapshotEngine = SnapshotEngine()
@@ -735,6 +738,7 @@ class SourceViewModel(
             state.value = state.value.copy(
                 rootAvailable = rootAvailable,
                 rootChecked = true,
+                allFilesGranted = rootStorage.hasAllFilesAccess(),
                 rootAllowed = onboarding.rootAllowed(),
             )
             scanSource()
@@ -931,6 +935,20 @@ class SourceViewModel(
         return available
     }
 
+    /** 系统设置里本 App 的「所有文件访问」开关；API 30 以下没有这一项，返回 null。 */
+    fun allFilesAccessIntent(): Intent? = rootStorage.requestAllFilesAccessIntent()
+
+    /**
+     * 从系统设置返回后重新读授权状态。刚拿到权限时重扫一次，
+     * 让"来源"页里的 Android/data 来源立刻从"需要 Root"变成可用。
+     */
+    fun refreshAllFilesAccess() {
+        val granted = rootStorage.hasAllFilesAccess()
+        val changed = granted != state.value.allFilesGranted
+        updateState { copy(allFilesGranted = granted) }
+        if (granted && changed) scanSource()
+    }
+
     private fun refreshRootAccess() {
         if (!onboarding.rootAllowed()) {
             updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, ROOT_NOT_CHOSEN)) }
@@ -943,6 +961,7 @@ class SourceViewModel(
             state.value = state.value.copy(
                 rootAvailable = rootAvailable,
                 rootChecked = true,
+                allFilesGranted = rootStorage.hasAllFilesAccess(),
                 messages = if (!rootAvailable && state.value.storageMode == StorageMode.ROOT) {
                     state.value.messages.withError(
                         OpenSavePage.SETTINGS,
@@ -1226,6 +1245,7 @@ class SourceViewModel(
             state.value = state.value.started(page, "正在扫描已选存档来源")
             val rootAllowed = onboarding.rootAllowed()
             val rootAvailable = checkRootIfAllowed()
+            val allFilesGranted = rootStorage.hasAllFilesAccess()
             val (options, scans) = withContext(Dispatchers.IO) {
                 val current = state.value
                 val androidGames = installedGameCatalog.allApps()
@@ -1272,8 +1292,12 @@ class SourceViewModel(
                         }
 
                         is SourceSelection.Root -> when {
-                            !rootAvailable -> {
-                                val reason = if (rootAllowed) "Root 未授权" else "未启用 Root"
+                            !rootAvailable && !allFilesGranted -> {
+                                val reason = if (rootAllowed) {
+                                    "Root 未授权，且未开启「所有文件访问」"
+                                } else {
+                                    "未启用 Root，也未开启「所有文件访问」"
+                                }
                                 SourceScanResult(
                                     source,
                                     label,
@@ -1311,7 +1335,11 @@ class SourceViewModel(
                                                 source,
                                                 label,
                                                 scan = it,
-                                                access = SourceAccessStatus.rootOnly(),
+                                                access = if (rootAvailable) {
+                                                    SourceAccessStatus.rootOnly()
+                                                } else {
+                                                    SourceAccessStatus.allFilesAccessible()
+                                                },
                                             )
                                         },
                                         onFailure = {
@@ -1357,6 +1385,7 @@ class SourceViewModel(
                 rootAvailable = rootAvailable,
                 rootAllowed = rootAllowed,
                 rootChecked = true,
+                allFilesGranted = allFilesGranted,
                 sourceScans = scans,
                 sourceOptions = options,
                 scanRevision = state.value.scanRevision + 1,
