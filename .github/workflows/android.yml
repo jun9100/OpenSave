@@ -1,0 +1,168 @@
+name: Android
+
+# 为什么需要这个文件:
+#   ci.yml 的 android-unit 只跑 `testDebugUnitTest`,注释里写得很清楚
+#   "without creating an APK";release.yml 也只有 Windows(Wails/NSIS)。
+#   于是从来没有任何工作流产出 Android 安装包,每次都得本地打包。
+#
+# 本工作流:
+#   - 任意分支 push / PR(只改 android/**):产出 debug APK 作为 artifact,可直接 adb install
+#   - 打 android-v* tag:解码签名库 -> assembleRelease -> apksigner verify
+#     -> 重命名成 SaveVault-Android-<ver>.apk + SHA256SUMS-android.txt
+#     -> 挂到同名 Release(与已有的 android-v0.6.0 / android-v0.5.0 约定一致)
+#
+# 版本号约定(与手工发版的历史一致,不在这里另造一套):
+#   tag  android-v0.7.0  -> versionName 0.7.0
+#   versionCode 由 android/app/build.gradle.kts 提供,发版前 +1(v0.5.0=23、v0.6.0=24)。
+#   workflow_dispatch 时可以传 versionCode 覆盖,用于补档或重发。
+#
+# 需要的 Repository secrets(只有 tag 构建用到):
+#   SAVEVAULT_KEYSTORE_BASE64     base64 -i release.jks | pbcopy 的结果
+#   SAVEVAULT_KEYSTORE_PASSWORD
+#   SAVEVAULT_KEY_ALIAS
+#   SAVEVAULT_KEY_PASSWORD
+#
+# 首次生成签名库(本地,一次就好):
+#   keytool -genkeypair -v -keystore release.jks -alias savevault \
+#     -keyalg RSA -keysize 4096 -validity 10000 \
+#     -storepass '<STORE_PASS>' -keypass '<KEY_PASS>' \
+#     -dname "CN=SaveVault, O=jun9100, C=CN"
+#   base64 -i release.jks | tr -d '\n' > release.jks.b64     # 内容贴进 SAVEVAULT_KEYSTORE_BASE64
+#
+# 注意:这个 jks 一旦用于侧载升级,必须长期保存;换了签名库,老用户只能卸载重装。
+
+on:
+  workflow_dispatch:
+    inputs:
+      versionName:
+        description: "手动构建时用的 versionName(留空则用 gradle 默认值)"
+        required: false
+      versionCode:
+        description: "手动构建时用的 versionCode(留空则用 gradle 默认值)"
+        required: false
+  push:
+    tags: ["android-v*"]
+    branches: ["**"]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ---- debug:任何分支/PR,产出可直接安装的 APK ----
+      - name: Assemble debug APK
+        if: ${{ !startsWith(github.ref, 'refs/tags/android-v') }}
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/android-v') }}
+        with:
+          name: savevault-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      # ---- release:仅 android-v* tag ----
+      - name: Decode release keystore
+        if: ${{ startsWith(github.ref, 'refs/tags/android-v') }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SAVEVAULT_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SAVEVAULT_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SAVEVAULT_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SAVEVAULT_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::SAVEVAULT_KEYSTORE_BASE64 未配置;没有签名库时 assembleRelease 只会产出 unsigned APK"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > "$RUNNER_TEMP/keystore.properties"
+          echo "keystore.properties 就绪"
+
+      - name: Assemble release APK
+        if: ${{ startsWith(github.ref, 'refs/tags/android-v') }}
+        env:
+          SAVEVAULT_KEYSTORE_PROPERTIES: ${{ runner.temp }}/keystore.properties
+          INPUT_VERSION_NAME: ${{ inputs.versionName }}
+          INPUT_VERSION_CODE: ${{ inputs.versionCode }}
+        run: |
+          set -euo pipefail
+          VERSION_NAME="${GITHUB_REF_NAME#android-v}"
+          if [ -n "${INPUT_VERSION_NAME:-}" ]; then VERSION_NAME="$INPUT_VERSION_NAME"; fi
+          ARGS="-PversionName=$VERSION_NAME"
+          if [ -n "${INPUT_VERSION_CODE:-}" ]; then ARGS="$ARGS -PversionCode=$INPUT_VERSION_CODE"; fi
+          echo "==> versionName=$VERSION_NAME args=$ARGS"
+          ./gradlew :app:assembleRelease --no-daemon $ARGS
+
+      - name: Verify signature and rename asset
+        if: ${{ startsWith(github.ref, 'refs/tags/android-v') }}
+        run: |
+          set -euo pipefail
+          VERSION_NAME="${GITHUB_REF_NAME#android-v}"
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "APK=$APK"
+          if ! unzip -l "$APK" >/dev/null 2>&1; then echo "::error::APK 不可读"; exit 1; fi
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs "$APK"
+          # 与已有资产命名保持一致:SaveVault-Android-<ver>.apk + SHA256SUMS-android.txt
+          mkdir -p dist
+          cp "$APK" "dist/SaveVault-Android-$VERSION_NAME.apk"
+          cd dist
+          sha256sum "SaveVault-Android-$VERSION_NAME.apk" > SHA256SUMS-android.txt
+          cat SHA256SUMS-android.txt
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ startsWith(github.ref, 'refs/tags/android-v') }}
+        with:
+          name: savevault-release-apk
+          path: |
+            android/dist/SaveVault-Android-*.apk
+            android/dist/SHA256SUMS-android.txt
+          if-no-files-found: error
+
+      - name: Attach APK to the release
+        if: ${{ startsWith(github.ref, 'refs/tags/android-v') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: SaveVault Android ${{ env.VERSION_NAME }}
+          prerelease: false
+          files: |
+            android/dist/SaveVault-Android-*.apk
+            android/dist/SHA256SUMS-android.txt
+          # release.yml 里已经有一个 softprops 步骤在发 Windows 资产;
+          # 两个步骤对同一个 tag 都是 append 语义,不会互相覆盖。
+          # tag 前缀不同(android-v* vs v*),所以实际上各自发各自的 Release。
