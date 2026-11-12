@@ -40,9 +40,13 @@ on:
       versionCode:
         description: "手动构建时用的 versionCode(留空则用 gradle 默认值)"
         required: false
+  # 分支只在 PR 上跑一次。原先 push 也是 branches: ["**"]，于是同一分支的
+  # push 与 pull_request 各起一次，靠 concurrency 取消掉先到的那次——被取消的
+  # 那次在 PR 上留一个红叉（`build fail 21s`），看着像真的构建失败。
+  # main 与 tag 仍然由 push 触发，那是一定要跑的。
   push:
     tags: ["android-v*"]
-    branches: ["**"]
+    branches: ["main"]
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
