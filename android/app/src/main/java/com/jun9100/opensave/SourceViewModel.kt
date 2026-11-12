@@ -304,6 +304,7 @@ class SourceViewModel(
     private val savedState: SavedStateHandle,
 ) : AndroidViewModel(application) {
     private val app = application
+    private val scanSnapshots = ScanSnapshotStore(app)
     private val storage = SafStorage(application)
     private val rootStorage = PathAccess(application)
     private val selectionStore = SourceSelectionStore(application)
@@ -739,6 +740,9 @@ class SourceViewModel(
                 previous.messages.withError(previous.page, null)
             },
         )
+        // 冷启动先摆上次的结果：扫描要几秒（全盘来源剪枝前是 16 秒），
+        // 空列表等扫描是不可接受的。快照只是"旧数据先画出来"，后台照旧扫。
+        restoreScanSnapshot(sourceOptions)
         viewModelScope.launch {
             val rootAvailable = checkRootIfAllowed()
             state.value = state.value.copy(
@@ -747,7 +751,7 @@ class SourceViewModel(
                 allFilesGranted = rootStorage.hasAllFilesAccess(),
                 rootAllowed = onboarding.rootAllowed(),
             )
-            scanSource()
+            scanSource(force = false)
         }
     }
 
@@ -1243,7 +1247,11 @@ class SourceViewModel(
         }
     }
 
-    fun scanSource() {
+    /**
+     * [force] 为 false 时，指纹没变的来源直接复用上次结果（见 [restoreScanSnapshot]）。
+     * 用户手动点"重新扫描"、恢复/备份之后的重扫都走默认的 true。
+     */
+    fun scanSource(force: Boolean = true) {
         if (state.value.busy) return
         // Scans start from either page; the summary stays on the one that asked.
         val page = state.value.page
@@ -1252,13 +1260,23 @@ class SourceViewModel(
             val rootAllowed = onboarding.rootAllowed()
             val rootAvailable = checkRootIfAllowed()
             val allFilesGranted = rootStorage.hasAllFilesAccess()
-            val (options, scans) = withContext(Dispatchers.IO) {
+            val (options, scans, fingerprints) = withContext(Dispatchers.IO) {
                 val current = state.value
                 val androidGames = installedGameCatalog.allApps()
                 val options = buildSourceOptions(current.authorizedTrees, current.rootPath)
+                val cachedSources = if (force) {
+                    emptyMap()
+                } else {
+                    scanSnapshots.load()?.sources.orEmpty().associateBy { it.result.sourceId }
+                }
+                val fingerprints = LinkedHashMap<String, List<String>>()
                 val results = options.filter { it.selected }.map { option ->
                     val source = option.source
                     val label = option.label
+                    val reused = reusableScan(source, option.sourceId, cachedSources, fingerprints)
+                    if (reused != null) {
+                        reused.copy(label = label)
+                    } else {
                     when (source) {
                         is SourceSelection.Saf -> if (!storage.hasReadPermission(source.uri)) {
                             SourceScanResult(
@@ -1365,8 +1383,9 @@ class SourceViewModel(
                             }
                         }
                     }
+                    }
                 }
-                options to results
+                Triple(options, results, fingerprints)
             }
             val games = GameLibrary.sourceGames(scans)
             val availableSourceCount = scans.count { it.access.readable }
@@ -1400,6 +1419,7 @@ class SourceViewModel(
                 // Signatures of games that are gone would never be read again.
                 saveSignatures = state.value.saveSignatures.filterKeys { it in eligibleKeys },
             )
+            saveScanSnapshot(scans, fingerprints)
             readSaveSignatures(games)
             copyPspIcons(scans)
             if (rootAvailable && rootAllowed) learnSwitchTitles()
@@ -2112,6 +2132,63 @@ class SourceViewModel(
             switchText = switchText.toString(),
             pspNames = pspNames,
             pspText = pspText.toString(),
+        )
+    }
+
+    /** 指纹层级：存档目录最深也就是 `nand/user/save/<uid>/<TITLE_ID>` 这一层。 */
+    private suspend fun reusableScan(
+        source: SourceSelection,
+        sourceId: String,
+        cached: Map<String, SourceScanSnapshot>,
+        fingerprints: MutableMap<String, List<String>>,
+    ): SourceScanResult? {
+        // SAF 授权目录拿不到便宜的 mtime，只能每轮都扫；全盘来源则相反——
+        // 深层的新存档可能出现在第 5 层，指纹看不到，宁可扫（剪枝后它很快）。
+        if (source !is SourceSelection.Root) return null
+        if (AllFilesPathPolicy.isSharedStorageRoot(source.path)) return null
+        val stamps = operations.dirStamps(source.path, FINGERPRINT_DEPTH)
+        if (stamps.isEmpty()) return null
+        fingerprints[sourceId] = stamps
+        val entry = cached[sourceId] ?: return null
+        if (!ScanReuse.canSkip(entry.fingerprint, stamps)) return null
+        return entry.result.scan?.let { entry.result }
+    }
+
+    private fun saveScanSnapshot(scans: List<SourceScanResult>, fingerprints: Map<String, List<String>>) {
+        val snapshot = LibraryScanSnapshot(
+            savedAt = System.currentTimeMillis(),
+            sources = scans.map { result -> SourceScanSnapshot(result, fingerprints[result.sourceId]) },
+        )
+        viewModelScope.launch(Dispatchers.IO) { scanSnapshots.save(snapshot) }
+    }
+
+    /**
+     * 把上次扫描的结果先摆进界面。
+     *
+     * 只认当前仍然勾选、且来源集合对得上的那些；对不上的（换了目录、删了来源）
+     * 就留给后台扫描去纠正。快照本身不影响任何写入判断，纯粹是渲染。
+     */
+    private fun restoreScanSnapshot(options: List<SaveSourceOption>) {
+        val snapshot = scanSnapshots.load() ?: return
+        val selected = options.filter { it.selected }
+        if (selected.isEmpty()) return
+        val cached = snapshot.sources.associateBy { it.result.sourceId }
+        if (selected.none { cached.containsKey(it.sourceId) }) return
+        val filled = selected.map { option ->
+            cached[option.sourceId]?.result?.copy(label = option.label)
+                ?: SourceScanResult(
+                    source = option.source,
+                    label = option.label,
+                    access = SourceAccessStatus.pending(option.source.requiredAccessCapability()),
+                )
+        }
+        val games = GameLibrary.sourceGames(filled)
+        val eligibleKeys = GameLibrary.batchBackupEligibleEntries(games).map { it.libraryKey }
+        state.value = state.value.copy(
+            sourceScans = filled,
+            scan = filled.firstOrNull { it.sourceId == state.value.activeSourceId }?.scan,
+            librarySelection = LibrarySelection.effective(state.value.librarySelection, eligibleKeys),
+            scanRevision = state.value.scanRevision + 1,
         )
     }
 
@@ -3015,6 +3092,7 @@ class SourceViewModel(
         const val MAX_LOG_BYTES = 4 shl 20
         const val GAME_DIR_DEPTH = 3
         const val GAME_DIR_LIMIT = 4_000
+        const val FINGERPRINT_DEPTH = 3
 
         /** PPSSPP 根目录下这些子目录不是游戏来源，绝不参与"装没装"的判定。 */
         val pspNonGameDirectories = setOf(
