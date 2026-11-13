@@ -63,6 +63,10 @@ jobs:
           $env:OPENSAVE_VERSION = $version
           wails build -nsis -ldflags $ldflags
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The portable exe is SaveVault.exe now. Keep an opensave.exe copy
+          # beside it: builds installed before the rename look for that exact
+          # name when they check for updates.
+          Copy-Item -Force build/bin/SaveVault.exe build/bin/opensave.exe
           Pop-Location
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -73,7 +77,11 @@ jobs:
 
           $installer = Get-ChildItem cmd/opensave-app/build/bin -Filter '*installer*.exe' | Select-Object -First 1
           if (-not $installer) { throw 'Wails did not produce an NSIS installer' }
-          Move-Item -Force $installer.FullName cmd/opensave-app/build/bin/OpenSave.Setup.exe
+          Copy-Item -Force $installer.FullName cmd/opensave-app/build/bin/SaveVault.Setup.exe
+          # Same reason as the portable exe: old download links and scripts
+          # still ask for OpenSave.Setup.exe.
+          Copy-Item -Force $installer.FullName cmd/opensave-app/build/bin/OpenSave.Setup.exe
+          Remove-Item -Force $installer.FullName
       - uses: actions/upload-artifact@v4
         with:
           name: windows

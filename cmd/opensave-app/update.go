@@ -22,7 +22,7 @@ func (a *App) wantsPreReleases() bool {
 
 // updateRepo is the GitHub "owner/repo" whose releases are checked for a
 // newer version. Change this one line if the project moves.
-const updateRepo = "jun9100/OpenSave"
+const updateRepo = "jun9100/SaveVault"
 
 // CheckForUpdate best-effort asks GitHub for the latest published release
 // and reports whether it is newer than the running build. Any failure
@@ -89,11 +89,13 @@ func selectUpdateAssetFor(assets []releaseAsset, goos string) string {
 		switch goos {
 		case "windows":
 			// Portable app binary only — not the installer/cli/relay.
-			if name == "opensave.exe" {
+			// `opensave.exe` is still published beside `savevault.exe` so that
+			// builds installed before the rename keep finding their update.
+			if name == "savevault.exe" || name == "opensave.exe" {
 				return a.BrowserDownloadURL
 			}
 		case "linux":
-			if strings.HasPrefix(name, "opensave-linux") &&
+			if (strings.HasPrefix(name, "savevault-linux") || strings.HasPrefix(name, "opensave-linux")) &&
 				(strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz")) {
 				return a.BrowserDownloadURL
 			}

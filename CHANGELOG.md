@@ -5,6 +5,14 @@ All notable changes to OpenSave are documented here. This project adheres to
 
 ## [未发布]
 
+### 命名统一为 SaveVault
+
+- **PC 端产出的程序叫 `SaveVault.exe` 了**（`wails.json` 的 `outputfilename`），安装目录、开始菜单、卸载项本来就叫 SaveVault，只有 exe 名还留着 OpenSave。发布资产同时保留 `opensave.exe` 与 `OpenSave.Setup.exe` 两个副本，旧版安装包的自更新和旧下载链接继续可用；新版本自更新优先取 `savevault.exe`，取不到再退回旧名。
+- **GitHub 仓库改名**：`jun9100/OpenSave` → `jun9100/SaveVault`，`jun9100/game-save` → `jun9100/SaveVault-Server`（旧地址 301 重定向）。Docker 镜像名 `jun9100/game-save` 不变。
+- **CLI 增加 `savevault` 命令**，与 `opensave` 同一份实现，两个名字都保留。
+- 有意不动的技术标识：Go module、`applicationId com.jun9100.opensave`、`~/.opensave`、`/v1/opensave/*` 接口、自启动注册表值名 `OpenSave`——改了会断升级或断部署。
+- **仓库已转为私有**：应用内的「检查更新」与 `scripts/install.sh` 这类匿名下载通道对外不可用（GitHub 对私有仓库返回 404）。更新请用本机构建，或在有权限的机器上 `gh release download`。
+
 ### 新增
 
 - **免 Root 读取 `Android/data`。** 授予「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`）后，Eden、Yuzu、Winlator 一类模拟器与容器的存档可以直接扫描、备份、恢复，不需要 root 也不需要 `su`。系统从 Android 11 起不允许在文件选择器里选中 `Android/data` 子树，这是唯一一条免 root 的合法通道。有 Root 时仍然优先走 Root（能读其它应用的私有目录）；两条通道写出的快照格式一致，可以互相恢复。
