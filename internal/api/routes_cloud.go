@@ -53,6 +53,7 @@ func (s *Server) cloudRoutes(r chi.Router) {
 
 	r.Post("/api/cloud/pair/preview", s.handleCloudPairPreview)
 	r.Post("/api/cloud/pair/claim", s.handleCloudPairClaim)
+	r.Post("/api/cloud/login", s.handleCloudLogin)
 	r.Get("/api/cloud/auth-status", s.handleCloudAuthStatus)
 	r.Post("/api/cloud/auth-warning/dismiss", s.handleCloudAuthWarningDismiss)
 }

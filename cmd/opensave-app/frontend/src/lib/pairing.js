@@ -22,6 +22,11 @@ export const previewPairing = (input) => api.post('/api/cloud/pair/preview', pre
 export const claimPairing = ({ server, code, confirmedHost }) =>
   api.post('/api/cloud/pair/claim', { server, code, confirmedHost });
 
+// Account sign-in: the password is sent once to the local daemon, which trades
+// it for the tenant token at the service. Nothing else changes downstream.
+export const loginAccount = ({ server, username, password, confirmedHost }) =>
+  api.post('/api/cloud/login', { server, username, password, confirmedHost });
+
 export const getAuthStatus = () => api.get('/api/cloud/auth-status');
 
 export const dismissAuthWarning = () => api.post('/api/cloud/auth-warning/dismiss');
