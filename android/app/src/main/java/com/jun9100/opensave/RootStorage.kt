@@ -193,7 +193,7 @@ class RootStorage(private val context: Context) : PathStorage {
      * `-printf` 的机型退化成 `-exec stat`。两种输出都只有一层"时间 + 路径"，
      * 在 Kotlin 侧按第一个空格切开，避免文件名里的空格干扰。
      */
-    override suspend fun dirStamps(rawPath: String, maxDepth: Int): Result<List<String>> =
+    override suspend fun dirStamps(rawPath: String, maxDepth: Int, maxEntries: Int): Result<List<String>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val path = RootPathPolicy.canonicalizeForScan(rawPath)
@@ -201,13 +201,14 @@ class RootStorage(private val context: Context) : PathStorage {
                 val quoted = RootCommand.shellQuote(path)
                 val result = RootCommand.execute(
                     "if find / -maxdepth 0 -printf '' >/dev/null 2>&1; then " +
-                        "find $quoted -mindepth 1 -maxdepth $maxDepth -type d -printf '%T@ %p\\n' 2>/dev/null; " +
+                        "find $quoted -mindepth 1 -maxdepth $maxDepth -type d -printf '%T@ %p\\n' 2>/dev/null | head -n ${maxEntries + 1}; " +
                         "else find $quoted -mindepth 1 -maxdepth $maxDepth -type d -exec stat -c '%Y %n' {} + 2>/dev/null; fi",
                 )
-                result.output.lineSequence()
+                val stamps = result.output.lineSequence()
                     .mapNotNull(DirStamps::parseLine)
                     .sorted()
                     .toList()
+                DirStamps.limit(stamps, maxEntries)
             }
         }
 

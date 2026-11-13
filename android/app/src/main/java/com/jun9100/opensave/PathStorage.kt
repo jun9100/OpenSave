@@ -47,7 +47,15 @@ interface PathStorage {
      *
      * 读不到就走空：空指纹永不与缓存的指纹相等，于是退化成"每次都扫"。
      */
-    suspend fun dirStamps(rawPath: String, maxDepth: Int): Result<List<String>>
+    /**
+     * 「路径 + mtime」的目录指纹，最多看 [maxDepth] 层。
+     *
+     * 走不完（目录数超过 [maxEntries]）时返回空表：宁可整轮重扫，也不能拿一份
+     * 只看了一半的指纹去判"没变"。Eden 的存档在
+     * `nand/user/save/<profile>/<uid>/<TITLE_ID>` 这么深的地方，指纹深度不够就会
+     * 把新存档当成没有变化。
+     */
+    suspend fun dirStamps(rawPath: String, maxDepth: Int, maxEntries: Int): Result<List<String>>
 
     /** 每个相对路径的 [SaveSignature]；位置不存在时为 null。 */
     suspend fun saveSignatures(

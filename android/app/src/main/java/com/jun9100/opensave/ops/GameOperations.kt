@@ -184,8 +184,8 @@ internal class GameOperations(
      * 来源的"变了没有"指纹，见 [ScanSnapshot]。SAF 授权目录拿不到便宜的 mtime，
      * 那里返回空列表——空指纹一律当作"没有指纹"，该来源照旧每轮都扫。
      */
-    suspend fun dirStamps(path: String, maxDepth: Int): List<String> =
-        rootStorage.dirStamps(path, maxDepth).getOrElse { emptyList() }
+    suspend fun dirStamps(path: String, maxDepth: Int, maxEntries: Int): List<String> =
+        rootStorage.dirStamps(path, maxDepth, maxEntries).getOrElse { emptyList() }
 
     fun canWrite(source: SourceSelection): Boolean = when (source) {
         is SourceSelection.Saf -> storage.hasWritePermission(source.uri)

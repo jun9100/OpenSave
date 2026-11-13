@@ -2135,7 +2135,11 @@ class SourceViewModel(
         )
     }
 
-    /** 指纹层级：存档目录最深也就是 `nand/user/save/<uid>/<TITLE_ID>` 这一层。 */
+    /**
+     * 指纹层级：存档目录最深也就是 `nand/user/save/<profile>/<uid>/<TITLE_ID>`
+     * 这一层（从来源根算起第 7 层）。原来给 3 层，结果 Eden 里新存一档——目录加在
+     * 第 6 层——指纹一点没变，复用把新游戏一直挡在外面，直到快照被清掉。
+     */
     private suspend fun reusableScan(
         source: SourceSelection,
         sourceId: String,
@@ -2146,7 +2150,7 @@ class SourceViewModel(
         // 深层的新存档可能出现在第 5 层，指纹看不到，宁可扫（剪枝后它很快）。
         if (source !is SourceSelection.Root) return null
         if (AllFilesPathPolicy.isSharedStorageRoot(source.path)) return null
-        val stamps = operations.dirStamps(source.path, FINGERPRINT_DEPTH)
+        val stamps = operations.dirStamps(source.path, FINGERPRINT_DEPTH, MAX_FINGERPRINT_DIRECTORIES)
         if (stamps.isEmpty()) return null
         fingerprints[sourceId] = stamps
         val entry = cached[sourceId] ?: return null
@@ -3092,7 +3096,10 @@ class SourceViewModel(
         const val MAX_LOG_BYTES = 4 shl 20
         const val GAME_DIR_DEPTH = 3
         const val GAME_DIR_LIMIT = 4_000
-        const val FINGERPRINT_DEPTH = 3
+        const val FINGERPRINT_DEPTH = 8
+
+        /** 指纹最多覆盖这么多目录；超过就整轮重扫，不拿半份指纹去判"没变"。 */
+        const val MAX_FINGERPRINT_DIRECTORIES = 2_000
 
         /** PPSSPP 根目录下这些子目录不是游戏来源，绝不参与"装没装"的判定。 */
         val pspNonGameDirectories = setOf(

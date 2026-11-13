@@ -204,7 +204,7 @@ class AllFilesStorage(
         }
     }
 
-    override suspend fun dirStamps(rawPath: String, maxDepth: Int): Result<List<String>> =
+    override suspend fun dirStamps(rawPath: String, maxDepth: Int, maxEntries: Int): Result<List<String>> =
         withContext(Dispatchers.IO) {
             runCatching {
                 checkAllFilesAccess().getOrThrow()
@@ -223,9 +223,11 @@ class AllFilesStorage(
                         stamps.add("${child.path}\t${child.lastModified()}")
                         pending.addLast(child to depth + 1)
                     }
+                    // 提前收工：再走也没用，指纹已经不可信
+                    if (stamps.size > maxEntries) return@runCatching emptyList()
                 }
                 stamps.sort()
-                stamps
+                DirStamps.limit(stamps, maxEntries)
             }
         }
 

@@ -18,6 +18,7 @@ All notable changes to OpenSave are documented here. This project adheres to
 
 - **装游戏镜像的目录不再下潜。** 只按名字剪枝不够：`switch2-games/Fire Emblem꞉ Fortune's Weave` 是个毫无特征的文件夹，里面 23,077 个目录、解包出来的游戏本体，而它旁边躺着 28.9 GB 的 `.nup`。现在先看一个目录里有没有 `nsp/xci/nup/iso/cso/chd/rvz/…` 这类镜像文件，有就整棵跳过——放游戏的地方不放存档。
 - **「共享存储 · 全盘补漏」不再逐条 stat 整块盘。** 它原来把共享存储里每个目录都 `listFiles()` + `isDirectory()` 一遍：实测 370,107 个条目里 350,512 个在 `switch2-games/<TITLE_ID>-work/` 这种解压出来的游戏树内，一个存档都没有，却要 15.9 秒。现在改成广度优先 + 按名字剪枝（媒体库、缓存、`obb`、`*-work` 游戏树），并给了 2 万个目录的预算；截断时丢的是最深的角落，浅层一定先铺满。
+- **指纹看得见深处的存档了。** 指纹只取前 3 层时，Eden 的存档目录（`nand/user/save/<profile>/<uid>/<TITLE_ID>`，第 7 层）新存一档根本不会改变任何被记录的 mtime，于是「没变过」判定把新游戏一直挡在库外——真机上的表现是「玩完存了档，库还是不认这个游戏」。现在指纹看到第 8 层，并且超过 2000 个目录就当指纹不可用、整轮重扫，不再拿半份指纹下判断。
 - **没变过的来源直接跳过重扫。** 路径型来源会算一份「前 3 层目录 + mtime」的指纹，和上次一致就复用上次结果；SAF 授权目录与「全盘补漏」例外——前者拿不到便宜的 mtime，后者深层可能冒出新存档，宁可扫。
 - **云端下发只补本机装过的游戏。** 之前它把云端有 head 的每一款都写进模拟器的存档根，于是没装过的游戏也会在 Eden 里冒出条目（Broforce、IGS 这类）。现在先核对游戏文件与日志，确认不了就不下发，并在提示里写明跳过了几个。
 - **路径型来源的存取后端可选。** 新增 `PathStorage` 接口与 `PathAccess` 路由：`su` 可用时走原来的 `RootStorage`，否则走新增的 `AllFilesStorage`。`RootStorage` 自身行为未变，`SourceSelection.Root` 的来源 id 与历史记录不受影响。
