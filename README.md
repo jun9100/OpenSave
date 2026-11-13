@@ -6,7 +6,7 @@
 
 ### Steam Cloud for every game you own.
 
-> SaveVault（存档库）是 [jun9100/SaveVault](https://github.com/jun9100/SaveVault) 对 [OpenSave](https://github.com/Liquid-co/OpenSave)（作者 Siva Prakash，MIT）的分支：PC 端、Android 端和自建云端 [SaveVault-Server](https://github.com/jun9100/SaveVault-Server)（镜像 `jun9100/game-save`）一起使用。与原版 OpenSave 设备协议兼容；三个组件的显示名统一为 **SaveVault PC / SaveVault Android / SaveVault Server**；程序文件名（自更新资产名、CLI 命令）、配置目录（`~/.opensave`）与同步协议（`/v1/opensave/*`）仍沿用 OpenSave 的标识，已安装的用户可以直接升级。
+> SaveVault（存档库）是 [jun9100/SaveVault](https://github.com/jun9100/SaveVault) 对 [OpenSave](https://github.com/Liquid-co/OpenSave)（作者 Siva Prakash，MIT）的分支：PC 端、Android 端和自建云端 [SaveVault-Server](https://github.com/jun9100/SaveVault-Server)（镜像 `jun9100/game-save`）一起使用。与原版 OpenSave 设备协议兼容；三个组件的显示名统一为 **SaveVault PC / SaveVault Android / SaveVault Server**（仓库为私有仓，应用内「检查更新」与匿名下载脚本对外不可用，更新走本机构建或 `gh release download`）；程序文件名（自更新资产名、CLI 命令）、配置目录（`~/.opensave`）与同步协议（`/v1/opensave/*`）仍沿用 OpenSave 的标识，已安装的用户可以直接升级。
 
 **SaveVault** syncs your game saves between devices, peer-to-peer — no Steam required, no accounts, no subscriptions. Point it at a folder, pair your devices, and your saves follow you everywhere.
 

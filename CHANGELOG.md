@@ -11,6 +11,7 @@ All notable changes to OpenSave are documented here. This project adheres to
 - **GitHub 仓库改名**：`jun9100/OpenSave` → `jun9100/SaveVault`，`jun9100/game-save` → `jun9100/SaveVault-Server`（旧地址 301 重定向）。Docker 镜像名 `jun9100/game-save` 不变。
 - **CLI 增加 `savevault` 命令**，与 `opensave` 同一份实现，两个名字都保留。
 - 有意不动的技术标识：Go module、`applicationId com.jun9100.opensave`、`~/.opensave`、`/v1/opensave/*` 接口、自启动注册表值名 `OpenSave`——改了会断升级或断部署。
+- **仓库已转为私有**：应用内的「检查更新」与 `scripts/install.sh` 这类匿名下载通道对外不可用（GitHub 对私有仓库返回 404）。更新请用本机构建，或在有权限的机器上 `gh release download`。
 
 ### 新增
 
