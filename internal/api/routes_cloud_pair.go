@@ -252,3 +252,66 @@ func (s *Server) handleCloudAuthWarningDismiss(w http.ResponseWriter, r *http.Re
 	}
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
+
+// handleCloudLogin exchanges an account name and password for the tenant's
+// token and stores it exactly where a paired device token lives, so every
+// existing game-save call keeps working unchanged.
+func (s *Server) handleCloudLogin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Server        string `json:"server"`
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		ConfirmedHost string `json:"confirmedHost"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	server, host, err := normalizePairingTarget(body.Server)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if confirmed := strings.TrimSpace(body.ConfirmedHost); confirmed != "" &&
+		!strings.EqualFold(confirmed, host) {
+		writeError(w, http.StatusBadRequest, "confirm the server's host name before signing in")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	token, err := cloud.LoginGameSave(ctx, server, body.Username, body.Password)
+	if err != nil {
+		status := http.StatusBadGateway
+		switch {
+		case errors.Is(err, cloud.ErrGameSaveLoginRejected):
+			status = http.StatusUnauthorized
+		case errors.Is(err, cloud.ErrGameSaveLoginUnsupported):
+			status = http.StatusNotImplemented
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	cfg, err := s.Daemon.Store.GetCloudConfig()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg.Provider = cloud.GameSaveProvider
+	cfg.URL = server
+	cfg.Password = token
+	cfg.Enabled = true
+	if err := s.Daemon.Store.UpdateCloudConfig(cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.Daemon.Store.SetGameSaveAuthBlock(""); err != nil && s.Daemon.Log != nil {
+		s.Daemon.Log.Log("warn", "could not clear the game-save auth block after login: "+err.Error())
+	}
+	if s.Daemon.Log != nil {
+		s.Daemon.Log.Log("info", fmt.Sprintf("signed in to game-save at %s as %q", host, strings.TrimSpace(body.Username)))
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"server": server, "username": strings.TrimSpace(body.Username)})
+}
