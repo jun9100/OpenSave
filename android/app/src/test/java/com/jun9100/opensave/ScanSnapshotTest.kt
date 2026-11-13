@@ -165,6 +165,34 @@ class ScanSnapshotTest {
     }
 
     @Test
+    fun `a fingerprint that did not finish is unusable rather than half-true`() {
+        val small = listOf("/a\t1", "/a/b\t2")
+        assertEquals(small, DirStamps.limit(small, 2))
+        assertEquals(small, DirStamps.limit(small, 10))
+        // 超过上限：返回空表，调用方退化成整轮重扫。
+        assertTrue(DirStamps.limit(small, 1).isEmpty())
+    }
+
+    @Test
+    fun `a save appearing deeper than the old three level stamp still busts the cache`() {
+        // 复现真机上的事故：Eden 的存档在 nand/user/save/<profile>/<uid>/<TITLE_ID>，
+        // 3 层指纹看不到这一层，于是新存档一直不出现。
+        val save = "/storage/emulated/0/Android/data/dev.eden.eden_emulator.nightly/files"
+        val shallow = listOf(
+            "$save/nand\t100",
+            "$save/nand/user\t100",
+            "$save/nand/user/save\t100",
+        )
+        val deepWithNewSave = shallow + listOf(
+            "$save/nand/user/save/0000000000000000\t100",
+            "$save/nand/user/save/0000000000000000/7CA93EA2\t200",
+            "$save/nand/user/save/0000000000000000/7CA93EA2/01008D7016438000\t300",
+        )
+        assertFalse(ScanReuse.canSkip(shallow, deepWithNewSave))
+        assertTrue(ScanReuse.canSkip(deepWithNewSave, deepWithNewSave.sorted()))
+    }
+
+    @Test
     fun `both find and stat stamp formats are parsed`() {
         assertEquals("/a\t1700000000000", DirStamps.parseLine("1700000000.000000000 /a"))
         assertEquals("/a\t1700000000000", DirStamps.parseLine("1700000000 /a"))

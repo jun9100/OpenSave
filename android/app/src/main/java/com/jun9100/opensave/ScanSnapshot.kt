@@ -233,6 +233,15 @@ class ScanSnapshotStore(private val directory: File) {
  * 小数秒（`%T@`）也可能是整秒（`%Y`），路径里可以有空格——按第一个空格切开就好。
  */
 object DirStamps {
+    /**
+     * 指纹超过 [maxEntries] 就算不可用。
+     *
+     * 走不完的指纹只能证明"我看过的那部分没变"，用它判定整轮复用会把新存档挡在
+     * 门外；宁可返回空表，让调用方退化成整轮重扫。
+     */
+    fun limit(stamps: List<String>, maxEntries: Int): List<String> =
+        if (stamps.size > maxEntries) emptyList() else stamps
+
     fun parseLine(line: String): String? {
         val trimmed = line.trim()
         if (trimmed.isEmpty()) return null
