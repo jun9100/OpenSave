@@ -3,7 +3,7 @@
 All notable changes to OpenSave are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [未发布]
+## [2.7.0] — 2026-11-13
 
 ### 命名统一为 SaveVault
 
