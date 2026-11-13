@@ -137,6 +137,14 @@ internal object AutoBackupPolicy {
      */
     fun eligibleGames(scan: SaveScanReport): List<DetectedGame> =
         GameLibrary.batchBackupEligible(GameLibrary.group(scan.detected))
+            .mapNotNull { game ->
+                // Android app-data locations are whole application directories
+                // (emulator caches, game engines): they run to gigabytes and the
+                // service rejects them as oversized archives. They stay available
+                // for a deliberate single-game backup, never for the automatic round.
+                val saves = game.saves.filterNot { it.kind == "android-game" || it.kind == "android-app" }
+                if (saves.isEmpty()) null else game.copy(saves = saves)
+            }
 
     /** [games] of source [sourceId] the user did not switch automatic backup off for. */
     fun includedGames(sourceId: String, games: List<DetectedGame>, excluded: Set<String>): List<DetectedGame> =
