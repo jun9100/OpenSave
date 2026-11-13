@@ -209,7 +209,8 @@ internal fun OpenSaveScreen(sourceViewModel: SourceViewModel = viewModel()) {
             initial = initial,
             busy = state.busy,
             onDismiss = sourceViewModel::closeGameSaveEditor,
-            onTestAndSave = sourceViewModel::testAndSaveGameSave,
+            onLogin = sourceViewModel::loginAndSaveGameSave,
+            initialUsername = state.gameSaveUsername,
         )
     }
 

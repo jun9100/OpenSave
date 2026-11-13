@@ -34,6 +34,15 @@ class GameSaveConfigStore(context: Context) {
         authBlocked = authStore.blocked(),
     )
 
+    /** 登录用的账号名，仅用于界面显示；凭据是 [GameSaveConfig.syncKey] 里的令牌。 */
+    fun username(): String = preferences.getString(USERNAME_KEY, "").orEmpty()
+
+    fun saveUsername(value: String) {
+        preferences.edit().apply {
+            if (value.isBlank()) remove(USERNAME_KEY) else putString(USERNAME_KEY, value.trim())
+        }.apply()
+    }
+
     fun save(config: GameSaveConfig) {
         preferences.edit()
             .putBoolean(ENABLED_KEY, config.enabled)
@@ -87,6 +96,7 @@ class GameSaveConfigStore(context: Context) {
         const val ENABLED_KEY = "enabled"
         const val URL_KEY = "service_url"
         const val SYNC_KEY = "sync_key"
+        const val USERNAME_KEY = "username"
         const val KEY_ALIAS = "opensave_game_save_sync_key"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

@@ -52,12 +52,14 @@ internal fun GameSaveEditorDialog(
     initial: GameSaveConfig,
     busy: Boolean,
     onDismiss: () -> Unit,
-    onTestAndSave: (url: String, syncKey: String) -> Unit,
+    onLogin: (url: String, username: String, password: String) -> Unit,
+    initialUsername: String = "",
 ) {
     var url by rememberSaveable { mutableStateOf(initial.serviceUrl) }
-    var key by rememberSaveable { mutableStateOf(initial.syncKey) }
+    var username by rememberSaveable { mutableStateOf(initialUsername) }
+    var password by rememberSaveable { mutableStateOf("") }
     var visible by rememberSaveable { mutableStateOf(false) }
-    val submit = whenIdle(busy) { onTestAndSave(url.trim(), key.trim()) }
+    val submit = whenIdle(busy) { onLogin(url.trim(), username.trim(), password) }
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.consumeHandheldShortcuts(),
@@ -75,9 +77,17 @@ internal fun GameSaveEditorDialog(
                     modifier = Modifier.fillMaxWidth().dpadLeavesTextField().focusRequester(rememberInitialFocus()),
                 )
                 OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it },
-                    label = { Text("同步密钥") },
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("账号") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth().dpadLeavesTextField(),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("密码") },
                     singleLine = true,
                     visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
@@ -85,21 +95,25 @@ internal fun GameSaveEditorDialog(
                         IconButton(onClick = { visible = !visible }, modifier = Modifier.handheldFocusRing(CircleShape)) {
                             Icon(
                                 if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                contentDescription = if (visible) "隐藏同步密钥" else "显示同步密钥",
+                                contentDescription = if (visible) "隐藏密码" else "显示密码",
                             )
                         }
                     },
                     modifier = Modifier.fillMaxWidth().dpadLeavesTextField(),
                 )
                 Text(
-                    if (busy) "正在测试连接…" else "先测试连接，通过后才保存；同步密钥用 Android Keystore 加密保存。",
+                    if (busy) {
+                        "正在登录…"
+                    } else {
+                        "用账号密码登录，成功后把令牌用 Android Keystore 加密保存；密码本身不会存到本机。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
         confirmButton = {
-            Button(onClick = submit, modifier = Modifier.dialogButtonFocus().busyDimmed(busy)) { Text("测试并保存") }
+            Button(onClick = submit, modifier = Modifier.dialogButtonFocus().busyDimmed(busy)) { Text("登录并保存") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, modifier = Modifier.dialogButtonFocus()) { Text("取消") }

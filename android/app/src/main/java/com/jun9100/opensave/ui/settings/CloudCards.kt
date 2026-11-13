@@ -100,8 +100,8 @@ internal fun GameSaveCard(
                 modifier = if (initialFocus != null) Modifier.focusRequester(initialFocus) else Modifier,
             )
             SummaryRow(
-                label = "同步密钥",
-                value = TextSettingSummary.display(state.gameSaveSyncKey, "", secret = true),
+                label = "账号",
+                value = TextSettingSummary.display(state.gameSaveUsername, "未登录", secret = false),
                 busy = state.busy,
                 onClick = viewModel::openGameSaveEditor,
             )

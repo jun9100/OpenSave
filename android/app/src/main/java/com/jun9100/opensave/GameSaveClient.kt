@@ -747,6 +747,41 @@ class GameSaveClient(
         }
 
         /** Accept a service root, including an optional reverse-proxy path, but never credentials or a query. */
+        /**
+         * `POST /v1/login`: 用户名 + 密码换该租户的 bearer token。这是唯一不需要
+         * 凭据的数据接口；拿到 token 之后所有既有调用照旧带 `Authorization`。
+         */
+        fun login(serviceUrl: String, username: String, password: String): Result<String> = runCatching {
+            val base = normalizeServiceUrl(serviceUrl)
+            require(base.isNotEmpty()) { "请填写 SaveVault 云端地址" }
+            require(username.isNotBlank()) { "请填写账号" }
+            require(password.isNotBlank()) { "请填写密码" }
+            val body = JSONObject()
+                .put("username", username.trim())
+                .put("password", password)
+                .toString()
+                .toRequestBody(JSON_MEDIA_TYPE)
+            val request = Request.Builder().url("$base/v1/login").post(body).build()
+            val client = OkHttpClient.Builder()
+                .connectTimeout(LOGIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+                .readTimeout(LOGIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+                .build()
+            client.newCall(request).execute().use { response ->
+                when (response.code) {
+                    401 -> error("账号或密码不正确")
+                    404 -> error("服务器版本过旧，没有账号登录接口（/v1/login）")
+                }
+                if (!response.isSuccessful) {
+                    error("登录失败（HTTP ${response.code}）")
+                }
+                val token = JSONObject(response.body?.string().orEmpty()).optString("token").trim()
+                require(token.isNotEmpty()) { "服务器没有返回登录令牌" }
+                token
+            }
+        }
+
+        private const val LOGIN_TIMEOUT_MILLIS = 20_000L
+
         fun normalizeServiceUrl(value: String): String {
             val raw = value.trim()
             if (raw.isEmpty()) return ""

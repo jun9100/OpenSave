@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -32,6 +35,24 @@ class AutoBackupScheduler(context: Context) {
         }
     }
 
+    /**
+     * Asks for a backup now instead of waiting for the next periodic round.
+     * Used by the save watcher and by a scan that saw a newer save file.
+     */
+    fun requestImmediateBackup(reason: String) {
+        if (!isEnabled() || credentialsBlocked()) return
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.UNMETERED)
+            .build()
+        val request = OneTimeWorkRequestBuilder<AutoBackupWorker>()
+            .setConstraints(constraints)
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .addTag(IMMEDIATE_TAG)
+            .build()
+        WorkManager.getInstance(appContext)
+            .enqueueUniqueWork(IMMEDIATE_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+    }
+
     fun ensureScheduled() {
         // A rejected credential must stay stopped even if a new ViewModel starts
         // before the user replaces the key; there is nothing a worker could do.
@@ -56,6 +77,10 @@ class AutoBackupScheduler(context: Context) {
 
         /** Cancelled when the cloud rejects this install's credential. */
         internal const val WORK_NAME = "opensave_auto_backup"
+
+        /** One-shot rounds requested by the save watcher / a changed scan. */
+        internal const val IMMEDIATE_WORK_NAME = "opensave_auto_backup_now"
+        internal const val IMMEDIATE_TAG = "opensave_auto_backup_immediate"
     }
 }
 
@@ -256,6 +281,7 @@ class AutoBackupWorker(
         val androidGames = installedGameCatalog.allApps()
         val excluded = AutoBackupExclusions(applicationContext).excluded()
         val sources = backupSources(storage, rootStorage, installedGameCatalog)
+        val scanDiagnostics = mutableListOf<String>()
         for (source in sources) {
             val scan = scanSource(source.source, storage, rootStorage, androidGames)
             if (scan.isFailure) {
@@ -264,10 +290,17 @@ class AutoBackupWorker(
                 continue
             }
             val sourceId = SnapshotNaming.sourceId(source.source.idSeed)
-            val games = AutoBackupPolicy.includedGames(sourceId, AutoBackupPolicy.eligibleGames(scan.getOrThrow()), excluded)
+            val report = scan.getOrThrow()
+            val eligible = AutoBackupPolicy.eligibleGames(report)
+            val games = AutoBackupPolicy.includedGames(sourceId, eligible, excluded)
+            if (report.detected.isNotEmpty()) {
+                scanDiagnostics += "${source.label}: 识别 ${report.detected.size} 个位置，" +
+                    "可备份 ${eligible.size} 个游戏" +
+                    if (report.detected.all { it.candidate }) "（全部待确认）" else ""
+            }
             for (game in games) {
                 if (AutoBackupPolicy.shouldYield(BatchCenter.isRunning)) {
-                    finishRun(tally, verdicts, repository)
+                    finishRun(tally, verdicts, repository, scanDiagnostics)
                     return Result.success()
                 }
                 tally = tally.copy(games = tally.games + 1)
@@ -350,12 +383,17 @@ class AutoBackupWorker(
                 }
             }
         }
-        finishRun(tally, verdicts, repository)
+        finishRun(tally, verdicts, repository, scanDiagnostics)
         return if (retryableFailure && runAttemptCount < MAX_RETRIES) Result.retry() else Result.success()
     }
 
     /** Writes the run's 动态 line and the cloud verdicts it found. */
-    private fun finishRun(tally: AutoBackupTally, verdicts: Map<String, CloudVerdict>, repository: SnapshotRepository) {
+    private fun finishRun(
+        tally: AutoBackupTally,
+        verdicts: Map<String, CloudVerdict>,
+        repository: SnapshotRepository,
+        diagnostics: List<String> = emptyList(),
+    ) {
         if (verdicts.isNotEmpty()) {
             // Tied to each game's newest ordinary snapshot, like the verdicts of a check in the app.
             val records = runCatching { repository.list() }.getOrDefault(emptyList())
@@ -363,6 +401,16 @@ class AutoBackupWorker(
             runCatching { CloudVerdictStore(applicationContext).update(verdicts = tied) }
         }
         record(AutoBackupPolicy.runEntry(tally))
+        if (tally.games == 0 && diagnostics.isNotEmpty()) {
+            record(
+                ActivityEntry.create(
+                    ActivityKind.AUTO_BACKUP,
+                    ActivityLevel.INFO,
+                    "自动备份诊断：没有游戏进入备份队列",
+                    diagnostics.take(4).joinToString("；"),
+                ),
+            )
+        }
     }
 
     /** Includes every selected source OpenSave can read; a missing preset is simply skipped. */

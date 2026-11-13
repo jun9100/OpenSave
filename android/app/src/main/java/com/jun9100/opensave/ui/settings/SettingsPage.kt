@@ -186,6 +186,25 @@ private fun AutomationCard(state: SourceUiState, viewModel: SourceViewModel, not
                 style = MaterialTheme.typography.bodySmall,
                 color = if (cloudConfigured) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.tertiary,
             )
+            SwitchSettingRow(
+                label = "存档变化立即上传",
+                checked = state.saveWatchEnabled,
+                onCheckedChange = whenIdleWith(state.busy || !uploadReady, viewModel::setSaveWatchEnabled),
+                modifier = Modifier.padding(top = 8.dp).busyDimmed(state.busy || !uploadReady),
+                icon = Icons.Outlined.Refresh,
+            )
+            Text(
+                if (!uploadReady) {
+                    "需要先配置 SaveVault 云端并开启“新版本自动上传”。"
+                } else if (state.saveWatchEnabled) {
+                    "正在监视 ${state.sourceScans.size} 个来源的存档位置：游戏一存档就上传；" +
+                        "15 分钟定时扫描仍作为兜底。"
+                } else {
+                    "开启后，游戏写存档就会在十几秒内上传，不用等 15 分钟的定时扫描。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             NotificationRow(notifications)
         }
     }
