@@ -5,6 +5,14 @@ All notable changes to OpenSave are documented here. This project adheres to
 
 ## [2.7.0] — 2026-11-13
 
+### 新增
+
+- **`cloud push --all`。** 云端缺存档时（换机、服务器重建、或某个游戏从来没推过），补推是一个游戏一条命令，56 个游戏就是 56 次手打 id。现在 `opensave cloud push --all` 走 daemon 的 `/api/games` 拿全部 game id 逐个上传，`--json` 输出逐游戏结果，任一失败退出码非 0。
+
+### 修复
+
+- **重叠来源扫到的同一存档目录只算一个位置。** `Eden Nightly · Android/data`（根 `<pkg>`）与 `Android 游戏：Eden Nightly · Android/data`（根 `<pkg>/files`）扫的是同一棵树，同一个目录被记成 `files/nand/…` 和 `nand/…` 两条，于是库里显示「2 个存档位置」、云端检查里同一款游戏出现两次。现在按绝对路径判重，根更长（更具体）的条目先占位。
+
 ### 命名统一为 SaveVault
 
 - **PC 端产出的程序叫 `SaveVault.exe` 了**（`wails.json` 的 `outputfilename`），安装目录、开始菜单、卸载项本来就叫 SaveVault，只有 exe 名还留着 OpenSave。发布资产同时保留 `opensave.exe` 与 `OpenSave.Setup.exe` 两个副本，旧版安装包的自更新和旧下载链接继续可用；新版本自更新优先取 `savevault.exe`，取不到再退回旧名。
