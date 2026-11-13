@@ -7,28 +7,18 @@ All notable changes to OpenSave are documented here. This project adheres to
 
 ### 新增
 
-- **`cloud push --all`。** 云端缺存档时（换机、服务器重建、或某个游戏从来没推过），补推是一个游戏一条命令，56 个游戏就是 56 次手打 id。现在 `opensave cloud push --all` 走 daemon 的 `/api/games` 拿全部 game id 逐个上传，`--json` 输出逐游戏结果，任一失败退出码非 0。
-
-### 修复
-
-- **重叠来源扫到的同一存档目录只算一个位置。** `Eden Nightly · Android/data`（根 `<pkg>`）与 `Android 游戏：Eden Nightly · Android/data`（根 `<pkg>/files`）扫的是同一棵树，同一个目录被记成 `files/nand/…` 和 `nand/…` 两条，于是库里显示「2 个存档位置」、云端检查里同一款游戏出现两次。现在按绝对路径判重，根更长（更具体）的条目先占位。
-
-### 命名统一为 SaveVault
-
-- **PC 端产出的程序叫 `SaveVault.exe` 了**（`wails.json` 的 `outputfilename`），安装目录、开始菜单、卸载项本来就叫 SaveVault，只有 exe 名还留着 OpenSave。发布资产同时保留 `opensave.exe` 与 `OpenSave.Setup.exe` 两个副本，旧版安装包的自更新和旧下载链接继续可用；新版本自更新优先取 `savevault.exe`，取不到再退回旧名。
-- **GitHub 仓库改名**：`jun9100/OpenSave` → `jun9100/SaveVault`，`jun9100/game-save` → `jun9100/SaveVault-Server`（旧地址 301 重定向）。Docker 镜像名 `jun9100/game-save` 不变。
-- **CLI 增加 `savevault` 命令**，与 `opensave` 同一份实现，两个名字都保留。
-- 有意不动的技术标识：Go module、`applicationId com.jun9100.opensave`、`~/.opensave`、`/v1/opensave/*` 接口、自启动注册表值名 `OpenSave`——改了会断升级或断部署。
-- **仓库已转为私有**：应用内的「检查更新」与 `scripts/install.sh` 这类匿名下载通道对外不可用（GitHub 对私有仓库返回 404）。更新请用本机构建，或在有权限的机器上 `gh release download`。
-
-### 新增
-
 - **免 Root 读取 `Android/data`。** 授予「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`）后，Eden、Yuzu、Winlator 一类模拟器与容器的存档可以直接扫描、备份、恢复，不需要 root 也不需要 `su`。系统从 Android 11 起不允许在文件选择器里选中 `Android/data` 子树，这是唯一一条免 root 的合法通道。有 Root 时仍然优先走 Root（能读其它应用的私有目录）；两条通道写出的快照格式一致，可以互相恢复。
 - **云端优先下发：本机没有存档也能从云端补齐。** 备份一直以"本机已有存档"为锚点——新设备、或者刚往模拟器里加了游戏还没玩过，本机一个字节都没有，云端有版本也拉不下来。现在多了一条反向路径：拿云端 `switch-<TITLE_ID>` / `title:<TITLE_ID>` / `psp:<GAME_ID>` 这类跨设备稳定的 id（云端按身份分组后游戏键会变成 `switch/title:…`、`emulator-ppsspp/psp:…`，此时下载走该游戏下真正带 head 的作用域成员），按本机 Eden `nand/user/save/0000000000000000/<TITLE_ID>`、PPSSPP `PSP/SAVEDATA/<GAME_ID>` 推目标路径，目标目录不存在就建出来再写。入口是「设置 · 高级」里的「从云端补齐本机缺失的存档」；开启「自动化 · 自动备份」后，扫描结束会自动跑一次（每个进程一次）。**下发前先确认本机真的装了这个游戏**：Eden 从 `config/config.ini` 的 `Paths\gamedirs` 找游戏目录、按文件名里的 TitleID 核对，文件名不带 id 的镜像（`SUPER MARIO ODYSSEY [1.3.0].xci`）靠 `log/eden_log.txt` 兜住；PPSSPP 认 `iso`/`cso`/`chd`/`pbp` 文件名与 `SYSTEM/ppsspp.ini` 的最近游玩列表。拿不出证据的游戏一律跳过并在结果里报数量——模拟器按目录扫存档，凭空建一个目录等于替它造出一个没装过的游戏。
 - **`AllFilesStorage` / `RootStorage` 支持新建恢复目标。** `restoreGameLocations(..., createMissing = true)` 允许目标存档目录原本不存在：没有旧内容可丢，因此不写安全快照；写入失败时把新建的空目录清掉。
 - **补上 Eden Nightly 的预设来源。** `dev.eden.eden_emulator.nightly` 是独立包名的测试分支，存档布局与稳定版一致，现在也会出现在「来源」页。
 - **冷启动先摆上次的扫描结果。** 以前进程一起来就是从零扫一遍，扫完之前列表是空的；勾了「共享存储 · 全盘补漏」的设备要干等十几秒。现在扫描结果连同每个来源的指纹一起存到 `files/scan/snapshot.json`，启动先用它渲染，扫描在后台继续，扫完替换。
 - **「来源」页多了一个授权入口。** 未检测到 Root 时显示「开启『所有文件访问』」，点进系统设置开关；授权后返回应用会自动重算可用性，并立刻重扫一次，`Android/data` 里的内置来源从「需要 Root」移到「可用」。
+
+- **`cloud push --all`。** 云端缺存档时（换机、服务器重建、或某个游戏从来没推过），补推是一个游戏一条命令，56 个游戏就是 56 次手打 id。现在 `opensave cloud push --all` 走 daemon 的 `/api/games` 拿全部 game id 逐个上传，`--json` 输出逐游戏结果，任一失败退出码非 0。
+
+### 修复
+
+- **重叠来源扫到的同一存档目录只算一个位置。** `Eden Nightly · Android/data`（根 `<pkg>`）与 `Android 游戏：Eden Nightly · Android/data`（根 `<pkg>/files`）扫的是同一棵树，同一个目录被记成 `files/nand/…` 和 `nand/…` 两条，于是库里显示「2 个存档位置」、云端检查里同一款游戏出现两次。现在按绝对路径判重，根更长（更具体）的条目先占位。
 
 ### 变更
 
@@ -44,6 +34,14 @@ Without root: granting "All files access" lets SaveVault read, back up and resto
 `Android/data` for emulators such as Eden, Yuzu and Winlator, which the system file picker cannot
 select since Android 11. Root is still preferred when available, and snapshots are identical on
 both paths.
+
+### 命名统一为 SaveVault
+
+- **PC 端产出的程序叫 `SaveVault.exe` 了**（`wails.json` 的 `outputfilename`），安装目录、开始菜单、卸载项本来就叫 SaveVault，只有 exe 名还留着 OpenSave。发布资产同时保留 `opensave.exe` 与 `OpenSave.Setup.exe` 两个副本，旧版安装包的自更新和旧下载链接继续可用；新版本自更新优先取 `savevault.exe`，取不到再退回旧名。
+- **GitHub 仓库改名**：`jun9100/OpenSave` → `jun9100/SaveVault`，`jun9100/game-save` → `jun9100/SaveVault-Server`（旧地址 301 重定向）。Docker 镜像名 `jun9100/game-save` 不变。
+- **CLI 增加 `savevault` 命令**，与 `opensave` 同一份实现，两个名字都保留。
+- 有意不动的技术标识：Go module、`applicationId com.jun9100.opensave`、`~/.opensave`、`/v1/opensave/*` 接口、自启动注册表值名 `OpenSave`——改了会断升级或断部署。
+- **仓库已转为私有**：应用内的「检查更新」与 `scripts/install.sh` 这类匿名下载通道对外不可用（GitHub 对私有仓库返回 404）。更新请用本机构建，或在有权限的机器上 `gh release download`。
 
 ## [2.6.0] — 2026-11-09
 
