@@ -1965,6 +1965,21 @@ class SourceViewModel(
                         )
                     }
                     val roots = cloudPullRoots()
+                    // Eden 的真实布局是 `nand/user/save/<profile>/<user>/<TITLE_ID>`，
+                    // 而 CloudPull 的默认目标是 `<profile>/<TITLE_ID>`——存到那里 Eden
+                    // 根本读不到（真机上表现为"下发了但游戏里没有存档"）。
+                    // 先用本机已有的 user 目录校准目标。
+                    val switchUsers = roots.filter { it.family == SaveRootFamily.YUZU_SWITCH }
+                        .associate { root -> root.path to switchUserFolder(root.path) }
+                    fun userAdjusted(root: LocalSaveRoot, relative: String): String {
+                        val user = switchUsers[root.path] ?: return relative
+                        val prefix = "nand/user/save/$SWITCH_SAVE_USER/"
+                        return if (relative.startsWith(prefix)) {
+                            prefix + user + "/" + relative.removePrefix(prefix)
+                        } else {
+                            relative
+                        }
+                    }
                     // 路径是否存在要先同步问完：CloudPull.candidates 的判定函数不允许挂起。
                     val existing = mutableSetOf<String>()
                     clouds.forEach { game ->
@@ -1973,7 +1988,10 @@ class SourceViewModel(
                             ?: return@forEach
                         roots.forEach { root ->
                             val relative = CloudPull.relativePath(root.family, id) ?: return@forEach
-                            if (operations.pathExists("${root.path}/$relative")) {
+                            val adjusted = userAdjusted(root, relative)
+                            if (operations.pathExists("${root.path}/$relative") ||
+                                operations.pathExists("${root.path}/$adjusted")
+                            ) {
                                 existing += "${root.path}\u0000$relative"
                             }
                         }
@@ -1995,7 +2013,9 @@ class SourceViewModel(
                             }
                         },
                     )
-                    val candidates = plan.candidates
+                    val candidates = plan.candidates.map { candidate ->
+                        candidate.copy(relativePath = userAdjusted(candidate.root, candidate.relativePath))
+                    }
                     var restored = 0
                     val failures = mutableListOf<String>()
                     candidates.forEachIndexed { index, candidate ->
@@ -2200,6 +2220,13 @@ class SourceViewModel(
     }
 
     /** 本机所有可用的模拟器存档根：已扫描的 Root 来源 + 真实存在的预设目录。 */
+    /** `nand/user/save/<profile>/` 下已有的 32 位十六进制用户目录，没有就返回 null。 */
+    private suspend fun switchUserFolder(rootPath: String): String? = withContext(Dispatchers.IO) {
+        val base = "${rootPath.trimEnd('/')}/nand/user/save/$SWITCH_SAVE_USER"
+        operations.listNames(base, 1, USER_DIRECTORY_LIMIT)
+            .firstOrNull { SWITCH_USER_DIRECTORY.matches(it) }
+    }
+
     private suspend fun cloudPullRoots(): List<LocalSaveRoot> {
         val presetLabels = RootSourcePresets.all.associate { it.path to it.label }
         val scanned = state.value.sourceScans.mapNotNull { it.source as? SourceSelection.Root }
@@ -3103,6 +3130,13 @@ class SourceViewModel(
 
         /** 指纹最多覆盖这么多目录；超过就整轮重扫，不拿半份指纹去判"没变"。 */
         const val MAX_FINGERPRINT_DIRECTORIES = 2_000
+
+        /** Eden / Yuzu 的存档用户目录是 32 位十六进制。 */
+        private val SWITCH_USER_DIRECTORY = Regex("^[0-9A-Fa-f]{32}$")
+
+        private const val USER_DIRECTORY_LIMIT = 64
+
+        private const val SWITCH_SAVE_USER = "0000000000000000"
 
         /** PPSSPP 根目录下这些子目录不是游戏来源，绝不参与"装没装"的判定。 */
         val pspNonGameDirectories = setOf(
