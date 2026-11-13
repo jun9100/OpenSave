@@ -33,11 +33,12 @@ func TestCompareVersions(t *testing.T) {
 
 func TestSelectUpdateAssetFor(t *testing.T) {
 	assets := []releaseAsset{
-		{Name: "OpenSave.Setup.exe", BrowserDownloadURL: "u/setup"},
-		{Name: "OpenSave.exe", BrowserDownloadURL: "u/portable"},
+		{Name: "SaveVault.Setup.exe", BrowserDownloadURL: "u/setup"},
+		{Name: "SaveVault.exe", BrowserDownloadURL: "u/portable"},
+		{Name: "opensave.exe", BrowserDownloadURL: "u/legacy"},
 		{Name: "opensave-cli.exe", BrowserDownloadURL: "u/cli"},
 		{Name: "opensave-relay.exe", BrowserDownloadURL: "u/relay"},
-		{Name: "opensave-linux-amd64.tar.gz", BrowserDownloadURL: "u/linux"},
+		{Name: "savevault-linux-amd64.tar.gz", BrowserDownloadURL: "u/linux"},
 	}
 	if got := selectUpdateAssetFor(assets, "windows"); got != "u/portable" {
 		t.Errorf("windows asset = %q, want u/portable", got)
