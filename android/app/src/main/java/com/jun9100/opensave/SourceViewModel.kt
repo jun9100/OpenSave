@@ -206,6 +206,10 @@ data class SourceUiState(
     val gameSaveSyncKey: String = "",
     val gameSaveSaved: Boolean = false,
     val autoBackupEnabled: Boolean = false,
+    /** 登录用的账号名；凭据本身在 [gameSaveSyncKey]（令牌）里。 */
+    val gameSaveUsername: String = "",
+    /** Watch save directories and upload the moment a game writes one. */
+    val saveWatchEnabled: Boolean = false,
     /** Other devices' save locations per libraryKey; transient, never persisted. */
     val otherDeviceSaves: Map<String, OtherDeviceSaves> = emptyMap(),
     /** 云端下发（云端有、本机没有存档的游戏）的进度；transient。 */
@@ -734,6 +738,8 @@ class SourceViewModel(
             gameSaveSyncKey = config.syncKey,
             gameSaveSaved = config.serviceUrl.isNotBlank() && config.syncKey.isNotBlank(),
             autoBackupEnabled = autoBackupScheduler.isEnabled(),
+            saveWatchEnabled = SaveWatchPolicy.isEnabled(app),
+            gameSaveUsername = gameSaveStore.username(),
             immersiveLandscape = displayPreferences.immersiveLandscape(),
             scan = persistedScan,
             sourceOptions = sourceOptions,
@@ -999,6 +1005,50 @@ class SourceViewModel(
      * passes. A failure closes the editor and offers "仍然保存" or going back
      * to the draft ([editFailedGameSave]).
      */
+    /**
+     * 「账号 + 密码」登录：先换令牌，再用令牌验证连接；通过后才写入配置。
+     * 令牌存进原本 syncKey 的位置，因此下游所有调用不需要改。
+     */
+    fun loginAndSaveGameSave(serviceUrl: String, username: String, password: String) {
+        if (state.value.busy) return
+        val url = serviceUrl.trim()
+        val normalized = runCatching { GameSaveClient.normalizeServiceUrl(url) }
+        val problem = when {
+            url.isBlank() || username.isBlank() || password.isBlank() -> "请填写地址、账号和密码"
+            normalized.isFailure -> normalized.exceptionOrNull()?.message ?: "SaveVault 云端地址无效"
+            else -> null
+        }
+        if (problem != null) {
+            updateState { copy(messages = messages.withError(OpenSavePage.SETTINGS, problem)) }
+            return
+        }
+        val base = normalized.getOrThrow()
+        viewModelScope.launch {
+            state.value = state.value.started(OpenSavePage.SETTINGS, "正在登录 SaveVault 云端")
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    val token = GameSaveClient.login(base, username, password).getOrThrow()
+                    val config = GameSaveConfig(enabled = true, serviceUrl = base, syncKey = token)
+                    gameSaveClient(config).testConnection().getOrThrow()
+                    config
+                }
+            }
+            outcome.onSuccess { config ->
+                gameSaveStore.saveUsername(username)
+                storeGameSave(config, "已登录 SaveVault 云端：${username.trim()}", credentialsChanged = true)
+                updateState { copy(gameSaveUsername = username.trim()) }
+            }.onFailure { error ->
+                state.value = state.value.finished(OpenSavePage.SETTINGS).copy(
+                    gameSaveEditor = null,
+                    messages = state.value.messages.withError(
+                        OpenSavePage.SETTINGS,
+                        error.message ?: "登录失败",
+                    ),
+                )
+            }
+        }
+    }
+
     fun testAndSaveGameSave(serviceUrl: String, syncKey: String) {
         if (state.value.busy) return
         val saved = savedGameSaveConfig()
@@ -1400,6 +1450,7 @@ class SourceViewModel(
                 if (skippedSourceCount > 0) append("，跳过 $skippedSourceCount 个")
             }
             log(ActivityKind.SCAN, ActivityLevel.INFO, summary)
+            refreshSaveWatch(scans)
             val lostFolders = scans.filter { it.source is SourceSelection.Saf && it.skippedReason == FOLDER_GRANT_LOST }.map { it.label }
             if (lostFolders.isNotEmpty()) {
                 log(
@@ -2225,6 +2276,34 @@ class SourceViewModel(
         val base = "${rootPath.trimEnd('/')}/nand/user/save/$SWITCH_SAVE_USER"
         operations.listNames(base, 1, USER_DIRECTORY_LIMIT)
             .firstOrNull { SWITCH_USER_DIRECTORY.matches(it) }
+    }
+
+    /**
+     * Pushes the current save directories into [SaveWatchService] so a write by
+     * the emulator turns into an upload within seconds instead of waiting for
+     * the next periodic round.
+     */
+    private fun refreshSaveWatch(scans: List<SourceScanResult>) {
+        if (!SaveWatchPolicy.isEnabled(app)) return
+        val directories = scans.flatMap { entry ->
+            val root = (entry.source as? SourceSelection.Root)?.path ?: return@flatMap emptyList()
+            entry.scan?.detected.orEmpty().mapNotNull { save ->
+                save.relativePath.takeIf { it.isNotBlank() && it != "." }
+                    ?.let { "${root.trimEnd('/')}/$it" }
+            }
+        }.distinct()
+        if (directories.isEmpty()) return
+        runCatching { SaveWatchService.start(app, directories) }
+    }
+
+    fun setSaveWatchEnabled(enabled: Boolean) {
+        SaveWatchPolicy.setEnabled(app, enabled)
+        state.value = state.value.copy(saveWatchEnabled = enabled)
+        if (enabled) {
+            refreshSaveWatch(state.value.sourceScans)
+        } else {
+            runCatching { SaveWatchService.stop(app) }
+        }
     }
 
     private suspend fun cloudPullRoots(): List<LocalSaveRoot> {
