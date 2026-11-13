@@ -3,15 +3,7 @@
 All notable changes to OpenSave are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [未发布]
-
-### 命名统一为 SaveVault
-
-- **PC 端产出的程序叫 `SaveVault.exe` 了**（`wails.json` 的 `outputfilename`），安装目录、开始菜单、卸载项本来就叫 SaveVault，只有 exe 名还留着 OpenSave。发布资产同时保留 `opensave.exe` 与 `OpenSave.Setup.exe` 两个副本，旧版安装包的自更新和旧下载链接继续可用；新版本自更新优先取 `savevault.exe`，取不到再退回旧名。
-- **GitHub 仓库改名**：`jun9100/OpenSave` → `jun9100/SaveVault`，`jun9100/game-save` → `jun9100/SaveVault-Server`（旧地址 301 重定向）。Docker 镜像名 `jun9100/game-save` 不变。
-- **CLI 增加 `savevault` 命令**，与 `opensave` 同一份实现，两个名字都保留。
-- 有意不动的技术标识：Go module、`applicationId com.jun9100.opensave`、`~/.opensave`、`/v1/opensave/*` 接口、自启动注册表值名 `OpenSave`——改了会断升级或断部署。
-- **仓库已转为私有**：应用内的「检查更新」与 `scripts/install.sh` 这类匿名下载通道对外不可用（GitHub 对私有仓库返回 404）。更新请用本机构建，或在有权限的机器上 `gh release download`。
+## [2.7.0] — 2026-11-13
 
 ### 新增
 
@@ -21,6 +13,12 @@ All notable changes to OpenSave are documented here. This project adheres to
 - **补上 Eden Nightly 的预设来源。** `dev.eden.eden_emulator.nightly` 是独立包名的测试分支，存档布局与稳定版一致，现在也会出现在「来源」页。
 - **冷启动先摆上次的扫描结果。** 以前进程一起来就是从零扫一遍，扫完之前列表是空的；勾了「共享存储 · 全盘补漏」的设备要干等十几秒。现在扫描结果连同每个来源的指纹一起存到 `files/scan/snapshot.json`，启动先用它渲染，扫描在后台继续，扫完替换。
 - **「来源」页多了一个授权入口。** 未检测到 Root 时显示「开启『所有文件访问』」，点进系统设置开关；授权后返回应用会自动重算可用性，并立刻重扫一次，`Android/data` 里的内置来源从「需要 Root」移到「可用」。
+
+- **`cloud push --all`。** 云端缺存档时（换机、服务器重建、或某个游戏从来没推过），补推是一个游戏一条命令，56 个游戏就是 56 次手打 id。现在 `opensave cloud push --all` 走 daemon 的 `/api/games` 拿全部 game id 逐个上传，`--json` 输出逐游戏结果，任一失败退出码非 0。
+
+### 修复
+
+- **重叠来源扫到的同一存档目录只算一个位置。** `Eden Nightly · Android/data`（根 `<pkg>`）与 `Android 游戏：Eden Nightly · Android/data`（根 `<pkg>/files`）扫的是同一棵树，同一个目录被记成 `files/nand/…` 和 `nand/…` 两条，于是库里显示「2 个存档位置」、云端检查里同一款游戏出现两次。现在按绝对路径判重，根更长（更具体）的条目先占位。
 
 ### 变更
 
@@ -36,6 +34,14 @@ Without root: granting "All files access" lets SaveVault read, back up and resto
 `Android/data` for emulators such as Eden, Yuzu and Winlator, which the system file picker cannot
 select since Android 11. Root is still preferred when available, and snapshots are identical on
 both paths.
+
+### 命名统一为 SaveVault
+
+- **PC 端产出的程序叫 `SaveVault.exe` 了**（`wails.json` 的 `outputfilename`），安装目录、开始菜单、卸载项本来就叫 SaveVault，只有 exe 名还留着 OpenSave。发布资产同时保留 `opensave.exe` 与 `OpenSave.Setup.exe` 两个副本，旧版安装包的自更新和旧下载链接继续可用；新版本自更新优先取 `savevault.exe`，取不到再退回旧名。
+- **GitHub 仓库改名**：`jun9100/OpenSave` → `jun9100/SaveVault`，`jun9100/game-save` → `jun9100/SaveVault-Server`（旧地址 301 重定向）。Docker 镜像名 `jun9100/game-save` 不变。
+- **CLI 增加 `savevault` 命令**，与 `opensave` 同一份实现，两个名字都保留。
+- 有意不动的技术标识：Go module、`applicationId com.jun9100.opensave`、`~/.opensave`、`/v1/opensave/*` 接口、自启动注册表值名 `OpenSave`——改了会断升级或断部署。
+- **仓库已转为私有**：应用内的「检查更新」与 `scripts/install.sh` 这类匿名下载通道对外不可用（GitHub 对私有仓库返回 404）。更新请用本机构建，或在有权限的机器上 `gh release download`。
 
 ## [2.6.0] — 2026-11-09
 
