@@ -82,6 +82,7 @@ object GameLibrary {
                 }
             }.orEmpty()
         }
+        .let(::dropCoveredLocations)
         // Candidate-only entries are not games yet; keep them after the real ones.
         .sortedWith(
             compareBy<SourceGameEntry> { it.game.isCandidateOnly }
@@ -89,6 +90,50 @@ object GameLibrary {
                 .thenBy { it.sourceLabel.lowercase(Locale.ROOT) }
                 .thenBy { it.game.gameKey },
         )
+
+    /**
+     * 同一个存档目录被两个重叠来源各扫一次时，只留一份。
+     *
+     * 真机上 `Eden Nightly · Android/data`（根 `<pkg>`）和
+     * `Android 游戏：Eden Nightly · Android/data`（根 `<pkg>/files`）扫的是同一棵树，
+     * 于是 `files/nand/user/save/…/<TITLE_ID>` 与 `nand/user/save/…/<TITLE_ID>`
+     * 其实是同一个目录，却被算成两个存档位置：库里的「2 个存档位置」、云端检查
+     * 里同一款游戏出现两次，都是这么来的。
+     *
+     * 判重看绝对路径，根更长（更具体）的那份先占位——它显示的相对路径更短。
+     */
+    private fun dropCoveredLocations(entries: List<SourceGameEntry>): List<SourceGameEntry> {
+        val kept = ArrayList<SourceGameEntry>(entries.size)
+        val covered = HashMap<String, MutableSet<String>>()
+        val ordered = entries.sortedWith(
+            compareByDescending<SourceGameEntry> { entry ->
+                (entry.source as? SourceSelection.Root)?.path?.length ?: 0
+            },
+        )
+        for (entry in ordered) {
+            val seen = covered.getOrPut(entry.game.gameKey) { HashSet() }
+            val paths = entry.game.saves.mapNotNull { save -> absoluteSavePath(entry, save) }
+            // 一个存档都定位不到就原样保留，宁可重复也不要吞掉条目。
+            if (paths.isEmpty() || paths.any { it !in seen }) {
+                kept += entry
+                seen += paths
+            }
+        }
+        return kept
+    }
+
+    /** 存档位置的绝对身份；SAF 拿不到真实路径，只能按 URI + 相对路径认。 */
+    private fun absoluteSavePath(entry: SourceGameEntry, save: DetectedSave): String? = when (val source = entry.source) {
+        is SourceSelection.Root -> {
+            val root = source.path.trimEnd('/')
+            val relative = save.relativePath.trim('/')
+            when {
+                relative.isEmpty() || relative == "." -> root
+                else -> "$root/$relative"
+            }
+        }
+        is SourceSelection.Saf -> "${source.uri}#${save.relativePath.trim('/')}"
+    }
 
     fun batchBackupEligibleEntries(entries: List<SourceGameEntry>): List<SourceGameEntry> =
         entries.filter { canBatchBackup(it.game) }

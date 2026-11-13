@@ -7,6 +7,55 @@ import org.junit.Test
 
 class GameLibraryTest {
     @Test
+    fun dropsTheSameSaveDirectoryScannedByTwoOverlappingSources() {
+        // 真机事故：Eden 的两个来源根不同（`<pkg>` 与 `<pkg>/files`），同一个
+        // `files/nand/user/save/…/<TITLE_ID>` 被算成两个存档位置。
+        val pkg = "/storage/emulated/0/Android/data/dev.eden.eden_emulator.nightly"
+        val save = "nand/user/save/0000000000000000/7CA93EA2/01008D7016438000"
+        val wide = SourceScanResult(
+            source = SourceSelection.Root(pkg),
+            label = "Eden Nightly · Android/data",
+        )
+        val narrow = SourceScanResult(
+            source = SourceSelection.Root("$pkg/files"),
+            label = "Android 游戏：Eden Nightly · Android/data",
+        )
+        val entries = GameLibrary.sourceGames(
+            listOf(
+                wide.copy(scan = report(wide, "files/$save")),
+                narrow.copy(scan = report(narrow, save)),
+            ),
+        )
+
+        assertEquals(1, entries.size)
+        assertEquals("$pkg/files", (entries.single().source as SourceSelection.Root).path)
+
+        // 真的不同的位置不能被吞掉。
+        val both = GameLibrary.sourceGames(
+            listOf(
+                narrow.copy(scan = report(narrow, save)),
+                narrow.copy(scan = report(narrow, "$save-second")),
+            ),
+        )
+        assertEquals(2, both.size)
+    }
+
+    private fun report(source: SourceScanResult, relative: String): SaveScanReport = SaveScanReport(
+        rootPath = source.source.displayPath,
+        scannedDirectoryCount = 1,
+        detected = listOf(
+            DetectedSave(
+                kind = "yuzu-switch",
+                relativePath = relative,
+                titleId = "01008D7016438000",
+                note = "probe",
+                displayName = "Switch 01008D7016438000",
+                gameKey = "switch:01008D7016438000",
+            ),
+        ),
+    )
+
+    @Test
     fun mergesMultipleLocationsWithTheSameGameKey() {
         val games = GameLibrary.group(
             listOf(
