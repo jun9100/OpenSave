@@ -2224,7 +2224,13 @@ class SourceViewModel(
         // 深层的新存档可能出现在第 5 层，指纹看不到，宁可扫（剪枝后它很快）。
         if (source !is SourceSelection.Root) return null
         if (AllFilesPathPolicy.isSharedStorageRoot(source.path)) return null
-        val stamps = operations.dirStamps(source.path, FINGERPRINT_DEPTH, MAX_FINGERPRINT_DIRECTORIES)
+        // A freshly installed app has no "all files access" yet, and the
+        // fingerprint walk throws for a directory it may not read. Reuse is only
+        // an optimization: no stamps means "scan it properly", never a crash on
+        // the first launch.
+        val stamps = runCatching {
+            operations.dirStamps(source.path, FINGERPRINT_DEPTH, MAX_FINGERPRINT_DIRECTORIES)
+        }.getOrNull().orEmpty()
         if (stamps.isEmpty()) return null
         fingerprints[sourceId] = stamps
         val entry = cached[sourceId] ?: return null
