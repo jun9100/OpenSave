@@ -62,3 +62,8 @@ android/local.properties
 
 # Icon render scratch output
 branding/out/
+
+# Signing material never belongs in the repo.
+*.jks
+*.keystore
+keystore.properties
