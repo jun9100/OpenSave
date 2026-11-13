@@ -3,6 +3,27 @@
 All notable changes to OpenSave are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [2.8.0] — 2026-11-13
+
+### 新增
+
+- **存档一变就上传**：`SaveWatchService` 用 `FileObserver` 监视每个存档目录，写入后 15 秒防抖就立刻备份上传；15 分钟的周期任务保留为兜底（服务被杀、开关关闭时）。设置页新增开关「存档变化立即上传」。
+- **账号密码登录（Android + PC）**：客户端不再需要手填同步密钥。设置里填「地址 + 账号 + 密码」，登录换令牌后用 Android Keystore / 本地数据库加密保存；密码不落盘。PC 端配对对话框新增第三个模式「服务地址 + 账号密码」。
+- **服务端多租户**：`vaults/<id>/` 一个租户一个独立库（自己的 state、锁、令牌、对象存储），老数据启动时自动迁进 `vaults/default/`；`users.json` + `POST /v1/login` + 管理端「用户」页（建/删/重置密码/配额/到期）。
+
+### 修复
+
+- **云端下发落到 Eden 的 user 目录**：以前写到 `nand/user/save/<profile>/<TITLE_ID>`，Eden 读不到；现在会先探测本机已有的 32 位十六进制 user 目录再落盘。
+- **换账号后不再把旧账号的同步状态带进新库**：head / verdict / tombstone 三个本地存储在凭据变化时清空，不再误报「云端当前版本丢失」。
+- **自动备份跳过 Android 应用数据目录**：整包 `Android/data/<包名>` 动辄几百 MB 到几 GB，服务端会以 413 拒收；现在自动轮只备份真正的游戏存档位置，单游戏手动备份仍可选择。
+- **免 Root + 所有文件访问时后台 worker 看不到来源**：`ScheduledSources.readableSources()` 以前要求选过 Root 模式，导致自动备份一直报「没有可备份的游戏」；现在 `MANAGE_EXTERNAL_STORAGE` 已授权即放行。
+- **服务端 head 悬空与重建**：head 指向不存在的归档时会自动回退到存活祖先；`rebuild-heads`（HTTP + CLI）可从归档文件名重建 head，用于数据搬迁或状态丢失后的恢复。
+
+### 变更
+
+- 仓库改为公开（`jun9100/SaveVault`），恢复免费 Actions 额度；服务端仓库 `SaveVault-Server` 保持私有。
+- 服务端镜像发布到 Docker Hub：`jun9100/savevault-server`（1.9.4）。
+
 ## [2.7.0] — 2026-11-13
 
 ### Android 0.7.0 更换签名
