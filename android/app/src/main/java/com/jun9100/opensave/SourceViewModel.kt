@@ -1269,11 +1269,19 @@ class SourceViewModel(
         /** New credentials were saved: drop the old verdict and restore the periodic work. */
         credentialsChanged: Boolean = false,
     ) {
+        val previousToken = state.value.gameSaveSyncKey
+        val accountChanged = credentialsChanged && previousToken.isNotBlank() && previousToken != config.syncKey
         val result = withContext(Dispatchers.IO) { runCatching { gameSaveStore.save(config) } }
         result.onSuccess {
             if (credentialsChanged) {
                 // New credentials make a revocation or a shared-key warning stale.
                 withContext(Dispatchers.IO) { runCatching { GameSaveAuthGuard.credentialsReplaced(app) } }
+            }
+            if (accountChanged) {
+                // Heads, verdicts and tombstones belong to the account that saw
+                // them; carrying them into another vault makes every game look
+                // like its remote version vanished.
+                withContext(Dispatchers.IO) { runCatching { GameSaveAccountState.reset(app) } }
             }
             state.value = state.value.finished(OpenSavePage.SETTINGS, action = success).copy(
                 gameSaveEnabled = config.enabled,
