@@ -5,6 +5,12 @@ All notable changes to OpenSave are documented here. This project adheres to
 
 ## [2.7.0] — 2026-11-13
 
+### Android 0.7.0 更换签名
+
+- 旧的发布签名库已经找不到了，0.7.0 起用新签名库（SHA-256 `95a31bb2…554d`，DN `CN=SaveVault, O=jun9100, C=CN`）。
+- Android 不允许不同签名覆盖安装：**从 0.6.0 升级必须先卸载**。存档在模拟器的 `Android/data/…/files/nand/user/save/…`，卸载 SaveVault 不会动它，重装后重新扫描即可；只有 SaveVault 自己的服务地址/密钥/来源勾选需要重配。
+- 签名库与 `keystore.properties` 只放本机 `~/.savevault/`，并已加进 `.gitignore`；CI 用仓库 secrets `SAVEVAULT_KEYSTORE_BASE64` / `SAVEVAULT_KEYSTORE_PASSWORD` / `SAVEVAULT_KEY_ALIAS` / `SAVEVAULT_KEY_PASSWORD`。
+
 ### 新增
 
 - **免 Root 读取 `Android/data`。** 授予「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`）后，Eden、Yuzu、Winlator 一类模拟器与容器的存档可以直接扫描、备份、恢复，不需要 root 也不需要 `su`。系统从 Android 11 起不允许在文件选择器里选中 `Android/data` 子树，这是唯一一条免 root 的合法通道。有 Root 时仍然优先走 Root（能读其它应用的私有目录）；两条通道写出的快照格式一致，可以互相恢复。
