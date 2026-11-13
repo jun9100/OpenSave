@@ -72,6 +72,7 @@ const cloudUsage = `usage:
   opensave cloud browse                   Everything stored in the cloud
   opensave cloud list <gameId>            Cloud snapshots for one game
   opensave cloud push <gameId>            Upload this game's local snapshots
+  opensave cloud push --all               Upload every tracked game (idempotent)
   opensave cloud restore <gameId> <file>  Pull a cloud snapshot back
   opensave cloud delete <id> <file>       Remove one cloud snapshot
   opensave cloud delete <gameId> --yes    Remove every cloud copy of a game
@@ -498,34 +499,115 @@ func cloudList(asJSON bool, args []string) int {
 	return 0
 }
 
+// cloudPush uploads local snapshots to the cloud. One game at a time is the
+// everyday case; --all exists because a device that has never pushed (or a
+// cloud that lost its copy) needs every game at once, and shelling out for
+// each id is both slow and easy to get wrong.
 func cloudPush(asJSON bool, args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: opensave cloud push <gameId>")
+	all := false
+	var ids []string
+	for _, arg := range args {
+		switch arg {
+		case "--all", "all":
+			all = true
+		default:
+			ids = append(ids, arg)
+		}
+	}
+	if all {
+		tracked, err := trackedGameIDs()
+		if err != nil {
+			return fail(asJSON, err)
+		}
+		ids = append(ids, tracked...)
+	}
+	if len(ids) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: opensave cloud push <gameId>\n       opensave cloud push --all")
 		return 1
 	}
-	raw, err := daemonRequest("POST", "/api/cloud/sync-local/"+args[0], map[string]any{})
-	if err != nil {
-		return fail(asJSON, err)
-	}
-	if asJSON {
-		return emitRawJSON(raw)
-	}
-	var res struct {
+
+	type result struct {
+		GameID   string `json:"gameId"`
 		Uploaded int    `json:"uploaded"`
 		Failed   int    `json:"failed"`
 		Error    string `json:"error"`
 	}
-	_ = json.Unmarshal(raw, &res)
-	if res.Failed > 0 {
-		return fail(asJSON, fmt.Errorf("uploaded %s for %s, %d failed: %s",
-			plural(res.Uploaded, "snapshot", "snapshots"), args[0], res.Failed, res.Error))
+	results := make([]result, 0, len(ids))
+	failures := 0
+	for _, id := range ids {
+		raw, err := daemonRequest("POST", "/api/cloud/sync-local/"+id, map[string]any{})
+		entry := result{GameID: id}
+		if err != nil {
+			entry.Failed = 1
+			entry.Error = err.Error()
+			failures++
+			results = append(results, entry)
+			if !asJSON {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", id, err)
+			}
+			continue
+		}
+		var res struct {
+			Uploaded int    `json:"uploaded"`
+			Failed   int    `json:"failed"`
+			Error    string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &res)
+		entry.Uploaded, entry.Failed, entry.Error = res.Uploaded, res.Failed, res.Error
+		if res.Failed > 0 {
+			failures++
+		}
+		results = append(results, entry)
+		if !asJSON {
+			switch {
+			case res.Failed > 0:
+				fmt.Fprintf(os.Stderr, "%s: %d uploaded, %d failed: %s\n", id, res.Uploaded, res.Failed, res.Error)
+			case res.Uploaded > 0:
+				success("%s: uploaded %s", bold(id), plural(res.Uploaded, "snapshot", "snapshots"))
+			}
+		}
 	}
-	if res.Uploaded > 0 {
-		success("Uploaded %s for %s", plural(res.Uploaded, "snapshot", "snapshots"), bold(args[0]))
-	} else {
-		success("%s is already up to date in the cloud.", bold(args[0]))
+
+	if asJSON {
+		payload, err := json.MarshalIndent(map[string]any{
+			"games":   results,
+			"pushed":  countIf(results, func(r result) bool { return r.Uploaded > 0 }),
+			"failed":  failures,
+			"checked": len(results),
+		}, "", "  ")
+		if err != nil {
+			return fail(asJSON, err)
+		}
+		fmt.Println(string(payload))
+		if failures > 0 {
+			return 1
+		}
+		return 0
+	}
+	if len(ids) > 1 {
+		uploaded := 0
+		for _, r := range results {
+			uploaded += r.Uploaded
+		}
+		if failures > 0 {
+			return fail(false, fmt.Errorf("%d of %d games failed", failures, len(results)))
+		}
+		success("Pushed %s across %s.", plural(uploaded, "snapshot", "snapshots"), plural(len(results), "game", "games"))
+	}
+	if failures > 0 {
+		return 1
 	}
 	return 0
+}
+
+func countIf[T any](items []T, keep func(T) bool) int {
+	n := 0
+	for _, item := range items {
+		if keep(item) {
+			n++
+		}
+	}
+	return n
 }
 
 func cloudRestore(asJSON bool, args []string) int {
