@@ -350,14 +350,17 @@ class SourceViewModel(
         observeBatches()
         observeActivity()
         observeTombstones()
-        // The bundled Switch names load off the main thread; rows rebuild when they arrive.
+        // The bundled Switch names load off the main thread. The first scan waits for
+        // them: presentations built before the table is in memory have no name at all,
+        // and a row that is already on screen is not guaranteed to be rebuilt when the
+        // table lands (真机上就出现过 `未命名游戏` 一直不退）。
         viewModelScope.launch {
             withContext(Dispatchers.IO) { OfflineSwitchTitles.load(app) }
             GameNames.touch()
             updateState { copy(nameRevision = GameNames.revision) }
+            refreshPersistedSource()
         }
         startOnboarding()
-        refreshPersistedSource()
     }
 
     /**

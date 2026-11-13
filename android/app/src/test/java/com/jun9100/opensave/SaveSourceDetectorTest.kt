@@ -35,6 +35,32 @@ class SaveSourceDetectorTest {
     }
 
     @Test
+    fun ignoresTheSnapshotLocationMarkerLeakedIntoASaveDirectory() {
+        // 真机事故：旧版恢复把 `.opensave-locations/` 元数据落进了存档目录，
+        // 于是 `<TITLE_ID>/.opensave-locations/<TITLE_ID>` 被当成第二个位置，
+        // 与父目录互相包含，备份被拒（"该游戏的存档位置互相包含"）。
+        val root = createTempDir(prefix = "opensave-marker-")
+        try {
+            File(root, "nand/user/save/account/profile/0100152000022000/userdata.dat").apply {
+                parentFile.mkdirs()
+                writeText("mk8")
+            }
+            File(root, "nand/user/save/account/profile/0100152000022000/.opensave-locations/0100152000022000/rp0219.dat").apply {
+                parentFile.mkdirs()
+                writeText("marker copy")
+            }
+
+            val detected = SaveSourceDetector.detect(root)
+            val locations = detected.filter { it.titleId == "0100152000022000" }
+
+            assertEquals(1, locations.size)
+            assertEquals("nand/user/save/account/profile/0100152000022000", locations.single().relativePath)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun detectsEdenSaveUnderItsAndroidPackageRoot() {
         val root = "/data/user/0/dev.eden.eden_emulator/files"
         val report = SaveSourceDetector.scanDirectories(

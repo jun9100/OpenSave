@@ -124,6 +124,11 @@ object SaveSourceDetector {
         "com.ludashi.benchmark",
     )
     private val excludedArtifactPathNames = setOf(
+        // 云端快照里的元数据前缀（internal/snapshot/zip_roots.go 的 RootPrefix）。
+        // 旧版恢复把它连同内容一起落进了存档目录，于是
+        // `<TITLE_ID>/.opensave-locations/<TITLE_ID>` 被当成"第二个存档位置"，
+        // 与父目录互相包含 -> 备份/恢复直接拒绝（马力欧卡丁车8 就是这么挂的）。
+        ".opensave-locations",
         "opensaveintegrationtest",
         "eden-save-import-stage",
         "eden-sync-test",
